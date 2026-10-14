@@ -1,0 +1,371 @@
+@import "tailwindcss" source("../");
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-gold: var(--brand-gold);
+  --color-emerald-brand: var(--brand-emerald);
+  --color-emerald-brand-dark: var(--brand-emerald-dark);
+}
+
+:root {
+  --radius: 0.75rem;
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  /* Seereon HRMS brand — the org's colours (Settings → Branding) override these through --org-* variables set on <html>. */
+  --brand-emerald: var(--org-primary, oklch(0.48 0.09 165)); /* #0F6B50 */
+  --brand-emerald-dark: var(--org-primary-dark, oklch(0.36 0.08 165)); /* #0B4F3A */
+  --brand-gold: var(--org-gold, oklch(0.78 0.12 85)); /* #C8A951 */
+  --gold-ink: oklch(0.42 0.09 85); /* readable gold for text on light */
+
+  --background: oklch(0.985 0.005 160); /* #F8FAF8 */
+  --foreground: oklch(0.18 0.02 165);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.02 165);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.02 165);
+  --primary: var(--brand-emerald);
+  --primary-foreground: oklch(0.99 0.005 160);
+  --secondary: oklch(0.96 0.01 160);
+  --secondary-foreground: var(--brand-emerald-dark);
+  --muted: oklch(0.96 0.008 160);
+  --muted-foreground: oklch(0.48 0.02 165);
+  --accent: var(--brand-gold);
+  --accent-foreground: oklch(0.2 0.02 85);
+  --destructive: oklch(0.6 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.92 0.01 160);
+  --input: oklch(0.92 0.01 160);
+  --ring: var(--brand-emerald);
+  --chart-1: var(--brand-emerald);
+  --chart-2: var(--brand-gold);
+  --chart-3: oklch(0.6 0.08 200);
+  --chart-4: oklch(0.7 0.15 40);
+  --chart-5: oklch(0.55 0.12 300);
+  --sidebar: var(--brand-emerald-dark);
+  --sidebar-foreground: oklch(0.95 0.02 160);
+  --sidebar-primary: var(--brand-gold);
+  --sidebar-primary-foreground: oklch(0.18 0.02 85);
+  --sidebar-accent: oklch(0.3 0.06 165);
+  --sidebar-accent-foreground: oklch(0.98 0.01 160);
+  --sidebar-border: oklch(0.3 0.05 165);
+  --sidebar-ring: var(--brand-gold);
+
+  --shadow-premium:
+    0 4px 20px -6px oklch(0.36 0.08 165 / 0.12), 0 2px 6px -2px oklch(0.36 0.08 165 / 0.08);
+  --shadow-card: 0 1px 3px oklch(0.36 0.08 165 / 0.06), 0 1px 2px oklch(0.36 0.08 165 / 0.04);
+}
+
+.dark {
+  /* Dark mode: deep emerald-charcoal surfaces with brighter brand accents for contrast. */
+  --brand-emerald: var(--org-primary-dm, oklch(0.74 0.11 165));
+  --brand-emerald-dark: var(--org-primary-dark-dm, oklch(0.32 0.06 165));
+  --brand-gold: var(--org-gold-dm, oklch(0.84 0.13 88));
+  --gold-ink: oklch(0.86 0.12 88);
+
+  --background: oklch(0.15 0.012 175);
+  --foreground: oklch(0.95 0.01 165);
+  --card: oklch(0.205 0.014 175);
+  --card-foreground: oklch(0.95 0.01 165);
+  --popover: oklch(0.22 0.014 175);
+  --popover-foreground: oklch(0.95 0.01 165);
+  --primary: var(--brand-emerald);
+  --primary-foreground: oklch(0.14 0.02 165);
+  --secondary: oklch(0.27 0.015 175);
+  --secondary-foreground: oklch(0.95 0.01 165);
+  --muted: oklch(0.26 0.012 175);
+  --muted-foreground: oklch(0.72 0.015 165);
+  --accent: oklch(0.3 0.02 165);
+  --accent-foreground: oklch(0.96 0.01 165);
+  --destructive: oklch(0.7 0.19 22);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(1 0 0 / 11%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: var(--brand-emerald);
+  --chart-1: var(--brand-emerald);
+  --chart-2: var(--brand-gold);
+  --chart-3: oklch(0.72 0.1 200);
+  --chart-4: oklch(0.75 0.15 40);
+  --chart-5: oklch(0.7 0.14 300);
+  --sidebar: oklch(0.17 0.02 170);
+  --sidebar-foreground: oklch(0.9 0.01 165);
+  --sidebar-primary: var(--brand-gold);
+  --sidebar-primary-foreground: oklch(0.16 0.02 85);
+  --sidebar-accent: oklch(0.26 0.03 168);
+  --sidebar-accent-foreground: oklch(0.98 0.01 160);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: var(--brand-gold);
+
+  --shadow-premium: 0 8px 30px -8px oklch(0 0 0 / 0.55), 0 2px 8px -2px oklch(0 0 0 / 0.4);
+  --shadow-card: 0 1px 2px oklch(0 0 0 / 0.5), 0 0 0 1px oklch(1 0 0 / 0.04);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* long URLs, e-mail addresses and IDs break inside their box instead of running past it */
+    overflow-wrap: break-word;
+  }
+
+  /* No double-tap-zoom delay on touch devices (mobile WebView). */
+  a,
+  button,
+  label,
+  [role="button"],
+  [role="tab"],
+  [role="option"],
+  [role="menuitem"] {
+    touch-action: manipulation;
+  }
+
+  /* Native date / time inputs keep their text inside the field on narrow screens. */
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  input[type="month"] {
+    min-width: 0;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+/* ---------------- Mobile / WebView helpers ---------------- */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+/* Safe-area insets for notched phones when the app runs full-screen inside a WebView. */
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@utility pl-safe {
+  padding-left: env(safe-area-inset-left);
+}
+@utility pr-safe {
+  padding-right: env(safe-area-inset-right);
+}
+
+@utility shadow-premium {
+  box-shadow: var(--shadow-premium);
+}
+@utility shadow-card {
+  box-shadow: var(--shadow-card);
+}
+@utility bg-gradient-emerald {
+  background-image: linear-gradient(
+    135deg,
+    var(--brand-emerald) 0%,
+    var(--brand-emerald-dark) 100%
+  );
+}
+@utility text-gold {
+  color: var(--gold-ink);
+}
+@utility text-gold-raw {
+  color: var(--brand-gold);
+}
+@utility bg-gold {
+  background-color: var(--brand-gold);
+}
+
+/* ---------------- Personalisation: wallpaper + frosted glass ---------------- */
+.app-wallpaper {
+  position: fixed;
+  inset: -40px;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+  transform: translateZ(0);
+}
+.app-wallpaper-dim {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+[data-wallpaper="on"] .glass-sidebar {
+  background-color: color-mix(in oklab, var(--sidebar) 82%, transparent);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+}
+/* The content column stays transparent; the page itself becomes a floating frosted window. */
+[data-wallpaper="on"] .glass-main {
+  background: transparent;
+}
+[data-wallpaper="on"] main.app-main {
+  margin: 0 12px 16px;
+  border-radius: 22px;
+  background-color: color-mix(in oklab, var(--background) 58%, transparent);
+  backdrop-filter: blur(30px) saturate(150%);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  border: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+  box-shadow:
+    0 24px 60px -24px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+@media (min-width: 768px) {
+  [data-wallpaper="on"] main.app-main {
+    margin: 0 20px 20px;
+  }
+}
+[data-wallpaper="on"] .glass-topbar {
+  background-color: color-mix(in oklab, var(--card) 45%, transparent) !important;
+  border-bottom-color: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(24px) saturate(150%);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+}
+[data-wallpaper="on"] main .shadow-card,
+[data-wallpaper="on"] main [class*="bg-card"] {
+  background-color: color-mix(in oklab, var(--card) 84%, transparent);
+}
+.dark .bg-gradient-emerald {
+  background-image: linear-gradient(
+    135deg,
+    color-mix(in oklab, var(--brand-emerald) 55%, black) 0%,
+    var(--brand-emerald-dark) 100%
+  );
+  color: #fff;
+}
+
+/* Responsiveness safety: nothing may push the page wider than the viewport.
+   `clip` (not `hidden`) so the body never becomes a scroll container — sticky headers keep working. */
+html,
+body {
+  overflow-x: clip;
+  max-width: 100%;
+}
+main {
+  min-width: 0;
+}
+main > * {
+  max-width: 100%;
+}
+pre,
+code {
+  max-width: 100%;
+  overflow-x: auto;
+}
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+/* Grid tracks shrink instead of stretching the page (wide tables / nowrap text inside cards). */
+main .grid > * {
+  min-width: 0;
+}
+/* A card that holds a table scrolls sideways within itself rather than being cut off. */
+main :is(.shadow-card, .rounded-xl, .rounded-lg):has(> table),
+main :is(.shadow-card, .rounded-xl, .rounded-lg):has(> div > table) {
+  overflow-x: auto;
+}
+main table {
+  max-width: none;
+}
+/* Tab strips and step trackers scroll sideways on small screens. */
+main [role="tablist"] {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.steps-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+/* ---------------- Data tables on phones ----------------
+   Tables keep readable columns and scroll sideways inside their card instead of squeezing every
+   cell to one word per line. Headers and short values stay on one line. */
+@media (max-width: 767px) {
+  main table th {
+    white-space: nowrap;
+  }
+  main table td:not(:has(> [role="checkbox"]:only-child)):not(:has(> button:only-child)) {
+    min-width: 7.5rem;
+  }
+}
+/* IDs, amounts and badges in a table cell stay on one line at every width (the table scrolls instead). */
+main table td:is(.font-mono, .tabular-nums),
+main table td :is(.font-mono, .tabular-nums, [data-slot="badge"]) {
+  white-space: nowrap;
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Seereon HRMS",
+  "short_name": "Seereon HRMS",
+  "description": "HR, payroll, attendance and performance — by Seereon Consulting & IT Services.",
+  "start_url": "/login",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#0f6b50",
+  "icons": [{ "src": "/favicon.png", "sizes": "any", "type": "image/png" }]
+}
