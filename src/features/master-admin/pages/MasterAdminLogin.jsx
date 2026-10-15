@@ -1,6 +1,8 @@
 
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { loginMasterAdmin } from "../../../api/MasterAdmin_auth";
+
 
 export default function MasterAdminLogin() {
   const navigate = useNavigate();
@@ -8,23 +10,32 @@ export default function MasterAdminLogin() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  function handleLogin(e) {
+  async function handleLogin(e) {
     e.preventDefault();
     setError("");
+    setLoading(true);
 
-    // Temporary demo credentials for frontend testing
-    if (
-      email.trim().toLowerCase() === "admin@seereon.com" &&
-      password === "Admin@123"
-    ) {
-      sessionStorage.setItem("masterAdminLoggedIn", "true");
+    try {
+      // Call the Master Admin login API
+      const data = await loginMasterAdmin({
+        email: email.trim().toLowerCase(),
+        password,
+      });
 
+      // Navigate after a successful API response
       navigate("/master-admin/dashboard", {
         replace: true,
       });
-    } else {
-      setError("Invalid email or password. Please try again.");
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ||
+          err.response?.data?.message ||
+          "Login failed. Please check your credentials."
+      );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -107,9 +118,10 @@ export default function MasterAdminLogin() {
           {/* Submit button */}
           <button
             type="submit"
-            className="w-full rounded-lg bg-green-600 px-4 py-3 font-semibold text-white transition hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+            disabled={loading}
+            className="w-full rounded-lg bg-green-600 px-4 py-3 font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
           >
-            Sign in as Master Admin
+            {loading ? "Signing in..." : "Sign in as Master Admin"}
           </button>
         </form>
 
