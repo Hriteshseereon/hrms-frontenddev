@@ -1,5 +1,6 @@
 // src/api/SuperAdmin_auth.js
 import SuperAdmin_axios from "./SuperAdmin_axios";
+import { signInSuperAdmin, signOut } from "@/features/auth/data/auth-session";
 
 const SuperAdmin_auth = {
   async login(email, password) {
@@ -19,6 +20,14 @@ const SuperAdmin_auth = {
 
     localStorage.setItem("super_admin_access_token", access_token);
     localStorage.setItem("super_admin_refresh_token", refresh_token);
+
+    try {
+      signInSuperAdmin(response.data.user);
+    } catch (error) {
+      localStorage.removeItem("super_admin_access_token");
+      localStorage.removeItem("super_admin_refresh_token");
+      throw error;
+    }
 
     return response.data;
   },
@@ -40,8 +49,7 @@ const SuperAdmin_auth = {
   },
 
   logout() {
-    localStorage.removeItem("super_admin_access_token");
-    localStorage.removeItem("super_admin_refresh_token");
+    signOut();
   },
 };
 

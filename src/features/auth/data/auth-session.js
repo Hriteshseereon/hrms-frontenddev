@@ -1210,6 +1210,18 @@ export const ROLE_SUMMARY = {
 /* ------------------------------------------------------------------ */
 
 const KEY = "seereon.session.user";
+const API_USER_KEY = "seereon.session.api-user";
+let apiUser = null;
+if (typeof window !== "undefined") {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(API_USER_KEY) ?? "null");
+    if (stored?.id && stored.role === "SuperAdmin" &&
+        window.localStorage.getItem("super_admin_access_token")) apiUser = stored;
+  } catch {
+    // Ignore an invalid saved profile and require a fresh sign-in.
+  }
+}
+registerExtraUsers(() => apiUser ? [apiUser] : []);
 const DEFAULT_ID = "SRN-0004";
 /** Server-render / signed-out identity (Varen Mishra, HR) — the same person DEFAULT_ID points at. */
 const DEFAULT_USER = SEEREON_USERS.find((u) => u.id === DEFAULT_ID) ?? SEEREON_USERS[0];
@@ -1389,8 +1401,37 @@ export function signInAs(id) {
   return match;
 }
 
+/** Bridge the backend identity into the session used by portal guards and permissions. */
+export function signInSuperAdmin(user) {
+  if (!user?.id || !user.email || user.role !== "SUPER_ADMIN") {
+    throw new Error("Login response did not contain a valid Super Admin user.");
+  }
+  apiUser = {
+    id: user.id,
+    email: user.email,
+    name: user.full_name || user.email,
+    role: "SuperAdmin",
+    orgId: user.organization_id,
+    portal: "org",
+    designation: "Super Administrator",
+    dept: "",
+    branch: "",
+    phone: "",
+    managerId: null,
+    doj: "",
+  };
+  window.localStorage.setItem(API_USER_KEY, JSON.stringify(apiUser));
+  return signInAs(apiUser.id);
+}
+
 export function signOut() {
-  if (typeof window !== "undefined") window.localStorage.removeItem(KEY);
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(KEY);
+    window.localStorage.removeItem(API_USER_KEY);
+    window.localStorage.removeItem("super_admin_access_token");
+    window.localStorage.removeItem("super_admin_refresh_token");
+  }
+  apiUser = null;
   currentId = DEFAULT_ID;
   signedIn = false;
   emit();
