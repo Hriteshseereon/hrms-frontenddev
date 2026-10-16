@@ -11,9 +11,13 @@ const SuperAdmin_axios = axios.create({
 
 SuperAdmin_axios.interceptors.request.use(
   (config) => {
+    const isLoginRequest = config.url?.includes(
+      "/auth/super-admins/login"
+    );
+
     const token = localStorage.getItem("super_admin_access_token");
 
-    if (token) {
+    if (!isLoginRequest && token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
 
