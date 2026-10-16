@@ -82,7 +82,7 @@ export function provisionSuperAdmin(input) {
   return row;
 }
 export function provisionEntityAdmin(input) {
-  const pw = generatePassword(input.orgName);
+  const pw = input.password?.trim() || generatePassword(input.orgName);
   const email = input.email.trim().toLowerCase();
   const user = {
     id: nextTenantId("AD", input.orgId, email),
@@ -114,7 +114,7 @@ export function provisionEntityAdmin(input) {
 }
 /** Company Admin of one company / Branch Admin of one branch — issued by the Super Admin or by Seereon support. */
 export function provisionBranchAdmin(input) {
-  const pw = generatePassword(input.orgName);
+  const pw = input.password?.trim() || generatePassword(input.orgName);
   const email = input.email.trim().toLowerCase();
   const user = {
     id: nextTenantId("BA", `${input.orgId}${input.branchId.split("-BR-")[1] ?? ""}`, email),

@@ -11,7 +11,6 @@ import {
   Building2,
   Copy,
   GitBranch,
-  KeyRound,
   Landmark,
   LayoutDashboard,
   Network,
@@ -20,7 +19,6 @@ import {
   Power,
   ShieldCheck,
   Trash2,
-  UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -320,24 +318,6 @@ export function TenantStructure({ tenant, canManage, actor, limitToOrgId }) {
                       <Plus className="h-3.5 w-3.5" /> Branch
                     </Button>
                   )}
-                  {canManageGroup && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setDialog({ kind: "admin", org: o })}
-                    >
-                      <UserPlus className="h-3.5 w-3.5" /> Company Admin
-                    </Button>
-                  )}
-                  {canManage && branches.length > 0 && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setDialog({ kind: "branchAdmin", org: o })}
-                    >
-                      <KeyRound className="h-3.5 w-3.5" /> Branch Admin
-                    </Button>
-                  )}
                 </div>
               </CardContent>
             </Card>
@@ -368,6 +348,7 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
   const [f, setF] = useState({
     name: editing?.name ?? "",
     legalName: "",
+    adminName: "",
     code: "",
     branchMode: "branches",
     firstBranch: "",
@@ -381,6 +362,24 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
     branchId: "",
   });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const [passwordSuffix] = useState(() => {
+    const random = new Uint32Array(1);
+    crypto.getRandomValues(random);
+    return String(100 + (random[0] % 900));
+  });
+  const adminNamePart = f.adminName
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(0, 2)
+    .padEnd(2, "a");
+  const adminEmailPart = f.email
+    .split("@")[0]
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(0, 2)
+    .padEnd(2, "b");
+  const adminPassword =
+    f.adminName.trim() && f.email.trim()
+      ? `${adminNamePart[0].toUpperCase()}${adminNamePart[1].toLowerCase()}${adminEmailPart.toLowerCase()}@${passwordSuffix}`
+      : "";
   const titles = {
     company: tenant.kind === "group" ? "Add company to the group" : "Add a company",
     branch: `Add branch — ${org?.name ?? ""}`,
@@ -401,6 +400,10 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
       if (!f.name.trim() || !f.code.trim())
         return toast.error("Company name and code are required");
       if (codeTaken(f.code.trim())) return toast.error(`Code ${f.code.trim()} is already in use`);
+      if (!f.adminName.trim()) return toast.error("Company Admin name is required");
+      const email = f.email.trim().toLowerCase();
+      if (!EMAIL.test(email)) return toast.error("Enter a valid Company Admin login e-mail");
+      if (userByLogin(email)) return toast.error(`${email} already has a Seereon HRMS login`);
       const row = addCompany(tenant.id, {
         name: f.name.trim(),
         legalName: f.legalName.trim(),
@@ -413,7 +416,17 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
         gstin: f.gstin.trim(),
       });
       toast.success(`${row.name} added (${row.id})`);
-      return onClose();
+      return onIssued(
+        provisionEntityAdmin({
+          orgId: row.id,
+          groupId: row.groupId,
+          orgName: row.name,
+          email,
+          name: f.adminName.trim(),
+          password: adminPassword,
+          by: actor,
+        }),
+      );
     }
     if (dialog.kind === "editBranch") {
       const name = f.name.trim();
@@ -433,6 +446,10 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
     if (dialog.kind === "branch") {
       const name = f.name.trim();
       if (!name) return toast.error("Branch name is required");
+      if (!f.adminName.trim()) return toast.error("Branch Admin name is required");
+      const email = f.email.trim().toLowerCase();
+      if (!EMAIL.test(email)) return toast.error("Enter a valid Branch Admin login e-mail");
+      if (userByLogin(email)) return toast.error(`${email} already has a Seereon HRMS login`);
       if (
         (org.branches ?? []).some((b) => !b.hidden && b.name.toLowerCase() === name.toLowerCase())
       )
@@ -451,7 +468,23 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
         head: f.head.trim(),
       });
       toast.success(`${name} added to ${org.name}`);
-      return onClose();
+      const branch = orgsStore
+        .get()
+        .find((o) => o.id === org.id)
+        .branches.find((b) => b.name === name);
+      return onIssued(
+        provisionBranchAdmin({
+          orgId: org.id,
+          groupId: org.groupId,
+          orgName: org.name,
+          branchId: branch.id,
+          branchName: branch.name,
+          email,
+          name: f.adminName.trim(),
+          password: adminPassword,
+          by: actor,
+        }),
+      );
     }
     const email = f.email.trim().toLowerCase();
     if (!EMAIL.test(email)) return toast.error("Enter a valid e-mail");
@@ -484,14 +517,14 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{titles[dialog.kind]}</DialogTitle>
           <DialogDescription>
             {dialog.kind === "company"
               ? tenant.kind === "group"
-                ? "A legal entity of the group with its own payroll, statutory registrations and administrators. Only the name and code are required."
-                : "Adding a second company turns this organisation into a group; the existing company joins it."
+                ? "A legal entity of the group with its own payroll and statutory registrations. Provide the company administrator's name and login e-mail to issue a temporary password."
+                : "Adding a second company turns this organisation into a group; the existing company joins it. A temporary password is issued for the new company administrator."
               : dialog.kind === "branch"
                 ? "A location of the company — its location starts from the company's own. Employees, attendance and branch reporting hang off it."
                 : dialog.kind === "editBranch"
@@ -514,6 +547,42 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
           )}
           {dialog.kind === "company" && (
             <>
+              <div className="space-y-1">
+                <Label htmlFor="company-admin-name" className="text-xs">
+                  Company Admin name *
+                </Label>
+                <Input
+                  id="company-admin-name"
+                  value={f.adminName}
+                  onChange={(e) => set("adminName", e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="company-admin-email" className="text-xs">
+                  Company Admin Login e-mail *
+                </Label>
+                <Input
+                  id="company-admin-email"
+                  type="email"
+                  value={f.email}
+                  onChange={(e) => set("email", e.target.value)}
+                />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label htmlFor="company-admin-password" className="text-xs">
+                  Password (auto generated)
+                </Label>
+                <Input
+                  id="company-admin-password"
+                  value={adminPassword}
+                  readOnly
+                  placeholder="Enter the admin name and e-mail"
+                />
+                <p className="text-muted-foreground text-xs">
+                  8 characters, generated from the admin name and e-mail. Must be changed on first
+                  sign-in.
+                </p>
+              </div>
               <div className="space-y-1">
                 <Label className="text-xs">Legal name</Label>
                 <Input value={f.legalName} onChange={(e) => set("legalName", e.target.value)} />
@@ -585,6 +654,46 @@ function StructureDialog({ dialog, tenant, actor, onClose, onIssued }) {
               <div className="space-y-1">
                 <Label className="text-xs">Branch head</Label>
                 <Input value={f.head} onChange={(e) => set("head", e.target.value)} />
+              </div>
+            </>
+          )}
+          {dialog.kind === "branch" && (
+            <>
+              <div className="space-y-1">
+                <Label htmlFor="branch-admin-name" className="text-xs">
+                  Branch Admin name *
+                </Label>
+                <Input
+                  id="branch-admin-name"
+                  value={f.adminName}
+                  onChange={(e) => set("adminName", e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="branch-admin-email" className="text-xs">
+                  Branch Admin Login e-mail *
+                </Label>
+                <Input
+                  id="branch-admin-email"
+                  type="email"
+                  value={f.email}
+                  onChange={(e) => set("email", e.target.value)}
+                />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
+                <Label htmlFor="branch-admin-password" className="text-xs">
+                  Password (auto generated)
+                </Label>
+                <Input
+                  id="branch-admin-password"
+                  value={adminPassword}
+                  readOnly
+                  placeholder="Enter the admin name and e-mail"
+                />
+                <p className="text-muted-foreground text-xs">
+                  8 characters, generated from the admin name and e-mail. Must be changed on first
+                  sign-in.
+                </p>
               </div>
             </>
           )}
