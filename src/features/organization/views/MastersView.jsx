@@ -1,3 +1,4 @@
+import awardMasterApi from "@/api/awardApi";
 import { useSharedList } from "@/lib/shared-list";
 import { useEffect, useState } from "react";
 import {
@@ -49,7 +50,10 @@ import { FnfConfigPanel } from "@/features/exit/components/SeparationPieces";
 import { ShiftsTab } from "@/features/attendance/components/ShiftsTab";
 import { PenaltyConfigTab } from "@/features/attendance/components/PenaltyConfigTab";
 import { PatternsTab } from "@/features/payroll/components/PatternsTab";
-import { StatePolicyTab, StatutoryConfigTab } from "@/features/payroll/components/PolicyTabs";
+import {
+  StatePolicyTab,
+  StatutoryConfigTab,
+} from "@/features/payroll/components/PolicyTabs";
 import { Infrastructure } from "@/features/organization/components/InfrastructureWorkspace";
 import { GroupsWorkspace } from "@/features/organization/components/GroupsWorkspace";
 import { OrgSettings } from "@/features/administration/components/OrgSettingsWorkspace";
@@ -110,8 +114,14 @@ import {
   IP_RULES,
 } from "@/features/organization/data/master-data";
 import { CrudSection } from "@/components/common/CrudSection";
-import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
-import { POLICY_DOCS, POLICY_CATEGORIES } from "@/features/platform/data/support-data";
+import {
+  RecordDetailDialog,
+  clickableRow,
+} from "@/components/common/RecordDetail";
+import {
+  POLICY_DOCS,
+  POLICY_CATEGORIES,
+} from "@/features/platform/data/support-data";
 
 function Field({ label, children, required }) {
   return (
@@ -141,9 +151,58 @@ function SectionHead({ icon: Icon, title, desc, children }) {
   );
 }
 
-/** Generic name + description master with an optional "required" toggle. */
-function MasterTable({ icon, title, desc, prefix, seed, withRequired, addLabel }) {
-  // Shared (session-wide) list — a local useState lost every added / edited master the moment the tab changed.
+function getErrorMessage(error, fallback) {
+  const detail =
+    error?.response?.data?.detail ??
+    error?.response?.data?.message ??
+    error?.message;
+
+  if (typeof detail === "string") return detail;
+
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item.msg || String(item)).join(", ");
+  }
+
+  return fallback;
+}
+
+function unwrapRecord(response) {
+  if (!response) return null;
+
+  if (response.data && !Array.isArray(response.data)) {
+    return response.data;
+  }
+
+  return response;
+}
+
+function unwrapList(response) {
+  if (Array.isArray(response)) return response;
+
+  if (Array.isArray(response?.items)) return response.items;
+  if (Array.isArray(response?.results)) return response.results;
+  if (Array.isArray(response?.awards)) return response.awards;
+  if (Array.isArray(response?.data)) return response.data;
+
+  return [];
+}
+
+/**
+ * Generic name + description master.
+ *
+ * Masters with an API prop use API operations.
+ * Masters without an API prop retain their existing shared-list behavior.
+ */
+function MasterTable({
+  icon,
+  title,
+  desc,
+  prefix,
+  seed,
+  withRequired,
+  addLabel,
+  api = null,
+}) {
   const [rows, setRows] = useSharedList(`master-${prefix}`, seed);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -152,71 +211,308 @@ function MasterTable({ icon, title, desc, prefix, seed, withRequired, addLabel }
   const [editingId, setEditingId] = useState(null);
   const [viewRow, setViewRow] = useState(null);
   const [deleteRow, setDeleteRow] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // GET /awards: load API records when this master has an API.
+  useEffect(() => {
+    if (!api?.list) return undefined;
+
+    let active = true;
+
+    async function loadRecords() {
+      setLoading(true);
+
+      try {
+        const response = await api.list();
+        const list = unwrapList(response);
+
+        if (active) {
+          setRows(
+            list
+              .filter((record) => record && typeof record === "object")
+              .map((record) => ({
+                ...record,
+                id: record.id ?? record.award_id,
+                name: record.name ?? "",
+                description: record.description ?? "",
+              }))
+              .filter((record) => record.id != null),
+          );
+        }
+      } catch (error) {
+        if (active) {
+          toast.error(
+            getErrorMessage(error, `Unable to load ${title.toLowerCase()}`),
+          );
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadRecords();
+
+    return () => {
+      active = false;
+    };
+  }, [api, setRows, title]);
 
   const duplicate = rows.some(
-    (r) => r.id !== editingId && r.name.trim().toLowerCase() === name.trim().toLowerCase(),
+    (r) =>
+      String(r.id) !== String(editingId) &&
+      (r.name || "").trim().toLowerCase() === name.trim().toLowerCase(),
   );
-  function submit() {
+
+  function resetForm() {
+    setEditingId(null);
+    setName("");
+    setDescription("");
+    setRequired(false);
+  }
+
+  async function submit() {
+    if (!name.trim()) {
+      toast.error("Please enter a name");
+      return;
+    }
+
     if (duplicate) {
       toast.error(`"${name.trim()}" already exists in ${title.toLowerCase()}`);
       return;
     }
-    if (editingId) {
-      setRows((p) =>
-        p.map((r) =>
-          r.id === editingId
-            ? {
-                ...r,
-                name: name.trim(),
-                description: description.trim(),
-                required: withRequired ? required : r.required,
-              }
-            : r,
-        ),
-      );
-      setOpen(false);
-      setEditingId(null);
-      setName("");
-      setDescription("");
-      setRequired(false);
-      toast.success(`${title} entry updated`);
-      return;
-    }
-    setRows((p) => {
-      // Next free number — a count-based id reused the code of a surviving row after a delete (duplicate keys).
-      const n = p.reduce((m, r) => Math.max(m, Number(r.id.slice(prefix.length + 1)) || 0), 0) + 1;
-      return [
-        {
-          id: `${prefix}-${String(n).padStart(2, "0")}`,
+
+    setSaving(true);
+
+    try {
+      // EDIT
+      if (editingId) {
+        const original = rows.find(
+          (r) => String(r.id) === String(editingId),
+        );
+
+        const payload = {
           name: name.trim(),
           description: description.trim(),
-          required: withRequired ? required : undefined,
-        },
-        ...p,
-      ];
-    });
-    setOpen(false);
-    setName("");
-    setDescription("");
-    setRequired(false);
-    toast.success(`${title} entry added`);
+        };
+
+        if (api?.update && api?.patch) {
+          const nameChanged = payload.name !== (original?.name ?? "");
+          const descriptionChanged =
+            payload.description !== (original?.description ?? "");
+
+          let response;
+
+          // Use PATCH when only one field changed.
+          if (nameChanged && !descriptionChanged) {
+            response = await api.patch(editingId, {
+              name: payload.name,
+            });
+          } else if (!nameChanged && descriptionChanged) {
+            response = await api.patch(editingId, {
+              description: payload.description,
+            });
+          } else {
+            // Use PUT when both fields changed or no field changed.
+            response = await api.update(editingId, payload);
+          }
+
+          const updated = unwrapRecord(response) ?? {
+            ...original,
+            ...payload,
+          };
+
+          setRows((previous) =>
+            previous.map((row) =>
+              String(row.id) === String(editingId)
+                ? {
+                    ...row,
+                    ...updated,
+                    id: updated.id ?? row.id,
+                    name: updated.name ?? payload.name,
+                    description:
+                      updated.description ?? payload.description,
+                  }
+                : row,
+            ),
+          );
+        } else {
+          // Existing local edit behavior for masters without an API.
+          setRows((previous) =>
+            previous.map((row) =>
+              String(row.id) === String(editingId)
+                ? {
+                    ...row,
+                    name: payload.name,
+                    description: payload.description,
+                    required: withRequired ? required : row.required,
+                  }
+                : row,
+            ),
+          );
+        }
+
+        setOpen(false);
+        resetForm();
+        toast.success(`${title} entry updated`);
+        return;
+      }
+
+      // CREATE
+      if (api?.create) {
+        const response = await api.create({
+          name: name.trim(),
+          description: description.trim(),
+        });
+
+        const created = unwrapRecord(response);
+
+        if (!created || typeof created !== "object") {
+          throw new Error("The server did not return the created record.");
+        }
+
+        const newRow = {
+          ...created,
+          id: created.id ?? created.award_id,
+          name: created.name ?? name.trim(),
+          description: created.description ?? description.trim(),
+        };
+
+        if (newRow.id == null) {
+          throw new Error("The created award response did not include an ID.");
+        }
+
+        setRows((previous) => [
+          newRow,
+          ...previous.filter(
+            (row) => String(row.id) !== String(newRow.id),
+          ),
+        ]);
+
+        setOpen(false);
+        resetForm();
+        toast.success(`${title} entry added successfully`);
+        return;
+      }
+
+      // Existing local creation behavior for other masters.
+      setRows((previous) => {
+        const n =
+          previous.reduce(
+            (max, row) =>
+              Math.max(
+                max,
+                Number(String(row.id).slice(prefix.length + 1)) || 0,
+              ),
+            0,
+          ) + 1;
+
+        return [
+          {
+            id: `${prefix}-${String(n).padStart(2, "0")}`,
+            name: name.trim(),
+            description: description.trim(),
+            required: withRequired ? required : undefined,
+          },
+          ...previous,
+        ];
+      });
+
+      setOpen(false);
+      resetForm();
+      toast.success(`${title} entry added`);
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, `Unable to save ${title.toLowerCase()}`),
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function startEdit(r) {
-    setEditingId(r.id);
-    setName(r.name);
-    setDescription(r.description ?? "");
-    setRequired(!!r.required);
+  function startEdit(record) {
+    setEditingId(record.id);
+    setName(record.name ?? "");
+    setDescription(record.description ?? "");
+    setRequired(!!record.required);
     setOpen(true);
   }
 
-  const exportColumns = ["Code", "Name", "Description", ...(withRequired ? ["Required"] : [])];
+  // GET /awards/{award_id}: fetch the full record when View is clicked.
+  async function viewRecord(record) {
+    if (!api?.getById) {
+      setViewRow(record);
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const response = await api.getById(record.id);
+      const detail = unwrapRecord(response);
+
+      if (!detail || typeof detail !== "object") {
+        throw new Error("The server did not return the award details.");
+      }
+
+      setViewRow({
+        ...record,
+        ...detail,
+        id: detail.id ?? detail.award_id ?? record.id,
+      });
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, "Unable to load award details"),
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // DELETE /awards/{award_id}: delete the backend record first.
+  async function confirmDelete() {
+    if (!deleteRow) return;
+
+    const recordToDelete = deleteRow;
+
+    try {
+      setSaving(true);
+
+      if (api?.remove) {
+        await api.remove(recordToDelete.id);
+      }
+
+      setRows((previous) =>
+        previous.filter(
+          (row) => String(row.id) !== String(recordToDelete.id),
+        ),
+      );
+
+      toast.success(`${recordToDelete.id} deleted`);
+      setDeleteRow(null);
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, `Unable to delete ${title.toLowerCase()}`),
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const exportColumns = [
+    "Code",
+    "Name",
+    "Description",
+    ...(withRequired ? ["Required"] : []),
+  ];
+
   const exportRows = rows.map((r) => [
     r.id,
     r.name,
     r.description || "—",
     ...(withRequired ? [r.required ? "Mandatory" : "Optional"] : []),
   ]);
+
   const slug = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -230,6 +526,7 @@ function MasterTable({ icon, title, desc, prefix, seed, withRequired, addLabel }
       columns: exportColumns,
       rows: exportRows,
     });
+
     if (ok) toast.success(`${title} PDF ready in the print dialog`);
     else toast.error("Allow pop-ups to generate the PDF");
   }
@@ -249,82 +546,98 @@ function MasterTable({ icon, title, desc, prefix, seed, withRequired, addLabel }
             >
               <Download className="h-4 w-4" /> CSV
             </Button>
+
             <Button size="sm" variant="outline" onClick={downloadPdf}>
               <FileText className="h-4 w-4" /> PDF
             </Button>
+
             <Dialog
               open={open}
-              onOpenChange={(o) => {
-                setOpen(o);
-                if (!o) {
-                  setEditingId(null);
-                  setName("");
-                  setDescription("");
-                  setRequired(false);
-                }
+              onOpenChange={(isOpen) => {
+                setOpen(isOpen);
+                if (!isOpen) resetForm();
               }}
             >
               <DialogTrigger asChild>
                 <Button
                   size="sm"
                   className="bg-gradient-emerald text-white"
-                  onClick={() => {
-                    setEditingId(null);
-                    setName("");
-                    setDescription("");
-                    setRequired(false);
-                  }}
+                  onClick={resetForm}
                 >
                   <Plus className="h-4 w-4" /> {addLabel}
                 </Button>
               </DialogTrigger>
+
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                  <DialogTitle>{editingId ? `Edit ${editingId}` : addLabel}</DialogTitle>
+                  <DialogTitle>
+                    {editingId ? `Edit ${editingId}` : addLabel}
+                  </DialogTitle>
                   <DialogDescription>
                     {editingId
                       ? `Updates this ${title.toLowerCase()} record.`
                       : `Adds a new entry to the ${title.toLowerCase()}.`}
                   </DialogDescription>
                 </DialogHeader>
+
                 <div className="space-y-4 py-2">
                   <Field label="Name" required>
                     <Input
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="Enter name"
+                      disabled={saving}
                     />
                   </Field>
+
                   <Field label="Description">
                     <Textarea
                       rows={3}
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       placeholder="Short description"
+                      disabled={saving}
                     />
                   </Field>
+
                   {withRequired && (
                     <div className="border-border bg-muted/40 flex items-center justify-between rounded-lg border px-3 py-2.5">
                       <div>
-                        <div className="text-sm font-medium">Mandatory document</div>
+                        <div className="text-sm font-medium">
+                          Mandatory document
+                        </div>
                         <div className="text-muted-foreground text-xs">
                           Employees must upload this during onboarding
                         </div>
                       </div>
-                      <Switch checked={required} onCheckedChange={setRequired} />
+                      <Switch
+                        checked={required}
+                        onCheckedChange={setRequired}
+                        disabled={saving}
+                      />
                     </div>
                   )}
                 </div>
+
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpen(false)}>
+                  <Button
+                    variant="outline"
+                    onClick={() => setOpen(false)}
+                    disabled={saving}
+                  >
                     Cancel
                   </Button>
+
                   <Button
-                    disabled={!name.trim() || duplicate}
+                    disabled={!name.trim() || duplicate || saving}
                     className="bg-gradient-emerald text-white"
                     onClick={submit}
                   >
-                    {editingId ? "Save changes" : "Save"}
+                    {saving
+                      ? "Saving..."
+                      : editingId
+                        ? "Save changes"
+                        : "Save"}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -332,36 +645,55 @@ function MasterTable({ icon, title, desc, prefix, seed, withRequired, addLabel }
           </div>
         </SectionHead>
 
-        <Dialog open={!!viewRow} onOpenChange={(o) => !o && setViewRow(null)}>
+        <Dialog
+          open={!!viewRow}
+          onOpenChange={(isOpen) => !isOpen && setViewRow(null)}
+        >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>{viewRow?.id}</DialogTitle>
-              <DialogDescription>{title} record detail</DialogDescription>
+              <DialogTitle>{viewRow?.name || viewRow?.id}</DialogTitle>
+              <DialogDescription>
+                {title} record detail
+              </DialogDescription>
             </DialogHeader>
+
             <dl className="divide-border divide-y text-sm">
               {[
+                ["ID", viewRow?.id ?? ""],
                 ["Name", viewRow?.name ?? ""],
                 ["Description", viewRow?.description ?? ""],
                 ...(withRequired
-                  ? [["Required", viewRow?.required ? "Mandatory" : "Optional"]]
+                  ? [
+                      [
+                        "Required",
+                        viewRow?.required ? "Mandatory" : "Optional",
+                      ],
+                    ]
                   : []),
-              ].map(([k, v]) => (
-                <div key={k} className="grid grid-cols-3 gap-3 py-2">
-                  <dt className="text-muted-foreground text-xs tracking-wide uppercase">{k}</dt>
-                  <dd className="col-span-2 break-words">{v || "—"}</dd>
+              ].map(([key, value]) => (
+                <div key={key} className="grid grid-cols-3 gap-3 py-2">
+                  <dt className="text-muted-foreground text-xs tracking-wide uppercase">
+                    {key}
+                  </dt>
+                  <dd className="col-span-2 break-words">{value || "—"}</dd>
                 </div>
               ))}
             </dl>
+
             <DialogFooter>
-              <Button variant="outline" onClick={() => setViewRow(null)}>
+              <Button
+                variant="outline"
+                onClick={() => setViewRow(null)}
+              >
                 Close
               </Button>
+
               <Button
                 className="bg-gradient-emerald text-white"
                 onClick={() => {
-                  const r = viewRow;
+                  const record = viewRow;
                   setViewRow(null);
-                  if (r) startEdit(r);
+                  if (record) startEdit(record);
                 }}
               >
                 <Pencil className="h-4 w-4" /> Edit
@@ -370,27 +702,35 @@ function MasterTable({ icon, title, desc, prefix, seed, withRequired, addLabel }
           </DialogContent>
         </Dialog>
 
-        <Dialog open={!!deleteRow} onOpenChange={(o) => !o && setDeleteRow(null)}>
+        <Dialog
+          open={!!deleteRow}
+          onOpenChange={(isOpen) => !isOpen && setDeleteRow(null)}
+        >
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Delete {deleteRow?.id}?</DialogTitle>
               <DialogDescription>
-                This removes the record from {title.toLowerCase()}. This cannot be undone.
+                This removes the record from {title.toLowerCase()}. This cannot
+                be undone.
               </DialogDescription>
             </DialogHeader>
+
             <DialogFooter>
-              <Button variant="outline" onClick={() => setDeleteRow(null)}>
+              <Button
+                variant="outline"
+                onClick={() => setDeleteRow(null)}
+                disabled={saving}
+              >
                 Cancel
               </Button>
+
               <Button
                 variant="destructive"
-                onClick={() => {
-                  setRows((p) => p.filter((r) => r.id !== deleteRow.id));
-                  toast.success(`${deleteRow.id} deleted`);
-                  setDeleteRow(null);
-                }}
+                onClick={confirmDelete}
+                disabled={saving}
               >
-                <Trash2 className="h-4 w-4" /> Delete
+                <Trash2 className="h-4 w-4" />
+                {saving ? "Deleting..." : "Delete"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -403,63 +743,94 @@ function MasterTable({ icon, title, desc, prefix, seed, withRequired, addLabel }
                 <th className="p-3 text-left">Code</th>
                 <th className="p-3 text-left">Name</th>
                 <th className="p-3 text-left">Description</th>
-                {withRequired && <th className="p-3 text-left">Required</th>}
+                {withRequired && (
+                  <th className="p-3 text-left">Required</th>
+                )}
                 <th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
+
             <tbody className="divide-border divide-y">
-              {rows.map((r) => (
-                <tr key={r.id} className="hover:bg-muted/30">
-                  <td className="text-muted-foreground p-3 font-mono text-xs">{r.id}</td>
-                  <td className="p-3 font-medium">{r.name}</td>
-                  <td className="text-muted-foreground p-3">{r.description || "—"}</td>
-                  {withRequired && (
-                    <td className="p-3">
-                      <Badge
-                        variant="outline"
-                        className={
-                          r.required
-                            ? "border-primary/30 bg-primary/10 text-primary"
-                            : "border-border bg-muted text-muted-foreground"
-                        }
-                      >
-                        {r.required ? "Mandatory" : "Optional"}
-                      </Badge>
-                    </td>
-                  )}
-                  <td className="p-3">
-                    <div className="flex flex-wrap items-center justify-end gap-1">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8"
-                        title="View"
-                        onClick={() => setViewRow(r)}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8"
-                        title="Edit"
-                        onClick={() => startEdit(r)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="text-destructive hover:text-destructive h-8 w-8"
-                        title="Delete"
-                        onClick={() => setDeleteRow(r)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+              {loading ? (
+                <tr>
+                  <td
+                    colSpan={withRequired ? 5 : 4}
+                    className="text-muted-foreground p-6 text-center"
+                  >
+                    Loading records...
                   </td>
                 </tr>
-              ))}
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={withRequired ? 5 : 4}
+                    className="text-muted-foreground p-6 text-center"
+                  >
+                    No records found.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r) => (
+                  <tr key={r.id} className="hover:bg-muted/30">
+                    <td className="text-muted-foreground p-3 font-mono text-xs">
+                      {r.id}
+                    </td>
+                    <td className="p-3 font-medium">{r.name}</td>
+                    <td className="text-muted-foreground p-3">
+                      {r.description || "—"}
+                    </td>
+
+                    {withRequired && (
+                      <td className="p-3">
+                        <Badge
+                          variant="outline"
+                          className={
+                            r.required
+                              ? "border-primary/30 bg-primary/10 text-primary"
+                              : "border-border bg-muted text-muted-foreground"
+                          }
+                        >
+                          {r.required ? "Mandatory" : "Optional"}
+                        </Badge>
+                      </td>
+                    )}
+
+                    <td className="p-3">
+                      <div className="flex flex-wrap items-center justify-end gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          title="View"
+                          onClick={() => viewRecord(r)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          title="Edit"
+                          onClick={() => startEdit(r)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive h-8 w-8"
+                          title="Delete"
+                          onClick={() => setDeleteRow(r)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -482,21 +853,34 @@ function PayrollConfigTab() {
   const [show, setShow] = useState(true);
   const [detail, setDetail] = useState(null);
 
-  const codeTaken = rows.some((r) => r.code.toLowerCase() === code.trim().toLowerCase());
+  const codeTaken = rows.some(
+    (r) => r.code.toLowerCase() === code.trim().toLowerCase(),
+  );
+
   const valueInvalid =
     /%/.test(value) &&
-    !(Number(value.replace(/[^\d.]/g, "")) >= 0 && Number(value.replace(/[^\d.]/g, "")) <= 100);
+    !(
+      Number(value.replace(/[^\d.]/g, "")) >= 0 &&
+      Number(value.replace(/[^\d.]/g, "")) <= 100
+    );
+
   function submit() {
     if (codeTaken) {
       toast.error(`Component code ${code.trim().toUpperCase()} is already used`);
       return;
     }
+
     setRows((p) => [
       {
-        id: `PC-${String(p.reduce((m, r) => Math.max(m, Number(r.id.replace(/\D/g, "")) || 0), 0) + 1).padStart(2, "0")}`,
+        id: `PC-${String(
+          p.reduce(
+            (m, r) => Math.max(m, Number(r.id.replace(/\D/g, "")) || 0),
+            0,
+          ) + 1,
+        ).padStart(2, "0")}`,
         name: name.trim(),
         code: code.trim().toUpperCase(),
-        kind: kind,
+        kind,
         calculation: calculation || "Flat",
         value: value.trim() || "—",
         description: description.trim(),
@@ -504,6 +888,7 @@ function PayrollConfigTab() {
       },
       ...p,
     ]);
+
     setOpen(false);
     setName("");
     setCode("");
@@ -529,13 +914,16 @@ function PayrollConfigTab() {
                 <Plus className="h-4 w-4" /> Add Component
               </Button>
             </DialogTrigger>
+
             <DialogContent className="sm:max-w-lg">
               <DialogHeader>
                 <DialogTitle>Add Payroll Component</DialogTitle>
                 <DialogDescription>
-                  Fields added here appear in the employee compensation form and payslips.
+                  Fields added here appear in the employee compensation form
+                  and payslips.
                 </DialogDescription>
               </DialogHeader>
+
               <div className="space-y-4 py-2">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <Field label="Field name" required>
@@ -545,6 +933,7 @@ function PayrollConfigTab() {
                       placeholder="e.g. Transport Allowance"
                     />
                   </Field>
+
                   <Field label="Code" required>
                     <Input
                       value={code}
@@ -553,9 +942,10 @@ function PayrollConfigTab() {
                     />
                   </Field>
                 </div>
+
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <Field label="Type" required>
-                    <Select value={kind} onValueChange={(v) => setKind(v)}>
+                    <Select value={kind} onValueChange={setKind}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
@@ -568,13 +958,23 @@ function PayrollConfigTab() {
                       </SelectContent>
                     </Select>
                   </Field>
+
                   <Field label="Calculation">
-                    <Select value={calculation} onValueChange={setCalculation}>
+                    <Select
+                      value={calculation}
+                      onValueChange={setCalculation}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Flat" />
                       </SelectTrigger>
                       <SelectContent>
-                        {["Flat", "% of Basic", "% of CTC", "Balancing", "Annual"].map((c) => (
+                        {[
+                          "Flat",
+                          "% of Basic",
+                          "% of CTC",
+                          "Balancing",
+                          "Annual",
+                        ].map((c) => (
                           <SelectItem key={c} value={c}>
                             {c}
                           </SelectItem>
@@ -583,6 +983,7 @@ function PayrollConfigTab() {
                     </Select>
                   </Field>
                 </div>
+
                 <Field label="Default value">
                   <Input
                     value={value}
@@ -590,6 +991,7 @@ function PayrollConfigTab() {
                     placeholder="₹\u00A01,600 or 40%"
                   />
                 </Field>
+
                 <Field label="Description">
                   <Textarea
                     rows={2}
@@ -598,9 +1000,12 @@ function PayrollConfigTab() {
                     placeholder="How this component is used"
                   />
                 </Field>
+
                 <div className="border-border bg-muted/40 flex items-center justify-between rounded-lg border px-3 py-2.5">
                   <div>
-                    <div className="text-sm font-medium">Show in employee form</div>
+                    <div className="text-sm font-medium">
+                      Show in employee form
+                    </div>
                     <div className="text-muted-foreground text-xs">
                       Render this field in the Add Employee compensation section
                     </div>
@@ -608,10 +1013,12 @@ function PayrollConfigTab() {
                   <Switch checked={show} onCheckedChange={setShow} />
                 </div>
               </div>
+
               <DialogFooter>
                 <Button variant="outline" onClick={() => setOpen(false)}>
                   Cancel
                 </Button>
+
                 {(codeTaken || valueInvalid) && (
                   <span className="text-destructive mr-auto text-xs">
                     {codeTaken
@@ -619,8 +1026,15 @@ function PayrollConfigTab() {
                       : "A percentage must be between 0 and 100."}
                   </span>
                 )}
+
                 <Button
-                  disabled={!name.trim() || !code.trim() || !kind || codeTaken || valueInvalid}
+                  disabled={
+                    !name.trim() ||
+                    !code.trim() ||
+                    !kind ||
+                    codeTaken ||
+                    valueInvalid
+                  }
                   className="bg-gradient-emerald text-white"
                   onClick={submit}
                 >
@@ -644,11 +1058,18 @@ function PayrollConfigTab() {
                 <th className="p-3 text-left">In Employee Form</th>
               </tr>
             </thead>
+
             <tbody className="divide-border divide-y">
               {rows.map((r) => (
-                <tr key={r.id} className={clickableRow} onClick={() => setDetail(r)}>
+                <tr
+                  key={r.id}
+                  className={clickableRow}
+                  onClick={() => setDetail(r)}
+                >
                   <td className="p-3 font-medium">{r.name}</td>
-                  <td className="text-muted-foreground p-3 font-mono text-xs">{r.code}</td>
+                  <td className="text-muted-foreground p-3 font-mono text-xs">
+                    {r.code}
+                  </td>
                   <td className="p-3">
                     <Badge
                       variant="outline"
@@ -661,12 +1082,16 @@ function PayrollConfigTab() {
                       {r.kind}
                     </Badge>
                   </td>
-                  <td className="text-muted-foreground p-3">{r.calculation}</td>
+                  <td className="text-muted-foreground p-3">
+                    {r.calculation}
+                  </td>
                   <td className="text-primary p-3 font-semibold">{r.value}</td>
                   <td className="text-muted-foreground max-w-[240px] p-3 text-xs">
                     {r.description}
                   </td>
-                  <td className="p-3">{r.showInEmployeeForm ? "Yes" : "No"}</td>
+                  <td className="p-3">
+                    {r.showInEmployeeForm ? "Yes" : "No"}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -706,7 +1131,6 @@ function PayrollConfigTab() {
 }
 
 function WorkdayConfigTab() {
-  // Saved configuration lives in the shared list so it survives navigation; the switches edit a draft until saved.
   const [saved, setSaved] = useSharedList("workday-config", [
     "Monday",
     "Tuesday",
@@ -715,11 +1139,19 @@ function WorkdayConfigTab() {
     "Friday",
   ]);
   const [days, setDays] = useState(saved);
+
   useEffect(() => {
     setDays(saved);
   }, [saved]);
-  const toggle = (d) => setDays((p) => (p.includes(d) ? p.filter((x) => x !== d) : [...p, d]));
-  const dirty = WEEKDAYS.some((d) => days.includes(d) !== saved.includes(d));
+
+  const toggle = (d) =>
+    setDays((p) =>
+      p.includes(d) ? p.filter((x) => x !== d) : [...p, d],
+    );
+
+  const dirty = WEEKDAYS.some(
+    (d) => days.includes(d) !== saved.includes(d),
+  );
 
   return (
     <Card className="shadow-card">
@@ -741,6 +1173,7 @@ function WorkdayConfigTab() {
             Save Configuration
           </Button>
         </SectionHead>
+
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {WEEKDAYS.map((d) => (
             <div
@@ -748,10 +1181,14 @@ function WorkdayConfigTab() {
               className="border-border bg-muted/30 flex items-center justify-between rounded-lg border px-4 py-3"
             >
               <span className="text-sm font-medium">{d}</span>
-              <Switch checked={days.includes(d)} onCheckedChange={() => toggle(d)} />
+              <Switch
+                checked={days.includes(d)}
+                onCheckedChange={() => toggle(d)}
+              />
             </div>
           ))}
         </div>
+
         <div className="text-muted-foreground mt-4 text-sm">
           Working days per week:{" "}
           <span className="text-foreground font-semibold">{days.length}</span>
@@ -768,23 +1205,31 @@ function IpRestrictTab() {
   const [address, setAddress] = useState("");
   const [restricted, setRestricted] = useState(true);
 
-  // IPv4 address or CIDR range — any text used to be accepted and enforced for sign-in.
   const ipValid =
     /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}(\/([0-9]|[12]\d|3[0-2]))?$/.test(
       address.trim(),
     );
+
   const ipDup = rows.some((r) => r.address === address.trim());
+
   function submit() {
     if (!ipValid || ipDup) return;
+
     setRows((p) => [
       {
-        id: `IP-${String(p.reduce((m, r) => Math.max(m, Number(r.id.replace(/\D/g, "")) || 0), 0) + 1).padStart(2, "0")}`,
+        id: `IP-${String(
+          p.reduce(
+            (m, r) => Math.max(m, Number(r.id.replace(/\D/g, "")) || 0),
+            0,
+          ) + 1,
+        ).padStart(2, "0")}`,
         name: name.trim(),
         address: address.trim(),
         restricted,
       },
       ...p,
     ]);
+
     setOpen(false);
     setName("");
     setAddress("");
@@ -806,13 +1251,16 @@ function IpRestrictTab() {
                 <Plus className="h-4 w-4" /> Add IP
               </Button>
             </DialogTrigger>
+
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>Add IP Address</DialogTitle>
                 <DialogDescription>
-                  Register a network and choose whether access is restricted to it.
+                  Register a network and choose whether access is restricted to
+                  it.
                 </DialogDescription>
               </DialogHeader>
+
               <div className="space-y-4 py-2">
                 <Field label="IP address name" required>
                   <Input
@@ -821,6 +1269,7 @@ function IpRestrictTab() {
                     placeholder="e.g. Bhubaneswar HQ Wi-Fi"
                   />
                 </Field>
+
                 <Field label="IP address / range" required>
                   <Input
                     value={address}
@@ -828,6 +1277,7 @@ function IpRestrictTab() {
                     placeholder="103.21.244.10"
                   />
                 </Field>
+
                 <div className="border-border bg-muted/40 flex items-center justify-between rounded-lg border px-3 py-2.5">
                   <div>
                     <div className="text-sm font-medium">Restrict</div>
@@ -835,13 +1285,18 @@ function IpRestrictTab() {
                       Enforce this rule for sign-in
                     </div>
                   </div>
-                  <Switch checked={restricted} onCheckedChange={setRestricted} />
+                  <Switch
+                    checked={restricted}
+                    onCheckedChange={setRestricted}
+                  />
                 </div>
               </div>
+
               <DialogFooter>
                 <Button variant="outline" onClick={() => setOpen(false)}>
                   Cancel
                 </Button>
+
                 {address.trim() && (!ipValid || ipDup) && (
                   <span className="text-destructive mr-auto text-xs">
                     {ipDup
@@ -849,8 +1304,11 @@ function IpRestrictTab() {
                       : "Enter an IPv4 address or CIDR range, e.g. 103.21.244.10 or 10.8.0.0/24."}
                   </span>
                 )}
+
                 <Button
-                  disabled={!name.trim() || !address.trim() || !ipValid || ipDup}
+                  disabled={
+                    !name.trim() || !address.trim() || !ipValid || ipDup
+                  }
                   className="bg-gradient-emerald text-white"
                   onClick={submit}
                 >
@@ -870,16 +1328,23 @@ function IpRestrictTab() {
                 <th className="p-3 text-left">Restrict</th>
               </tr>
             </thead>
+
             <tbody className="divide-border divide-y">
               {rows.map((r) => (
                 <tr key={r.id} className="hover:bg-muted/30">
                   <td className="p-3 font-medium">{r.name}</td>
-                  <td className="text-muted-foreground p-3 font-mono text-xs">{r.address}</td>
+                  <td className="text-muted-foreground p-3 font-mono text-xs">
+                    {r.address}
+                  </td>
                   <td className="p-3">
                     <Switch
                       checked={r.restricted}
                       onCheckedChange={(v) =>
-                        setRows((p) => p.map((x) => (x.id === r.id ? { ...x, restricted: v } : x)))
+                        setRows((p) =>
+                          p.map((x) =>
+                            x.id === r.id ? { ...x, restricted: v } : x,
+                          ),
+                        )
                       }
                     />
                   </td>
@@ -911,9 +1376,23 @@ const GROUPS = [
         label: "Infrastructure — branches, buildings, departments, designations",
         icon: Building,
       },
-      { key: "entities", label: "Group, entities & branches", icon: GitBranch, superOnly: true },
-      { key: "branding", label: "Colours & branding, security, notifications", icon: Palette },
-      { key: "paygrade", label: "Pay grades & bands", icon: Layers, perm: "payroll.manage" },
+      {
+        key: "entities",
+        label: "Group, entities & branches",
+        icon: GitBranch,
+        superOnly: true,
+      },
+      {
+        key: "branding",
+        label: "Colours & branding, security, notifications",
+        icon: Palette,
+      },
+      {
+        key: "paygrade",
+        label: "Pay grades & bands",
+        icon: Layers,
+        perm: "payroll.manage",
+      },
     ],
   },
   {
@@ -924,9 +1403,21 @@ const GROUPS = [
         label: "Doc Master — templates, styles, letters, forms",
         icon: FileSignature,
       },
-      { key: "handbook", label: "Employee Handbook — publish & acknowledgements", icon: BookText },
-      { key: "documents", label: "Onboarding document master", icon: FileText },
-      { key: "policies", label: "Policies & circulars", icon: BookOpen },
+      {
+        key: "handbook",
+        label: "Employee Handbook — publish & acknowledgements",
+        icon: BookText,
+      },
+      {
+        key: "documents",
+        label: "Onboarding document master",
+        icon: FileText,
+      },
+      {
+        key: "policies",
+        label: "Policies & circulars",
+        icon: BookOpen,
+      },
       { key: "awards", label: "Award master", icon: Trophy },
     ],
   },
@@ -945,7 +1436,12 @@ const GROUPS = [
         icon: ListChecks,
         perm: "recruitment.manage",
       },
-      { key: "locations", label: "Job locations", icon: MapPinned, perm: "recruitment.manage" },
+      {
+        key: "locations",
+        label: "Job locations",
+        icon: MapPinned,
+        perm: "recruitment.manage",
+      },
       {
         key: "assessparams",
         label: "Assessment & evaluation parameters",
@@ -959,7 +1455,11 @@ const GROUPS = [
     items: [
       { key: "shifts", label: "Shift management", icon: Clock },
       { key: "workday", label: "Workday configuration", icon: CalendarDays },
-      { key: "patterns", label: "Attendance patterns & overrides", icon: CalendarCheck },
+      {
+        key: "patterns",
+        label: "Attendance patterns & overrides",
+        icon: CalendarCheck,
+      },
       { key: "rules", label: "Penalty & overtime rules", icon: AlertTriangle },
       { key: "timesheet", label: "Timesheet formats", icon: Clock },
       { key: "holidays", label: "Holiday calendars (3 types)", icon: CalendarDays },
@@ -967,7 +1467,13 @@ const GROUPS = [
   },
   {
     group: "Leave",
-    items: [{ key: "leavemaster", label: "Leave master & leave policy", icon: CalendarDays }],
+    items: [
+      {
+        key: "leavemaster",
+        label: "Leave master & leave policy",
+        icon: CalendarDays,
+      },
+    ],
   },
   {
     group: "Payroll & statutory",
@@ -978,7 +1484,12 @@ const GROUPS = [
         icon: Wallet,
         perm: "payroll.manage",
       },
-      { key: "payroll", label: "Pay components", icon: Coins, perm: "payroll.manage" },
+      {
+        key: "payroll",
+        label: "Pay components",
+        icon: Coins,
+        perm: "payroll.manage",
+      },
       {
         key: "statutory",
         label: "Statutory configuration — PF methods, ESI, TDS",
@@ -992,7 +1503,12 @@ const GROUPS = [
         perm: "statutory.configure",
       },
       { key: "insurance", label: "Insurance & benefit plans", icon: ShieldPlus },
-      { key: "loanpolicy", label: "Loan & advance policy", icon: Wallet, perm: "finance.manage" },
+      {
+        key: "loanpolicy",
+        label: "Loan & advance policy",
+        icon: Wallet,
+        perm: "finance.manage",
+      },
       { key: "reimcat", label: "Reimbursement categories", icon: Receipt },
     ],
   },
@@ -1009,71 +1525,119 @@ const GROUPS = [
   {
     group: "Assets",
     items: [
-      { key: "assetmaster", label: "Asset master — types, checklists, accessories", icon: Boxes },
+      {
+        key: "assetmaster",
+        label: "Asset master — types, checklists, accessories",
+        icon: Boxes,
+      },
     ],
   },
   {
     group: "Exit, cases & grievance",
     items: [
       { key: "fnf", label: "Exit, gratuity & F&F configuration", icon: UserX },
-      { key: "grievance", label: "Grievance routing & SLA", icon: MessageSquareWarning },
+      {
+        key: "grievance",
+        label: "Grievance routing & SLA",
+        icon: MessageSquareWarning,
+      },
       { key: "termination", label: "Termination types", icon: UserX },
       { key: "warning", label: "Warning types", icon: AlertTriangle },
-      { key: "complaint", label: "Complaint types", icon: MessageSquareWarning },
+      {
+        key: "complaint",
+        label: "Complaint types",
+        icon: MessageSquareWarning,
+      },
     ],
   },
   {
     group: "Helpdesk & workflows",
     items: [
-      { key: "helpdesk", label: "Helpdesk desks, categories, SLA", icon: LifeBuoy },
-      { key: "approvals", label: "Approval engine (workflows per module)", icon: GitBranch },
-      { key: "hrpolicy", label: "HR policy & notification rules", icon: BellRing },
+      {
+        key: "helpdesk",
+        label: "Helpdesk desks, categories, SLA",
+        icon: LifeBuoy,
+      },
+      {
+        key: "approvals",
+        label: "Approval engine (workflows per module)",
+        icon: GitBranch,
+      },
+      {
+        key: "hrpolicy",
+        label: "HR policy & notification rules",
+        icon: BellRing,
+      },
     ],
   },
   {
     group: "Access & security",
     items: [
-      { key: "roles", label: "Roles & permissions", icon: ShieldCheck, perm: "role.manage" },
+      {
+        key: "roles",
+        label: "Roles & permissions",
+        icon: ShieldCheck,
+        perm: "role.manage",
+      },
       { key: "ip", label: "IP restrictions", icon: ShieldCheck },
       { key: "geofence", label: "Geofencing", icon: MapPinned },
     ],
   },
 ];
+
 const ALL_ITEMS = GROUPS.flatMap((g) => g.items);
-const readHash = () => (typeof window !== "undefined" ? window.location.hash.replace("#", "") : "");
+
+const readHash = () =>
+  typeof window !== "undefined"
+    ? window.location.hash.replace("#", "")
+    : "";
 
 function Masters() {
   const me = useCurrentUser();
   const [tab, setTab] = useState("infrastructure");
   const [q, setQ] = useState("");
-  // Hash (#docmaster, #handbook …) is applied after hydration so server and client markup match.
+
   useEffect(() => {
     const on = () => {
       const h = readHash();
       if (ALL_ITEMS.some((i) => i.key === h)) setTab(h);
     };
+
     on();
     window.addEventListener("hashchange", on);
+
     return () => window.removeEventListener("hashchange", on);
   }, []);
+
   const go = (k) => {
     setTab(k);
-    if (typeof window !== "undefined") window.history.replaceState(null, "", `#${k}`);
+
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", `#${k}`);
+    }
   };
-  // Sections are filtered by the action they configure: a COO could open Roles & permissions, payroll and statutory
-  // configuration here although ROLE_ACTIONS grants none of those (and HR could edit roles without role.manage).
+
   const allowed = (i) =>
-    (!i.superOnly || me.role === "SuperAdmin") && (!i.perm || can(me.role, i.perm));
+    (!i.superOnly || me.role === "SuperAdmin") &&
+    (!i.perm || can(me.role, i.perm));
+
   const visible = GROUPS.map((g) => ({
     ...g,
     items: g.items.filter(
-      (i) => allowed(i) && (!q || `${g.group} ${i.label}`.toLowerCase().includes(q.toLowerCase())),
+      (i) =>
+        allowed(i) &&
+        (!q ||
+          `${g.group} ${i.label}`.toLowerCase().includes(q.toLowerCase())),
     ),
   })).filter((g) => g.items.length);
+
   const activeItem = ALL_ITEMS.find((i) => i.key === tab);
-  // A deep link (#roles) to a section the role may not open falls back to the first allowed one.
   const firstAllowed = visible[0]?.items[0]?.key ?? "infrastructure";
-  if (activeItem && !allowed(activeItem) && tab !== firstAllowed) setTab(firstAllowed);
+
+  if (activeItem && !allowed(activeItem) && tab !== firstAllowed) {
+    setTab(firstAllowed);
+  }
+
   const active = activeItem;
   const group = GROUPS.find((g) => g.items.some((i) => i.key === tab));
 
@@ -1085,13 +1649,14 @@ function Masters() {
             <Building className="text-primary h-6 w-6" /> Master Data
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Every master and configuration in the product, in one place — set these up first; every
-            module reads from here.{" "}
+            Every master and configuration in the product, in one place — set
+            these up first; every module reads from here.{" "}
             {me.role === "SuperAdmin"
               ? "Entity-specific masters apply to the company selected in the top bar."
               : "Masters apply to your company."}
           </p>
         </div>
+
         <div className="border-border bg-muted/40 flex min-w-[240px] items-center gap-2 rounded-lg border px-3 py-2">
           <Search className="text-muted-foreground h-4 w-4" />
           <Input
@@ -1111,11 +1676,16 @@ function Masters() {
                 <div className="text-muted-foreground px-3 text-[11px] font-semibold tracking-wider uppercase">
                   {g.group}
                 </div>
+
                 {g.items.map((i) => (
                   <button
                     key={i.key}
                     onClick={() => go(i.key)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${i.key === tab ? "bg-gradient-emerald text-white shadow-sm" : "hover:bg-muted"}`}
+                    className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition ${
+                      i.key === tab
+                        ? "bg-gradient-emerald text-white shadow-sm"
+                        : "hover:bg-muted"
+                    }`}
                   >
                     <i.icon className="h-4 w-4 shrink-0" />
                     <span className="truncate">{i.label}</span>
@@ -1135,6 +1705,7 @@ function Masters() {
           {tab === "infrastructure" && <Infrastructure />}
           {tab === "entities" && <GroupsWorkspace />}
           {tab === "branding" && <OrgSettings />}
+
           {tab === "paygrade" && (
             <CrudSection
               icon={Layers}
@@ -1144,7 +1715,12 @@ function Masters() {
               idPrefix="PG"
               seed={PAY_GRADE_ROWS}
               fields={[
-                { key: "name", label: "Grade code", required: true, placeholder: "e.g. G4" },
+                {
+                  key: "name",
+                  label: "Grade code",
+                  required: true,
+                  placeholder: "e.g. G4",
+                },
                 {
                   key: "band",
                   label: "Band",
@@ -1153,8 +1729,18 @@ function Masters() {
                   required: true,
                   badge: true,
                 },
-                { key: "minCtc", label: "Minimum CTC", type: "number", required: true },
-                { key: "maxCtc", label: "Maximum CTC", type: "number", required: true },
+                {
+                  key: "minCtc",
+                  label: "Minimum CTC",
+                  type: "number",
+                  required: true,
+                },
+                {
+                  key: "maxCtc",
+                  label: "Maximum CTC",
+                  type: "number",
+                  required: true,
+                },
                 {
                   key: "currency",
                   label: "Currency",
@@ -1168,13 +1754,19 @@ function Masters() {
                   options: ["Active", "Inactive"],
                   badge: true,
                 },
-                { key: "description", label: "Description", type: "textarea", full: true },
+                {
+                  key: "description",
+                  label: "Description",
+                  type: "textarea",
+                  full: true,
+                },
               ]}
             />
           )}
 
           {tab === "docmaster" && <DocMasterTab />}
           {tab === "handbook" && <HandbookTab />}
+
           {tab === "documents" && (
             <MasterTable
               icon={FileText}
@@ -1186,6 +1778,7 @@ function Masters() {
               addLabel="Add Document"
             />
           )}
+
           {tab === "policies" && (
             <CrudSection
               icon={BookText}
@@ -1206,10 +1799,15 @@ function Masters() {
                 },
                 { key: "updated", label: "Effective date", type: "date" },
                 { key: "file", label: "Document", type: "file" },
-                { key: "description", label: "Description", type: "textarea" },
+                {
+                  key: "description",
+                  label: "Description",
+                  type: "textarea",
+                },
               ]}
             />
           )}
+
           {tab === "awards" && (
             <MasterTable
               icon={Trophy}
@@ -1218,6 +1816,7 @@ function Masters() {
               prefix="AWD"
               seed={AWARD_MASTER}
               addLabel="Add Award"
+              api={awardMasterApi}
             />
           )}
 
@@ -1232,13 +1831,13 @@ function Masters() {
           {tab === "rules" && <PenaltyConfigTab />}
           {tab === "timesheet" && <TimesheetFormatsTab />}
           {tab === "holidays" && <LeaveMasterTab section="holidays" />}
-
           {tab === "leavemaster" && <LeaveMasterTab section="leave" />}
 
           {tab === "salaryconfig" && <SalaryConfigTab />}
           {tab === "payroll" && <PayrollConfigTab />}
           {tab === "statutory" && <StatutoryConfigTab />}
           {tab === "states" && <StatePolicyTab />}
+
           {tab === "insurance" && (
             <div className="space-y-4">
               <InsurancePlansTab />
@@ -1260,7 +1859,9 @@ function Masters() {
               />
             </div>
           )}
+
           {tab === "loanpolicy" && <LoanPolicyCard />}
+
           {tab === "reimcat" && (
             <NamedMasterTab
               icon={Receipt}
@@ -1277,6 +1878,7 @@ function Masters() {
 
           {tab === "fnf" && <FnfConfigPanel />}
           {tab === "grievance" && <GrievanceRoutingCard />}
+
           {tab === "termination" && (
             <MasterTable
               icon={UserX}
@@ -1287,6 +1889,7 @@ function Masters() {
               addLabel="Add Termination Type"
             />
           )}
+
           {tab === "warning" && (
             <MasterTable
               icon={AlertTriangle}
@@ -1297,6 +1900,7 @@ function Masters() {
               addLabel="Add Warning Type"
             />
           )}
+
           {tab === "complaint" && (
             <MasterTable
               icon={MessageSquareWarning}
