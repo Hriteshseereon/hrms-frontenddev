@@ -1,4 +1,5 @@
-// src/api/SuperAdmin_auth.js
+
+ // src/api/SuperAdmin_auth.js
 import SuperAdmin_axios from "./SuperAdmin_axios";
 import { signInSuperAdmin, signOut } from "@/features/auth/data/auth-session";
 
@@ -6,10 +7,7 @@ const SuperAdmin_auth = {
   async login(email, password) {
     const response = await SuperAdmin_axios.post(
       "/auth/super-admins/login",
-      {
-        email,
-        password,
-      },
+      { email, password }
     );
 
     const { access_token, refresh_token } = response.data;
@@ -47,6 +45,65 @@ const SuperAdmin_auth = {
   createBranch(data) {
     return SuperAdmin_axios.post("/super-admin/branches", data);
   },
+
+  // DEPARTMENT APIs
+
+  getDepartments() {
+    return SuperAdmin_axios.get("/super-admin/departments");
+  },
+
+  getDepartmentById(departmentId) {
+    return SuperAdmin_axios.get(
+      `/super-admin/departments/${departmentId}`
+    );
+  },
+
+  createDepartment(data) {
+    return SuperAdmin_axios.post("/super-admin/departments", data);
+  },
+
+  updateDepartment(departmentId, data) {
+    return SuperAdmin_axios.put(
+      `/super-admin/departments/${departmentId}`,
+      data
+    );
+  },
+
+  deleteDepartment(departmentId) {
+    return SuperAdmin_axios.delete(
+      `/super-admin/departments/${departmentId}`
+    );
+  },
+  
+  // DESIGNATION APIs
+
+  getDesignations() {
+    return SuperAdmin_axios.get("/super-admin/designations");
+  },
+
+  getDesignationById(designationId) {
+    return SuperAdmin_axios.get(
+      `/super-admin/designations/${designationId}`
+    );
+  },
+
+  createDesignation(data) {
+    return SuperAdmin_axios.post("/super-admin/designations", data);
+  },
+
+  updateDesignation(designationId, data) {
+    return SuperAdmin_axios.put(
+      `/super-admin/designations/${designationId}`,
+      data
+    );
+  },
+
+  deleteDesignation(designationId) {
+    return SuperAdmin_axios.delete(
+      `/super-admin/designations/${designationId}`
+    );
+  },
+
 
   logout() {
     signOut();

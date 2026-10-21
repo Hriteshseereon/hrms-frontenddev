@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import Link from "@/lib/router";
 import { usePathname } from "@/lib/router";
@@ -45,6 +46,8 @@ import {
   KeyRound,
   SlidersHorizontal,
   Eye,
+  Building2,
+  ContactRound,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { cn } from "@/lib/utils";
@@ -115,6 +118,21 @@ export const ORG_NAV_GROUPS = [
     ],
   },
   {
+  label: "Organization Structure",
+  items: [
+    {
+      to: "/org/departments",
+      label: "Department",
+      icon: Building,
+    },
+    {
+      to: "/org/designations",
+      label: "Designation",
+      icon: FileBadge,
+    },
+  ],
+},
+  {
     label: "People",
     items: [
       { to: "/org/employees", label: "Employees", icon: Users },
@@ -124,6 +142,7 @@ export const ORG_NAV_GROUPS = [
       { to: "/org/training", label: "Training", icon: GraduationCap },
     ],
   },
+
   {
     label: "Time & Leave",
     items: [
