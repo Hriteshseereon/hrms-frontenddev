@@ -296,6 +296,20 @@ export const PAGES = [
     title: "Workspace Dashboard",
     load: () => import("@/features/dashboard/views/DashboardView"),
   },
+  
+  {
+    path: "/org/departments",
+    shell: "org",
+    title: "Departments",
+    load: () => import("@/features/organization/Department"),
+  },
+  {
+    path: "/org/designations",
+    shell: "org",
+    title: "Designations",
+    load: () => import("@/features/organization/Designation"),
+  },
+
   {
     path: "/org/delegation",
     shell: "org",
