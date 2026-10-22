@@ -1,9 +1,12 @@
 
- // src/api/SuperAdmin_auth.js
 import SuperAdmin_axios from "./SuperAdmin_axios";
-import { signInSuperAdmin, signOut } from "@/features/auth/data/auth-session";
+import {
+  signInSuperAdmin,
+  signOut,
+} from "@/features/auth/data/auth-session";
 
 const SuperAdmin_auth = {
+  // SUPER ADMIN LOGIN
   async login(email, password) {
     const response = await SuperAdmin_axios.post(
       "/auth/super-admins/login",
@@ -13,11 +16,19 @@ const SuperAdmin_auth = {
     const { access_token, refresh_token } = response.data;
 
     if (!access_token || !refresh_token) {
-      throw new Error("Login response did not contain the expected tokens.");
+      throw new Error(
+        "Login response did not contain the expected tokens."
+      );
     }
 
-    localStorage.setItem("super_admin_access_token", access_token);
-    localStorage.setItem("super_admin_refresh_token", refresh_token);
+    localStorage.setItem(
+      "super_admin_access_token",
+      access_token
+    );
+    localStorage.setItem(
+      "super_admin_refresh_token",
+      refresh_token
+    );
 
     try {
       signInSuperAdmin(response.data.user);
@@ -30,81 +41,31 @@ const SuperAdmin_auth = {
     return response.data;
   },
 
+  // COMPANY APIs
   getCompanies() {
     return SuperAdmin_axios.get("/super-admin/companies");
   },
 
   createCompany(data) {
-    return SuperAdmin_axios.post("/super-admin/companies", data);
+    return SuperAdmin_axios.post(
+      "/super-admin/companies",
+      data
+    );
   },
 
+  // BRANCH APIs
   getBranches() {
     return SuperAdmin_axios.get("/super-admin/branches");
   },
 
   createBranch(data) {
-    return SuperAdmin_axios.post("/super-admin/branches", data);
-  },
-
-  // DEPARTMENT APIs
-
-  getDepartments() {
-    return SuperAdmin_axios.get("/super-admin/departments");
-  },
-
-  getDepartmentById(departmentId) {
-    return SuperAdmin_axios.get(
-      `/super-admin/departments/${departmentId}`
-    );
-  },
-
-  createDepartment(data) {
-    return SuperAdmin_axios.post("/super-admin/departments", data);
-  },
-
-  updateDepartment(departmentId, data) {
-    return SuperAdmin_axios.put(
-      `/super-admin/departments/${departmentId}`,
+    return SuperAdmin_axios.post(
+      "/super-admin/branches",
       data
     );
   },
 
-  deleteDepartment(departmentId) {
-    return SuperAdmin_axios.delete(
-      `/super-admin/departments/${departmentId}`
-    );
-  },
-  
-  // DESIGNATION APIs
-
-  getDesignations() {
-    return SuperAdmin_axios.get("/super-admin/designations");
-  },
-
-  getDesignationById(designationId) {
-    return SuperAdmin_axios.get(
-      `/super-admin/designations/${designationId}`
-    );
-  },
-
-  createDesignation(data) {
-    return SuperAdmin_axios.post("/super-admin/designations", data);
-  },
-
-  updateDesignation(designationId, data) {
-    return SuperAdmin_axios.put(
-      `/super-admin/designations/${designationId}`,
-      data
-    );
-  },
-
-  deleteDesignation(designationId) {
-    return SuperAdmin_axios.delete(
-      `/super-admin/designations/${designationId}`
-    );
-  },
-
-
+  // LOGOUT
   logout() {
     signOut();
   },
