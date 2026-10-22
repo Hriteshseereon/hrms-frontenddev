@@ -1,4 +1,4 @@
-import awardMasterApi from "@/api/awardApi";
+// import awardMasterApi from "@/api/awardApi";
 import {
   getPayGrades,
   getPayGradeById,
@@ -7,7 +7,6 @@ import {
   patchPayGrade,
   deletePayGrade,
 } from "@/api/payGradeApi";
-import { useSharedList } from "@/lib/shared-list";
 
 import awardMasterApi from "@/api/awardApi";
 import { useSharedList } from "@/lib/shared-list";
