@@ -450,7 +450,11 @@ function Field({ label, children, required }) {
   );
 }
 
+
+/** `name` identifies the document input for the employee document upload flow. */
+=======
 /** `name` is the multipart field name sent to the backend (see POST /employees/form). */
+
 function FileUpload({ label, hint, name }) {
   const [file, setFile] = useState(null);
   const inputRef = useRef(null);
@@ -720,19 +724,30 @@ function AddEmployeeDialog({ onClose }) {
         /ctc|date of joining is required/i.test(validationError) ? "job" : "personal",
       );
 
+
+    // Validate selected documents; binary files are not part of the JSON create request.
+    const MAX_BYTES = 5 * 1024 * 1024;
+=======
     // ---- Documents: real File objects from the named file inputs ----
     const MAX_BYTES = 5 * 1024 * 1024;
     const docFiles = [];
+
     const seen = new Set();
     for (const input of root.querySelectorAll('input[type="file"][name]')) {
       const f = input.files?.[0];
       if (!f || seen.has(input.name)) continue;
       if (f.size > MAX_BYTES) return fail(`${f.name} is larger than 5 MB`, "legal");
       seen.add(input.name);
+
+    }
+
+    // ---- Build the JSON body using the backend's required field names ----
+=======
       docFiles.push([input.name, f]);
     }
 
     // ---- Build the multipart body using the Swagger field names ----
+
     const tempPassword = makeTempPassword();
     const branchId = orgBranchList.find((b) => b.name === v.branch)?.id;
     const departmentId = orgDepartments.find((d) => d.name === v.dept)?.id;
@@ -763,6 +778,19 @@ function AddEmployeeDialog({ onClose }) {
       bank_name: v.bankName.trim(),
       bank_account_number: acct,
       ifsc_code: ifsc,
+
+      // `orgId` is the UI tenant scope, not a backend company ID. This form
+      // creates an organization-level employee unless a backend company is
+      // explicitly selected, so omit company_id here.
+      company_id: "",
+      branch_id: isUuid(branchId) ? branchId : "",
+    };
+
+    submittingRef.current = true;
+    try {
+      // createEmployeeApi already returns response.data
+      const apiEmployee = await createEmployeeApi(apiFields);
+=======
       company_id: isUuid(orgId) ? orgId : "",
       branch_id: isUuid(branchId) ? branchId : "",
     };
@@ -779,6 +807,7 @@ function AddEmployeeDialog({ onClose }) {
     try {
       // createEmployeeApi already returns response.data
       const apiEmployee = await createEmployeeApi(formData);
+
 
       // ---- Keep the existing local directory / profile features working ----
       const row = hireEmployee({
