@@ -118,7 +118,7 @@ export const ORG_NAV_GROUPS = [
     ],
   },
   {
-  label: "Organization Structure",
+  label: "Company Configuration",
   items: [
     {
       to: "/org/departments",
