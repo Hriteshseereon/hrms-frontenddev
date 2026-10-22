@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from "react";
 import { captureFiles } from "@/lib/attachments";
 import { Plus, Eye, Pencil, Trash2, Download, FileText } from "lucide-react";
@@ -45,6 +44,10 @@ import {
  * - PUT full update
  * - PATCH partial update
  * - DELETE
+ *
+ * Optional api.codePrefix (e.g. "PYD") shows display-only codes
+ * (PYD-01, PYD-02...) in the Code column. The real API id (UUID) is never
+ * changed and stays in row._apiId.
  */
 
 const sectionStores = new Map();
@@ -109,6 +112,15 @@ function nextCode(prefix, rows) {
     }, 0) + 1;
 
   return `${prefix}-${String(n).padStart(3, "0")}`;
+}
+
+// Display-only code (e.g. PYD-01). Used only when api.codePrefix is supplied.
+// The real API id (UUID) is never changed; it stays in row._apiId.
+function withDisplayCodes(rows, prefix) {
+  return rows.map((row, index) => ({
+    ...row,
+    code: `${prefix}-${String(index + 1).padStart(2, "0")}`,
+  }));
 }
 
 /**
@@ -191,7 +203,11 @@ export function CrudSection({
         throw new Error("The API response did not contain a list of records.");
       }
 
-      setApiRows(records.map((record) => api.fromApi(record)));
+      const mapped = records.map((record) => api.fromApi(record));
+
+      setApiRows(
+        api.codePrefix ? withDisplayCodes(mapped, api.codePrefix) : mapped,
+      );
     } catch (error) {
       console.error(`Failed to load ${title}:`, error);
 
@@ -252,7 +268,10 @@ export function CrudSection({
         throw new Error("No record returned by the API.");
       }
 
-      setViewRow(api.fromApi(record));
+      setViewRow({
+        ...api.fromApi(record),
+        ...(row.code ? { code: row.code } : {}),
+      });
     } catch (error) {
       console.error(`Failed to load ${title} details:`, error);
 
@@ -439,7 +458,7 @@ export function CrudSection({
   const exportColumns = ["Code", ...cols.map((column) => column.label)];
 
   const exportRows = rows.map((row) => [
-    row.id,
+    row.code ?? row.id,
     ...cols.map((column) => row[column.key] || "—"),
   ]);
 
@@ -511,7 +530,12 @@ export function CrudSection({
               <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
                 <DialogHeader>
                   <DialogTitle>
-                    {editingId ? `Edit ${editingId}` : addLabel}
+                    {editingId
+                      ? `Edit ${
+                          rows.find((row) => row.id === editingId)?.code ??
+                          editingId
+                        }`
+                      : addLabel}
                   </DialogTitle>
 
                   <DialogDescription>
@@ -646,7 +670,7 @@ export function CrudSection({
         >
           <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{viewRow?.id}</DialogTitle>
+              <DialogTitle>{viewRow?.code ?? viewRow?.id}</DialogTitle>
               <DialogDescription>
                 {title} record detail
               </DialogDescription>
@@ -700,7 +724,7 @@ export function CrudSection({
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>
-                Delete {deleteRow?.id}?
+                Delete {deleteRow?.code ?? deleteRow?.id}?
               </DialogTitle>
 
               <DialogDescription>
@@ -749,7 +773,7 @@ export function CrudSection({
               {rows.map((row) => (
                 <tr key={row.id} className="hover:bg-muted/30">
                   <td className="text-muted-foreground p-3 font-mono text-xs">
-                    {row.id}
+                    {row.code ?? row.id}
                   </td>
 
                   {cols.map((column) => (
