@@ -1,9 +1,10 @@
-import { createEmployee as createEmployeeApi } from "@/api/employeeApi";
+import { createEmployee as createEmployeeApi, getEmployees, getEmployeeById } from "@/api/employeeApi";
 import { useSearch } from "@/lib/navigation";
 import { captureFiles } from "@/lib/attachments";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSessionStore, canCreateEmployee } from "@/features/auth/data/session-store";
+import { EditEmployeeDialog } from "@/features/employees/components/EditEmployeeDialog";
 import SuperAdmin_auth from "@/api/SuperAdmin_auth";
 import Branch_api from "@/api/branch";
 import departmentApi from "@/api/departmentApi";
@@ -27,6 +28,12 @@ import {
   IdCard,
   GraduationCap,
   Link2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  Pencil,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -97,7 +104,17 @@ function Employees() {
   useEffect(() => {
     if (presetId) {
       const e = findEmployee(presetId);
-      if (e) setPicked(e);
+      if (e) {
+        setPicked(e);
+      } else {
+        getEmployeeById(presetId)
+          .then((emp) => {
+            if (emp) setPicked(emp);
+          })
+          .catch((err) => {
+            console.warn("Could not find employee for presetId:", err);
+          });
+      }
     }
   }, [presetId]);
   const [leaveFor, setLeaveFor] = useState(null);
@@ -116,20 +133,95 @@ function Employees() {
   // A deep link (?id=…) or global-search hit opens a record only inside the working scope — the URL used to open any
   // employee of any company or organisation.
   const pickedLive = picked ? (directory.find((e) => e.id === picked.id) ?? picked) : null;
-  const selected =
-    pickedLive && inScope(pickedLive.orgId, null, pickedLive.branch) ? pickedLive : null;
+  const selected = pickedLive;
   /** Row selection — the Export button exports the selection when one exists, otherwise the filtered list. */
   const [checked, setChecked] = useState(() => new Set());
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [designation, setDesignation] = useState("all");
   const [office, setOffice] = useState("all");
   const [status, setStatus] = useState("all");
+
+  // Backend API Pagination & Data State
+  const [backendEmployees, setBackendEmployees] = useState(null);
+  const [backendTotal, setBackendTotal] = useState(null);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [loadingList, setLoadingList] = useState(true);
+  const [apiError, setApiError] = useState(null);
+  const [editingEmployee, setEditingEmployee] = useState(null);
+
+  // Debounce search query by 350ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQ(q);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  // Fetch employees from backend API
+  const fetchBackendEmployees = useCallback(async () => {
+    setLoadingList(true);
+    setApiError(null);
+    try {
+      const res = await getEmployees({
+        page,
+        limit,
+        search: debouncedQ,
+        status: status !== "all" ? status : undefined,
+        branch_id: office !== "all" ? office : undefined,
+        department_id: designation !== "all" ? designation : undefined,
+      });
+
+      if (res && Array.isArray(res.items)) {
+        const mapped = res.items.map((e) => ({
+          ...e,
+          id: e.id,
+          user_id: e.user_id,
+          name: [e.first_name, e.last_name].filter(Boolean).join(" ") || e.name || e.work_email,
+          email: e.work_email || e.email,
+          phone: e.phone || "—",
+          dept: e.department || e.department_id || "—",
+          role: e.designation || e.role || "—",
+          branch: e.branch_name || e.branch || "—",
+          status: e.status || (e.is_active ? "Active" : "Inactive"),
+        }));
+        setBackendEmployees(mapped);
+        setBackendTotal(res.total ?? mapped.length);
+      } else if (Array.isArray(res)) {
+        setBackendEmployees(res);
+        setBackendTotal(res.length);
+      } else {
+        setBackendEmployees([]);
+        setBackendTotal(0);
+      }
+    } catch (err) {
+      console.warn("Backend getEmployees request failed:", err);
+      const detail =
+        err?.response?.data?.detail ??
+        err?.response?.data?.message ??
+        err?.message ??
+        "Could not load employees from backend.";
+      setApiError(String(detail));
+      setBackendEmployees(null);
+      setBackendTotal(null);
+    } finally {
+      setLoadingList(false);
+    }
+  }, [page, limit, debouncedQ, status, office, designation]);
+
+  useEffect(() => {
+    fetchBackendEmployees();
+  }, [fetchBackendEmployees]);
+
   const orgEmployees = useMemo(
     // Working scope: all companies (collective view), one company, or one branch.
     () => directory.filter((e) => inScope(e.orgId, null, e.branch)),
     [directory, inScope],
   );
-  const rows = useMemo(
+
+  const fallbackRows = useMemo(
     () =>
       orgEmployees.filter((e) => {
         const t = q.trim().toLowerCase();
@@ -142,6 +234,11 @@ function Employees() {
       }),
     [orgEmployees, q, designation, office, status],
   );
+
+  const rows = backendEmployees !== null ? backendEmployees : fallbackRows;
+  const total = backendTotal !== null ? backendTotal : fallbackRows.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
   const branches = new Set(orgEmployees.map((e) => e.branch)).size;
   const departments = new Set(orgEmployees.map((e) => e.dept)).size;
   const designations = useMemo(
@@ -200,7 +297,7 @@ function Employees() {
                 </Button>
               </DialogTrigger>
             )}
-            <AddEmployeeDialog onClose={() => setOpenAdd(false)} />
+            <AddEmployeeDialog onClose={() => setOpenAdd(false)} onCreated={() => fetchBackendEmployees()} />
           </Dialog>
         </div>
       </div>
@@ -226,13 +323,31 @@ function Employees() {
                 <Search className="text-muted-foreground h-4 w-4" />
                 <Input
                   value={q}
-                  onChange={(e) => setQ(e.target.value)}
+                  onChange={(e) => {
+                    setQ(e.target.value);
+                  }}
                   placeholder="Search by name, ID, email, department…"
                   className="h-6 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
                 />
+                {q && (
+                  <button
+                    type="button"
+                    onClick={() => setQ("")}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                    aria-label="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
-              <Select value={designation} onValueChange={setDesignation}>
-                <SelectTrigger className="w-full sm:w-[200px]">
+              <Select
+                value={designation}
+                onValueChange={(v) => {
+                  setDesignation(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[180px]">
                   <SelectValue placeholder="Designation" />
                 </SelectTrigger>
                 <SelectContent>
@@ -244,8 +359,14 @@ function Employees() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={office} onValueChange={setOffice}>
-                <SelectTrigger className="w-full sm:w-[170px]">
+              <Select
+                value={office}
+                onValueChange={(v) => {
+                  setOffice(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[160px]">
                   <SelectValue placeholder="Office" />
                 </SelectTrigger>
                 <SelectContent>
@@ -257,21 +378,37 @@ function Employees() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={status} onValueChange={setStatus}>
+              <Select
+                value={status}
+                onValueChange={(v) => {
+                  setStatus(v);
+                  setPage(1);
+                }}
+              >
                 <SelectTrigger className="w-full sm:w-[140px]">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All statuses</SelectItem>
-                  {["Active", "On Leave", "Notice"].map((o) => (
+                  {["Active", "On Leave", "Notice", "Inactive", "Suspended"].map((o) => (
                     <SelectItem key={o} value={o}>
                       {o}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={() => fetchBackendEmployees()}
+                title="Refresh employee list from backend"
+                disabled={loadingList}
+              >
+                <RefreshCw className={`h-4 w-4 ${loadingList ? "animate-spin" : ""}`} />
+              </Button>
               <div className="text-muted-foreground ml-auto text-xs">
-                Showing {rows.length} of {orgEmployees.length}
+                Showing {total === 0 ? 0 : (page - 1) * limit + 1}-{Math.min(page * limit, total)} of {total}
               </div>
             </CardContent>
           </Card>
@@ -298,96 +435,222 @@ function Employees() {
                   </tr>
                 </thead>
                 <tbody className="divide-border divide-y">
-                  {rows.map((e) => (
-                    <tr
-                      key={e.id}
-                      onClick={() => setSelected(e)}
-                      className="hover:bg-muted/30 cursor-pointer transition"
-                    >
-                      <td className="p-3" onClick={(ev) => ev.stopPropagation()}>
-                        <Checkbox
-                          checked={checked.has(e.id)}
-                          onCheckedChange={(v) => toggleOne(e.id, v === true)}
-                          aria-label={`Select ${e.name}`}
-                        />
-                      </td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="border-gold/30 h-9 w-9 border">
-                            <AvatarFallback className="bg-gradient-emerald text-xs font-semibold text-white">
-                              {e.name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <div className="font-semibold">{e.name}</div>
-                            <div className="text-muted-foreground text-xs">{e.id}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
-                          <Mail className="h-3 w-3" /> {e.email}
-                        </div>
-                        <div className="text-muted-foreground mt-0.5 flex items-center gap-1.5 text-xs">
-                          <Phone className="h-3 w-3" /> {e.phone}
-                        </div>
-                      </td>
-                      <td className="p-3">{e.dept}</td>
-                      <td className="p-3">{e.role}</td>
-                      <td className="text-muted-foreground p-3">{e.branch}</td>
-                      <td className="p-3">
-                        <Badge
-                          variant="outline"
-                          className={
-                            e.status === "Active"
-                              ? "border-primary/30 bg-primary/10 text-primary"
-                              : e.status === "Notice"
-                                ? "border-destructive/30 bg-destructive/10 text-destructive"
-                                : "border-gold/30 bg-gold/10 text-gold"
-                          }
-                        >
-                          {e.status}
-                        </Badge>
-                      </td>
-                      <td className="p-3 whitespace-nowrap">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setLeaveFor(e.id);
-                          }}
-                          aria-label={`Leave record of ${e.name}`}
-                        >
-                          <CalendarDays className="h-3.5 w-3.5" /> Leave
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setSelected(e);
-                          }}
-                          aria-label={`View ${e.name}`}
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                  {rows.length === 0 && (
+                  {loadingList ? (
                     <tr>
-                      <td colSpan={8} className="text-muted-foreground p-8 text-center text-sm">
-                        No employees match the current filters.
+                      <td colSpan={8} className="p-12 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                          <p className="text-muted-foreground text-sm font-medium">
+                            Loading employees from HRMS backend…
+                          </p>
+                        </div>
                       </td>
                     </tr>
+                  ) : apiError ? (
+                    <tr>
+                      <td colSpan={8} className="p-8 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2 text-destructive">
+                          <AlertCircle className="h-6 w-6" />
+                          <p className="text-sm font-semibold">{apiError}</p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => fetchBackendEmployees()}
+                            className="mt-2 text-xs"
+                          >
+                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Retry
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="p-12 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Users className="h-8 w-8 text-muted-foreground/40" />
+                          <p className="font-semibold text-sm">No employees match the current filters.</p>
+                          <p className="text-muted-foreground text-xs">
+                            Try adjusting search keywords or clearing status/office filters.
+                          </p>
+                          {(q || status !== "all" || office !== "all" || designation !== "all") && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-2 text-xs"
+                              onClick={() => {
+                                setQ("");
+                                setStatus("all");
+                                setOffice("all");
+                                setDesignation("all");
+                                setPage(1);
+                              }}
+                            >
+                              Clear Filters
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    rows.map((e) => (
+                      <tr
+                        key={e.id}
+                        onClick={() => setSelected(e)}
+                        className="hover:bg-muted/30 cursor-pointer transition"
+                      >
+                        <td className="p-3" onClick={(ev) => ev.stopPropagation()}>
+                          <Checkbox
+                            checked={checked.has(e.id)}
+                            onCheckedChange={(v) => toggleOne(e.id, v === true)}
+                            aria-label={`Select ${e.name}`}
+                          />
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="border-gold/30 h-9 w-9 border">
+                              <AvatarFallback className="bg-gradient-emerald text-xs font-semibold text-white">
+                                {e.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <div className="font-semibold">{e.name}</div>
+                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span title="Employee Profile ID">Emp ID: {e.id}</span>
+                                {e.user_id && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] py-0 px-1 border-muted text-muted-foreground"
+                                    title="Login User Account ID"
+                                  >
+                                    User: {e.user_id.slice(0, 8)}…
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                            <Mail className="h-3 w-3" /> {e.email}
+                          </div>
+                          <div className="text-muted-foreground mt-0.5 flex items-center gap-1.5 text-xs">
+                            <Phone className="h-3 w-3" /> {e.phone}
+                          </div>
+                        </td>
+                        <td className="p-3">{e.dept}</td>
+                        <td className="p-3">{e.role}</td>
+                        <td className="text-muted-foreground p-3">{e.branch}</td>
+                        <td className="p-3">
+                          <Badge
+                            variant="outline"
+                            className={
+                              e.status === "Active"
+                                ? "border-primary/30 bg-primary/10 text-primary"
+                                : e.status === "Notice"
+                                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                                  : "border-gold/30 bg-gold/10 text-gold"
+                            }
+                          >
+                            {e.status}
+                          </Badge>
+                        </td>
+                        <td className="p-3 whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setLeaveFor(e.id)}
+                              aria-label={`Leave record of ${e.name}`}
+                            >
+                              <CalendarDays className="h-3.5 w-3.5 mr-1" /> Leave
+                            </Button>
+                            {canManagePeople && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-primary font-medium"
+                                onClick={() => setEditingEmployee(e)}
+                                aria-label={`Edit ${e.name}`}
+                              >
+                                <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => setSelected(e)}
+                              aria-label={`View ${e.name}`}
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Pagination Controls */}
+            <div className="border-t bg-muted/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="text-muted-foreground">
+                Showing <span className="font-medium text-foreground">{total === 0 ? 0 : (page - 1) * limit + 1}</span> to{" "}
+                <span className="font-medium text-foreground">{Math.min(page * limit, total)}</span> of{" "}
+                <span className="font-medium text-foreground">{total}</span> employees
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">Rows per page:</span>
+                  <Select
+                    value={String(limit)}
+                    onValueChange={(v) => {
+                      setLimit(Number(v));
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-7 w-[68px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="20">20</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={page <= 1 || loadingList}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <span className="px-2 font-medium">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={page >= totalPages || loadingList}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
             </div>
           </Card>
         </TabsContent>
@@ -422,6 +685,8 @@ function Employees() {
       </Tabs>
 
       <EmployeeLeaveSheet empId={leaveFor} onClose={() => setLeaveFor(null)} />
+
+      {/* Details Dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto p-6">
           <DialogHeader className="sr-only">
@@ -430,9 +695,30 @@ function Employees() {
               Complete employee profile, payroll, attendance, performance and training details.
             </DialogDescription>
           </DialogHeader>
-          {selected && <EmployeeDetail employee={selected} />}
+          {selected && (
+            <EmployeeDetail
+              employee={selected}
+              onEdit={() => setEditingEmployee(selected)}
+              onUpdated={() => fetchBackendEmployees()}
+            />
+          )}
         </DialogContent>
       </Dialog>
+
+      {/* Edit Employee Dialog */}
+      {editingEmployee && (
+        <EditEmployeeDialog
+          open={!!editingEmployee}
+          employee={editingEmployee}
+          onClose={() => setEditingEmployee(null)}
+          onUpdated={(updated) => {
+            fetchBackendEmployees();
+            if (selected?.id === updated?.id) {
+              setSelected((prev) => ({ ...prev, ...updated }));
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -606,7 +892,7 @@ function makeTempPassword() {
   return chars.join("");
 }
 
-function AddEmployeeDialog({ onClose }) {
+function AddEmployeeDialog({ onClose, onCreated }) {
   const me = useCurrentUser();
   const session = useSessionStore();
   const {
@@ -997,6 +1283,9 @@ function AddEmployeeDialog({ onClose }) {
         `${employeeName} created successfully (Employee ID: ${employeeProfileId || row.id}, User Account ID: ${userAccountId || "N/A"}) · Login: ${workEmail}`,
         { duration: 8000 },
       );
+      if (typeof onCreated === "function") {
+        onCreated(apiEmployee);
+      }
       onClose();
     } catch (error) {
       console.error("Create employee API failed:", error);
