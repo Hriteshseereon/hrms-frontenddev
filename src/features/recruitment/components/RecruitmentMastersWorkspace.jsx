@@ -30,6 +30,8 @@ import { useActiveOrgId } from "@/features/organization/data/group-data";
 import { createJobTypeApi } from "@/api/job_type";
 // Candidate Source API (adjust the path to where you saved candidate_source.js)
 import { createCandidateSourceApi } from "@/api/candidate_source";
+// Interview Type API (adjust the path to where you saved interview_type.js)
+import { createInterviewTypeApi } from "@/api/interview_type";
 
 /**
  * Career-portal settings per entity. The three "Save" buttons below used to toast without storing anything.
@@ -84,6 +86,10 @@ export function RecruitmentMasters() {
   const jobTypeApi = useMemo(() => createJobTypeApi(activeOrgId), [activeOrgId]);
   const candidateSourceApi = useMemo(
     () => createCandidateSourceApi(activeOrgId),
+    [activeOrgId],
+  );
+  const interviewTypeApi = useMemo(
+    () => createInterviewTypeApi(activeOrgId),
     [activeOrgId],
   );
 
@@ -161,6 +167,7 @@ export function RecruitmentMasters() {
             idPrefix="IT"
             fields={nameDescStatus}
             seed={INTERVIEW_TYPE_MASTER_SEED}
+            api={interviewTypeApi}
           />
         </TabsContent>
 
