@@ -26,8 +26,10 @@ import {
 import { JOB_TYPES, STATUSES } from "@/features/recruitment/data/recruitment-data";
 import { createPersistentStore } from "@/lib/persist";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
-// NEW: Job Type API (adjust the path to where you saved job_type.js)
+// Job Type API (adjust the path to where you saved job_type.js)
 import { createJobTypeApi } from "@/api/job_type";
+// Candidate Source API (adjust the path to where you saved candidate_source.js)
+import { createCandidateSourceApi } from "@/api/candidate_source";
 
 /**
  * Career-portal settings per entity. The three "Save" buttons below used to toast without storing anything.
@@ -78,8 +80,12 @@ const nameDescStatus = [
 
 export function RecruitmentMasters() {
   const activeOrgId = useActiveOrgId();
-  // NEW: stable adapter, re-created only when the organization changes
+  // Stable adapters, re-created only when the organization changes
   const jobTypeApi = useMemo(() => createJobTypeApi(activeOrgId), [activeOrgId]);
+  const candidateSourceApi = useMemo(
+    () => createCandidateSourceApi(activeOrgId),
+    [activeOrgId],
+  );
 
   return (
     <div className="space-y-6">
@@ -142,6 +148,7 @@ export function RecruitmentMasters() {
             idPrefix="CS"
             fields={nameDescStatus}
             seed={SOURCE_MASTER_SEED}
+            api={candidateSourceApi}
           />
         </TabsContent>
 

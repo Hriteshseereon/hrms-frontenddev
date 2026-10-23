@@ -37,11 +37,6 @@ const SuperAdmin_jobType = {
   },
 };
 
-/**
- * Config object passed to <CrudSection api={...} />, in the same shape
- * CrudSection already uses for Pay Grade.
- * organizationId is sent only on create (POST), as in the API schema.
- */
 export function createJobTypeApi(organizationId) {
   const clean = (v) => String(v ?? "").trim();
 
