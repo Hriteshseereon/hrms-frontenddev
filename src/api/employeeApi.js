@@ -1,69 +1,48 @@
 import SuperAdmin_axios from "./SuperAdmin_axios";
 
 /**
- * Set to true  -> send multipart/form-data (backend uses Form(...) fields)
- * Set to false -> send application/json    (backend uses a Pydantic body)
- *
- * Check your backend's /docs page for POST /employees/form to confirm.
- * The "/form" path and the input: null 422 error suggest form data.
- */
-const SEND_AS_FORM = true;
-
-/** Convert a plain object (or existing FormData) into FormData. */
-function toFormData(data) {
-  if (data instanceof FormData) return data;
-
-  const formData = new FormData();
-  Object.entries(data).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      formData.append(key, value);
-    }
-  });
-  return formData;
-}
-
-/** Convert FormData (or a plain object) into a plain object. */
-function toPlainObject(data) {
-  return data instanceof FormData ? Object.fromEntries(data.entries()) : { ...data };
-}
-
-/**
- * POST: Hire an employee
+ * POST: Hire/Create an employee with optional document uploads
  * Endpoint: /employees/form
+ * Content-Type: multipart/form-data (browser sets boundary)
+ *
+ * Accepts a FormData object or an object that will be converted to FormData.
+ * Validates required fields: first_name, work_email, password.
+ * Only appends non-empty values and actual File objects.
  */
-export async function createEmployee(employeeData) {
-  const plain = toPlainObject(employeeData ?? {});
+export async function createEmployee(data) {
+  let formData;
 
-  // Accept camelCase aliases, but always send the backend's snake_case names.
-  const payload = {
-    ...plain,
-    first_name: plain.first_name ?? plain.firstName,
-    work_email: plain.work_email ?? plain.workEmail,
-    password: plain.password,
-  };
-
-  // An empty company_id must be omitted entirely (not sent as ""), so the
-  // backend registers an organization-level employee instead of looking up
-  // a company that doesn't exist.
-  if (!String(payload.company_id ?? "").trim()) {
-    delete payload.company_id;
+  if (data instanceof FormData) {
+    formData = data;
+  } else if (data && typeof data === "object") {
+    formData = new FormData();
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        if (value instanceof File) {
+          formData.append(key, value);
+        } else {
+          formData.append(key, String(value));
+        }
+      }
+    });
+  } else {
+    throw new Error("Invalid employee creation payload.");
   }
 
-  const requiredFields = ["first_name", "work_email", "password"];
-  const missingFields = requiredFields.filter(
-    (field) => !String(payload[field] ?? "").trim(),
-  );
-  if (missingFields.length) {
-    throw new Error(
-      `Missing required employee fields: ${missingFields.join(", ")}`,
-    );
+  // Check required fields
+  const required = ["first_name", "work_email", "password"];
+  const missing = required.filter((field) => {
+    const val = formData.get(field);
+    return !val || !String(val).trim();
+  });
+
+  if (missing.length > 0) {
+    throw new Error(`Missing required fields: ${missing.join(", ")}`);
   }
 
-  // No Content-Type header here: axios/browser set it correctly
-  // (multipart boundary for FormData, application/json for objects).
-  const body = SEND_AS_FORM ? toFormData(payload) : payload;
-
-  const response = await SuperAdmin_axios.post("/employees/form", body);
+  // Post to /employees/form. SuperAdmin_axios removes Content-Type for FormData
+  // so the browser automatically sets multipart/form-data with the correct boundary.
+  const response = await SuperAdmin_axios.post("/employees/form", formData);
   return response.data;
 }
 
@@ -76,7 +55,6 @@ export async function updateEmployee(id, employeeData) {
     `/employees/${encodeURIComponent(id)}`,
     employeeData,
   );
-
   return response.data;
 }
 
@@ -89,7 +67,6 @@ export async function patchEmployee(id, employeeData) {
     `/employees/${encodeURIComponent(id)}`,
     employeeData,
   );
-
   return response.data;
 }
 
@@ -101,7 +78,6 @@ export async function getEmployeeDocuments(id) {
   const response = await SuperAdmin_axios.get(
     `/employees/${encodeURIComponent(id)}/documents`,
   );
-
   return response.data;
 }
 
@@ -114,7 +90,6 @@ export async function uploadEmployeeDocuments(id, documentData) {
     `/employees/${encodeURIComponent(id)}/documents`,
     documentData,
   );
-
   return response.data;
 }
 
@@ -127,7 +102,6 @@ export async function patchEmployeeDocuments(id, documentData) {
     `/employees/${encodeURIComponent(id)}/documents`,
     documentData,
   );
-
   return response.data;
 }
 
@@ -146,7 +120,6 @@ export async function uploadSingleEmployeeDocument(
     )}`,
     documentData,
   );
-
   return response.data;
 }
 
@@ -165,127 +138,16 @@ export async function patchSingleEmployeeDocument(
     )}`,
     documentData,
   );
-
-  return response.data;
-}
-=======
-
-import SuperAdmin_axios from "./SuperAdmin_axios";
-
-/**
- * POST: Hire an employee
- * Endpoint: /employees/form
- * Body: FormData
- */
-export async function createEmployee(formData) {
-  const response = await SuperAdmin_axios.post(
-    "/employees/form",
-    formData
-  );
-
   return response.data;
 }
 
-/**
- * PUT: Replace/update employee details
- * Endpoint: /employees/{id}
- * Body: employeeData
- */
-export async function updateEmployee(id, employeeData) {
-  const response = await SuperAdmin_axios.put(
-    `/employees/${encodeURIComponent(id)}`,
-    employeeData
-  );
-
-  return response.data;
-}
-
-/**
- * PATCH: Partially update employee details
- * Endpoint: /employees/{id}
- * Body: employeeData
- */
-export async function patchEmployee(id, employeeData) {
-  const response = await SuperAdmin_axios.patch(
-    `/employees/${encodeURIComponent(id)}`,
-    employeeData
-  );
-
-  return response.data;
-}
-
-/**
- * GET: Fetch an employee's documents
- * Endpoint: /employees/{id}/documents
- */
-export async function getEmployeeDocuments(id) {
-  const response = await SuperAdmin_axios.get(
-    `/employees/${encodeURIComponent(id)}/documents`
-  );
-
-  return response.data;
-}
-
-/**
- * POST: Upload employee documents
- * Endpoint: /employees/{id}/documents
- * Body: FormData or the body format required by Swagger
- */
-export async function uploadEmployeeDocuments(id, documentData) {
-  const response = await SuperAdmin_axios.post(
-    `/employees/${encodeURIComponent(id)}/documents`,
-    documentData
-  );
-
-  return response.data;
-}
-
-/**
- * PATCH: Update employee documents
- * Endpoint: /employees/{id}/documents
- * Body: documentData
- */
-export async function patchEmployeeDocuments(id, documentData) {
-  const response = await SuperAdmin_axios.patch(
-    `/employees/${encodeURIComponent(id)}/documents`,
-    documentData
-  );
-
-  return response.data;
-}
-
-/**
- * POST: Upload one document type for an employee
- * Endpoint: /employees/{id}/documents/{document_type}
- * Body: documentData
- */
-export async function uploadSingleEmployeeDocument(
-  id,
-  documentType,
-  documentData
-) {
-  const response = await SuperAdmin_axios.post(
-    `/employees/${encodeURIComponent(id)}/documents/${encodeURIComponent(documentType)}`,
-    documentData
-  );
-
-  return response.data;
-}
-
-/**
- * PATCH: Update one document type for an employee
- * Endpoint: /employees/{id}/documents/{document_type}
- * Body: documentData
- */
-export async function patchSingleEmployeeDocument(
-  id,
-  documentType,
-  documentData
-) {
-  const response = await SuperAdmin_axios.patch(
-    `/employees/${encodeURIComponent(id)}/documents/${encodeURIComponent(documentType)}`,
-    documentData
-  );
-
-  return response.data;
-}
+export default {
+  createEmployee,
+  updateEmployee,
+  patchEmployee,
+  getEmployeeDocuments,
+  uploadEmployeeDocuments,
+  patchEmployeeDocuments,
+  uploadSingleEmployeeDocument,
+  patchSingleEmployeeDocument,
+};

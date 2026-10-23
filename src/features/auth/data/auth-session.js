@@ -1215,8 +1215,10 @@ let apiUser = null;
 if (typeof window !== "undefined") {
   try {
     const stored = JSON.parse(window.localStorage.getItem(API_USER_KEY) ?? "null");
-    if (stored?.id && stored.role === "SuperAdmin" &&
-        window.localStorage.getItem("super_admin_access_token")) apiUser = stored;
+    const hasToken =
+      window.localStorage.getItem("super_admin_access_token") ||
+      window.localStorage.getItem("access_token");
+    if (stored?.id && hasToken) apiUser = stored;
   } catch {
     // Ignore an invalid saved profile and require a fresh sign-in.
   }
@@ -1402,26 +1404,46 @@ export function signInAs(id) {
 }
 
 /** Bridge the backend identity into the session used by portal guards and permissions. */
-export function signInSuperAdmin(user) {
-  if (!user?.id || !user.email || user.role !== "SUPER_ADMIN") {
-    throw new Error("Login response did not contain a valid Super Admin user.");
+export function signInFromBackend(user) {
+  if (!user?.id || !user.email) {
+    throw new Error("Login response did not contain a valid user identity.");
   }
+
+  const roleMap = {
+    SUPER_ADMIN: "SuperAdmin",
+    COMPANY_ADMIN: "Admin",
+    BRANCH_ADMIN: "BranchAdmin",
+    EMPLOYEE: "Employee",
+  };
+
+  const appRole = roleMap[user.role] || user.role || "Admin";
+
   apiUser = {
-    id: user.id,
+    id: user.id, // users-table ID
     email: user.email,
-    name: user.full_name || user.email,
-    role: "SuperAdmin",
-    orgId: user.organization_id,
-    portal: "org",
-    designation: "Super Administrator",
+    name: user.full_name || user.name || user.email,
+    role: appRole,
+    backendRole: user.role,
+    orgId: user.organization_id || ORGANIZATION.id,
+    companyId: user.company_id || null,
+    branchId: user.branch_id || null,
+    portal: appRole === "Employee" ? "emp" : "org",
+    designation: user.role ? String(user.role).replace(/_/g, " ") : "Administrator",
     dept: "",
     branch: "",
     phone: "",
     managerId: null,
     doj: "",
   };
-  window.localStorage.setItem(API_USER_KEY, JSON.stringify(apiUser));
+
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(API_USER_KEY, JSON.stringify(apiUser));
+  }
   return signInAs(apiUser.id);
+}
+
+export function signInSuperAdmin(user) {
+  return signInFromBackend(user);
 }
 
 export function signOut() {

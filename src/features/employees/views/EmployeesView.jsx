@@ -3,6 +3,11 @@ import { useSearch } from "@/lib/navigation";
 import { captureFiles } from "@/lib/attachments";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useSessionStore, canCreateEmployee } from "@/features/auth/data/session-store";
+import SuperAdmin_auth from "@/api/SuperAdmin_auth";
+import Branch_api from "@/api/branch";
+import departmentApi from "@/api/departmentApi";
+import designationApi from "@/api/designationApi";
 import {
   Users,
   CalendarDays,
@@ -100,7 +105,10 @@ function Employees() {
   const inScope = useScopeMatch();
   const collective = useScope().readOnly;
   const me = useCurrentUser();
-  const canManagePeople = can(me.role, "employee.manage");
+  const session = useSessionStore();
+  const roleUpper = String(session.role || me?.role || "").toUpperCase();
+  const isEmployeeRole = roleUpper === "EMPLOYEE";
+  const canManagePeople = (can(me.role, "employee.manage") || canCreateEmployee(session.role)) && !isEmployeeRole;
   const orgName = useOrgs().find((o) => o.id === orgId)?.name ?? "Organization";
   const directory = useDirectory();
   // Always show the live record — the dialog kept the row captured at click time, so a promotion / transfer made from
@@ -183,14 +191,12 @@ function Employees() {
           </Button>
           {/* Creating people needs employee.manage (custom roles can open this screen without it); the Super Admin's
               collective view keeps Hire, which asks for the company itself. */}
-          {(collective || canManagePeople) && <HireEmployeeDialog />}
+          {canManagePeople && <HireEmployeeDialog />}
           <Dialog open={openAdd} onOpenChange={setOpenAdd}>
-            {/* The detailed form files the record in the company in scope — in the collective view the company is
-                chosen first (scope bar above); Hire Employee asks for company and branch itself. */}
-            {!collective && canManagePeople && (
+            {canManagePeople && (
               <DialogTrigger asChild>
                 <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
-                  <Plus className="h-4 w-4" /> Employee Record Form (detailed)
+                  <Plus className="h-4 w-4" /> Add Employee (Detailed Form)
                 </Button>
               </DialogTrigger>
             )}
@@ -451,12 +457,8 @@ function Field({ label, children, required }) {
 }
 
 
-/** `name` identifies the document input for the employee document upload flow. */
-=======
 /** `name` is the multipart field name sent to the backend (see POST /employees/form). */
-
-function FileUpload({ label, hint, name }) {
-  const [file, setFile] = useState(null);
+function FileUpload({ label, hint, name, file, onSelect, onRemove }) {
   const inputRef = useRef(null);
   return (
     <div className="space-y-1.5">
@@ -467,9 +469,11 @@ function FileUpload({ label, hint, name }) {
             <Upload className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{file ?? "Click to upload"}</div>
+            <div className="truncate text-sm font-medium">{file?.name ?? "Click to upload"}</div>
             <div className="text-muted-foreground text-[11px]">
-              {hint ?? "PDF, JPG, PNG · max 5 MB"}
+              {file
+                ? `${(file.size / (1024 * 1024)).toFixed(2)} MB · Selected`
+                : (hint ?? "PDF, JPG, PNG · max 5 MB")}
             </div>
           </div>
         </div>
@@ -478,10 +482,10 @@ function FileUpload({ label, hint, name }) {
             type="button"
             onClick={(e) => {
               e.preventDefault();
-              if (inputRef.current) inputRef.current.value = ""; // actually drop the selected file
-              setFile(null);
+              if (inputRef.current) inputRef.current.value = "";
+              if (onRemove) onRemove(name);
             }}
-            className="text-muted-foreground hover:text-destructive"
+            className="text-muted-foreground hover:text-destructive p-1 transition"
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -495,9 +499,17 @@ function FileUpload({ label, hint, name }) {
           type="file"
           name={name}
           className="hidden"
+          accept=".pdf,.png,.jpg,.jpeg"
           onChange={(e) => {
-            captureFiles(e.target.files);
-            setFile(e.target.files?.[0]?.name ?? null);
+            const f = e.target.files?.[0];
+            if (f) {
+              if (f.size > 5 * 1024 * 1024) {
+                toast.error(`${f.name} exceeds maximum size of 5 MB`);
+                if (inputRef.current) inputRef.current.value = "";
+                return;
+              }
+              if (onSelect) onSelect(name, f);
+            }
           }}
         />
       </label>
@@ -596,16 +608,79 @@ function makeTempPassword() {
 
 function AddEmployeeDialog({ onClose }) {
   const me = useCurrentUser();
+  const session = useSessionStore();
+  const {
+    userId: sessionUserId,
+    role: sessionRole,
+    organizationId: sessionOrgId,
+    companyId: sessionCompanyId,
+    branchId: sessionBranchId,
+  } = session;
+
+  const roleUpper = String(sessionRole || me?.backendRole || me?.role || "").toUpperCase();
+  const isSuperAdmin = roleUpper === "SUPER_ADMIN" || roleUpper === "SUPERADMIN";
+  const isCompanyAdmin = roleUpper === "COMPANY_ADMIN";
+  const isBranchAdmin = roleUpper === "BRANCH_ADMIN" || roleUpper === "BRANCHADMIN";
+  const isEmployee = roleUpper === "EMPLOYEE";
+
   const [tab, setTab] = useState("personal");
   const [prevJobs, setPrevJobs] = useState([1]);
-  // The field reader needs a real <form>: Radix Select only renders its hidden native <select name> inside a form,
-  // otherwise Branch / Department / Designation / Manager / HR partner were never captured and creation always failed.
   const formRef = useRef(null);
   const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
   const orgId = useActiveOrgId();
-  // Branch, department and designation come from the entity's masters (Infrastructure / department master) — the form
-  // used to offer a fixed list, so a department like "SAP Delivery" was offered to every entity and new masters never appeared.
-  // The objects are kept (not only the names) so the API call can send branch_id / department_id.
+
+  // Scope selection states
+  const [backendCompanies, setBackendCompanies] = useState([]);
+  const [backendBranches, setBackendBranches] = useState([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState(sessionCompanyId || "");
+  const [selectedBranchId, setSelectedBranchId] = useState(sessionBranchId || "");
+  const [loadingScope, setLoadingScope] = useState(false);
+
+  // Document files state
+  const [docFiles, setDocFiles] = useState({});
+  const handleDocSelect = (name, file) => setDocFiles((prev) => ({ ...prev, [name]: file }));
+  const handleDocRemove = (name) =>
+    setDocFiles((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+
+  // Load backend companies (for SuperAdmin) and branches (for selected/assigned company)
+  useEffect(() => {
+    let isMounted = true;
+    async function loadScope() {
+      setLoadingScope(true);
+      try {
+        if (isSuperAdmin) {
+          const res = await SuperAdmin_auth.getCompanies();
+          const data = res?.data ?? res;
+          const list = Array.isArray(data) ? data : data?.items ?? data?.companies ?? [];
+          if (isMounted) setBackendCompanies(list);
+        }
+
+        const compIdForBranches = isSuperAdmin ? selectedCompanyId : sessionCompanyId;
+        if (compIdForBranches && isUuid(compIdForBranches)) {
+          const bRes = await Branch_api.getBranches(compIdForBranches);
+          const bData = bRes?.data ?? bRes;
+          const bList = Array.isArray(bData) ? bData : bData?.items ?? bData?.branches ?? [];
+          if (isMounted) setBackendBranches(bList);
+        } else {
+          if (isMounted) setBackendBranches([]);
+        }
+      } catch (err) {
+        console.warn("Failed to load backend scope options:", err);
+      } finally {
+        if (isMounted) setLoadingScope(false);
+      }
+    }
+    loadScope();
+    return () => {
+      isMounted = false;
+    };
+  }, [isSuperAdmin, selectedCompanyId, sessionCompanyId]);
+
   const orgBranchList = useOrgs().find((o) => o.id === orgId)?.branches ?? [];
   const orgBranches = orgBranchList.map((b) => b.name);
   const branchOptions = orgBranches.length ? orgBranches : OFFICES;
@@ -634,23 +709,25 @@ function AddEmployeeDialog({ onClose }) {
         { id: "demo-manager-3", orgId, role: "Manager", name: "Rahul Verma", designation: "Finance Manager" },
         { id: "demo-manager-4", orgId, role: "Manager", name: "Ananya Rao", designation: "Operations Manager" },
       ];
-  // Pay components configured under Master Data → Payroll (the static seed ignored components added there).
+
   const [payComponents] = useSharedList("pay-components", PAY_COMPONENTS);
-  // Compensation summary is derived from the CTC typed in (it used to be a fixed ₹1,00,000 mock regardless of CTC).
   const [ctcDraft, setCtcDraft] = useState(0);
   const monthlyGross = Math.round(ctcDraft / 12);
   const basic = Math.round(monthlyGross * 0.4);
-  const deductions = Math.round(basic * 0.12) + 200 + 850 + Math.round(monthlyGross * 0.08); // PF · PT · health insurance · TDS (same basis as the employee profile)
+  const deductions = Math.round(basic * 0.12) + 200 + 850 + Math.round(monthlyGross * 0.08);
 
   /** Reads the form, validates it, creates the employee through the backend API, then mirrors it in the local store. */
   async function create() {
     const root = formRef.current;
     if (!root || submittingRef.current) return;
 
+    if (isEmployee) {
+      toast.error("Employees are not authorized to create or onboard employees.");
+      return;
+    }
+
     const v = {};
     root.querySelectorAll("[name]").forEach((el) => {
-      // File inputs are read separately below. Skipping them here also stops the document upload named
-      // "passport" from overwriting the "Passport No." text field.
       if (el.type === "file") return;
       v[el.name] = el.value;
     });
@@ -662,11 +739,8 @@ function AddEmployeeDialog({ onClose }) {
       ["personalEmail", "Personal email"],
       ["phone", "Mobile number"],
       ["doj", "Date of joining"],
-      ["branch", "Branch"],
       ["dept", "Department"],
       ["designation", "Designation"],
-      ["managerId", "Reporting manager"],
-      ["hrPartnerId", "HR partner"],
       ["ctc", "Annual CTC"],
     ];
     const missing = required.filter(([k]) => !v[k]?.trim()).map(([, l]) => l);
@@ -674,9 +748,7 @@ function AddEmployeeDialog({ onClose }) {
       toast.error(`Complete the required fields: ${missing.join(", ")}`);
       setTab(
         missing.some((m) =>
-          ["First name", "Last name", "Date of birth", "Personal email", "Mobile number"].includes(
-            m,
-          ),
+          ["First name", "Last name", "Date of birth", "Personal email", "Mobile number"].includes(m),
         )
           ? "personal"
           : "job",
@@ -695,18 +767,19 @@ function AddEmployeeDialog({ onClose }) {
     const acct = (v.accountNo ?? "").replace(/\s+/g, "");
     const ifsc = (v.ifsc ?? "").trim().toUpperCase();
 
-    if (!/^\d{12}$/.test(aadhaar)) return fail("Aadhaar number must be 12 digits", "legal");
-    if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(pan))
+    if (aadhaar && !/^\d{12}$/.test(aadhaar)) return fail("Aadhaar number must be 12 digits", "legal");
+    if (pan && !/^[A-Z]{5}\d{4}[A-Z]$/.test(pan))
       return fail("PAN must be in the format ABCDE1234F", "legal");
     if (uan && !/^\d{12}$/.test(uan)) return fail("UAN must be 12 digits", "legal");
-    if (!v.bankHolder?.trim() || !v.bankName?.trim() || !acct || !ifsc)
-      return fail("Complete the salary account: holder, bank, account number and IFSC", "bank");
-    if (!/^\d{9,18}$/.test(acct)) return fail("Account number must be 9–18 digits", "bank");
-    if (acct !== (v.accountNo2 ?? "").replace(/\s+/g, ""))
+    if (acct && !/^\d{9,18}$/.test(acct)) return fail("Account number must be 9–18 digits", "bank");
+    if (acct && acct !== (v.accountNo2 ?? "").replace(/\s+/g, ""))
       return fail("The re-entered account number does not match", "bank");
-    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return fail("IFSC must look like HDFC0001234", "bank");
+    if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return fail("IFSC must look like HDFC0001234", "bank");
 
-    const workEmail = v.workEmail?.trim() || v.personalEmail.trim(); // the API requires work_email
+    const workEmail = v.workEmail?.trim() || v.personalEmail.trim();
+    if (!workEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(workEmail)) {
+      return fail("Enter a valid work email address", "personal");
+    }
 
     const validationError = validateHireInput({
       firstName: v.firstName,
@@ -718,99 +791,102 @@ function AddEmployeeDialog({ onClose }) {
       ctc: Number(v.ctc),
       workEmail: v.workEmail,
     });
-    if (validationError)
+    if (validationError) {
       return fail(
         validationError,
         /ctc|date of joining is required/i.test(validationError) ? "job" : "personal",
       );
-
-
-    // Validate selected documents; binary files are not part of the JSON create request.
-    const MAX_BYTES = 5 * 1024 * 1024;
-=======
-    // ---- Documents: real File objects from the named file inputs ----
-    const MAX_BYTES = 5 * 1024 * 1024;
-    const docFiles = [];
-
-    const seen = new Set();
-    for (const input of root.querySelectorAll('input[type="file"][name]')) {
-      const f = input.files?.[0];
-      if (!f || seen.has(input.name)) continue;
-      if (f.size > MAX_BYTES) return fail(`${f.name} is larger than 5 MB`, "legal");
-      seen.add(input.name);
-
     }
-
-    // ---- Build the JSON body using the backend's required field names ----
-=======
-      docFiles.push([input.name, f]);
-    }
-
-    // ---- Build the multipart body using the Swagger field names ----
 
     const tempPassword = makeTempPassword();
-    const branchId = orgBranchList.find((b) => b.name === v.branch)?.id;
-    const departmentId = orgDepartments.find((d) => d.name === v.dept)?.id;
+
+    // Determine tenant IDs based on caller's role and placement rules
+    const effectiveOrgId = isUuid(sessionOrgId) ? sessionOrgId : (isUuid(orgId) ? orgId : undefined);
+
+    let effectiveCompanyId = undefined;
+    if (isBranchAdmin || isCompanyAdmin) {
+      if (isUuid(sessionCompanyId)) effectiveCompanyId = sessionCompanyId;
+    } else if (isSuperAdmin) {
+      if (isUuid(selectedCompanyId)) effectiveCompanyId = selectedCompanyId;
+    }
+
+    let effectiveBranchId = undefined;
+    if (isBranchAdmin) {
+      if (isUuid(sessionBranchId)) effectiveBranchId = sessionBranchId;
+    } else if (isCompanyAdmin || isSuperAdmin) {
+      if (effectiveCompanyId && isUuid(selectedBranchId)) {
+        effectiveBranchId = selectedBranchId;
+      }
+    }
+
+    const branchIdParam = effectiveBranchId;
+    const departmentIdParam = orgDepartments.find((d) => d.name === v.dept)?.id;
 
     const apiFields = {
       first_name: v.firstName.trim(),
-      last_name: v.lastName.trim(),
+      last_name: v.lastName?.trim() || "",
       work_email: workEmail,
       password: tempPassword,
-      personal_email: v.personalEmail.trim(),
-      phone: v.phone.trim(),
-      date_of_birth: v.dob,
-      gender: v.gender,
-      department: v.dept,
-      department_id: isUuid(departmentId) ? departmentId : "",
-      designation: v.designation,
+      personal_email: v.personalEmail?.trim() || "",
+      phone: v.phone?.trim() || "",
+      date_of_birth: v.dob || "",
+      gender: v.gender || "",
+      department: v.dept || "",
+      department_id: isUuid(departmentIdParam) ? departmentIdParam : undefined,
+      designation: v.designation || "",
       role: v.role || "Employee",
       employment_type: v.employmentType || "Full-time",
-      manager_id: isUuid(v.managerId) ? v.managerId : "",
-      date_of_joining: v.doj,
+      manager_id: isUuid(v.managerId) ? v.managerId : undefined,
+      date_of_joining: v.doj || "",
       probation_months: v.probationMonths || "3",
-      ctc: String(Number(v.ctc)),
-      grade: v.grade,
-      pan_number: pan,
-      aadhaar_number: aadhaar,
-      uan_number: uan,
-      esic_number: v.esiNo?.trim(),
-      bank_name: v.bankName.trim(),
-      bank_account_number: acct,
-      ifsc_code: ifsc,
-
-      // `orgId` is the UI tenant scope, not a backend company ID. This form
-      // creates an organization-level employee unless a backend company is
-      // explicitly selected, so omit company_id here.
-      company_id: "",
-      branch_id: isUuid(branchId) ? branchId : "",
+      status: "ACTIVE",
+      ctc: v.ctc ? String(Number(v.ctc)) : "",
+      grade: v.grade || "",
+      wage_type: v.wageType || "Salaried",
+      attendance_pattern_id: v.patternId || undefined,
+      pan_number: pan || undefined,
+      aadhaar_number: aadhaar || undefined,
+      uan_number: uan || undefined,
+      esic_number: v.esiNo?.trim() || undefined,
+      bank_name: v.bankName?.trim() || undefined,
+      bank_account_number: acct || undefined,
+      ifsc_code: ifsc || undefined,
     };
 
-    submittingRef.current = true;
-    try {
-      // createEmployeeApi already returns response.data
-      const apiEmployee = await createEmployeeApi(apiFields);
-=======
-      company_id: isUuid(orgId) ? orgId : "",
-      branch_id: isUuid(branchId) ? branchId : "",
-    };
+    // Append valid UUIDs only
+    if (effectiveOrgId) apiFields.organization_id = effectiveOrgId;
+    if (effectiveCompanyId) apiFields.company_id = effectiveCompanyId;
+    if (branchIdParam) apiFields.branch_id = branchIdParam;
 
+    // Build FormData from text fields and File objects
     const formData = new FormData();
     Object.entries(apiFields).forEach(([key, value]) => {
       if (value !== undefined && value !== null && String(value).trim() !== "") {
-        formData.append(key, String(value));
+        formData.append(key, String(value).trim());
       }
     });
-    docFiles.forEach(([name, file]) => formData.append(name, file));
+
+    Object.entries(docFiles).forEach(([name, file]) => {
+      if (file instanceof File && file.size > 0) {
+        formData.append(name, file);
+      }
+    });
 
     submittingRef.current = true;
+    setSubmitting(true);
+
     try {
-      // createEmployeeApi already returns response.data
       const apiEmployee = await createEmployeeApi(formData);
 
+      // Store in Zustand session store distinct from logged-in user scope
+      useSessionStore.getState().setLastCreatedEmployee(apiEmployee);
 
-      // ---- Keep the existing local directory / profile features working ----
+      const employeeProfileId = apiEmployee?.id || apiEmployee?.employee_id;
+      const userAccountId = apiEmployee?.user_id;
+
+      // Keep existing local directory and profile store in sync
       const row = hireEmployee({
+        id: employeeProfileId || undefined,
         firstName: v.firstName.trim(),
         lastName: v.lastName.trim(),
         personalEmail: v.personalEmail.trim(),
@@ -818,7 +894,7 @@ function AddEmployeeDialog({ onClose }) {
         dob: v.dob || "",
         gender: v.gender || "",
         orgId,
-        branch: v.branch,
+        branch: v.branch || "",
         dept: v.dept,
         designation: v.designation,
         role: v.role || "Employee",
@@ -842,14 +918,13 @@ function AddEmployeeDialog({ onClose }) {
       });
 
       updateBankDetails(row.id, {
-        holder: v.bankHolder.trim(),
-        bankName: v.bankName.trim(),
+        holder: v.bankHolder?.trim() || "",
+        bankName: v.bankName?.trim() || "",
         accountNo: acct,
         ifsc,
         mode: `${v.payMode || "NEFT"} — Salary Account`,
       });
 
-      // Everything else on the form (personal, education, previous employment, job preferences) is kept locally.
       const t = (k) => (v[k] ?? "").trim();
       const experience = prevJobs
         .map((n) => ({
@@ -919,8 +994,8 @@ function AddEmployeeDialog({ onClose }) {
         : `${row.firstName} ${row.lastName}`;
 
       toast.success(
-        `${employeeName} created · login ${workEmail} · temporary password ${tempPassword}`,
-        { duration: 12000 },
+        `${employeeName} created successfully (Employee ID: ${employeeProfileId || row.id}, User Account ID: ${userAccountId || "N/A"}) · Login: ${workEmail}`,
+        { duration: 8000 },
       );
       onClose();
     } catch (error) {
@@ -939,6 +1014,7 @@ function AddEmployeeDialog({ onClose }) {
       );
     } finally {
       submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -1271,16 +1347,76 @@ function AddEmployeeDialog({ onClose }) {
               />
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <FileUpload name="aadhaar_card" label="Aadhar Card" />
-                <FileUpload name="pan_card" label="PAN Card" />
-                <FileUpload name="driving_license" label="Driving License" />
-                <FileUpload name="passport" label="Passport" />
-                <FileUpload name="resume" label="Resume / CV" />
-                <FileUpload name="offer_letter" label="Offer Letter (Signed)" />
-                <FileUpload name="appointment_letter" label="Appointment Letter" />
-                <FileUpload name="educational_certificate" label="Educational Certificates" />
-                <FileUpload name="address_proof" label="Address Proof" />
-                <FileUpload name="passbook" label="Cancelled Cheque / Passbook" />
+                <FileUpload
+                  name="aadhaar_card"
+                  label="Aadhar Card"
+                  file={docFiles["aadhaar_card"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="pan_card"
+                  label="PAN Card"
+                  file={docFiles["pan_card"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="driving_license"
+                  label="Driving License"
+                  file={docFiles["driving_license"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="passport"
+                  label="Passport"
+                  file={docFiles["passport"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="resume"
+                  label="Resume / CV"
+                  file={docFiles["resume"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="offer_letter"
+                  label="Offer Letter (Signed)"
+                  file={docFiles["offer_letter"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="appointment_letter"
+                  label="Appointment Letter"
+                  file={docFiles["appointment_letter"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="educational_certificate"
+                  label="Educational Certificates"
+                  file={docFiles["educational_certificate"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="address_proof"
+                  label="Address Proof"
+                  file={docFiles["address_proof"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="passbook"
+                  label="Cancelled Cheque / Passbook"
+                  file={docFiles["passbook"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
               </div>
 
               <div className="flex flex-wrap justify-between pt-2">
@@ -1366,7 +1502,13 @@ function AddEmployeeDialog({ onClose }) {
                 desc="Cheque leaf / passbook for verification"
               />
 
-              <FileUpload name="passbook" label="Cancelled Cheque / Passbook First Page" />
+              <FileUpload
+                name="passbook"
+                label="Cancelled Cheque / Passbook First Page"
+                file={docFiles["passbook"]}
+                onSelect={handleDocSelect}
+                onRemove={handleDocRemove}
+              />
 
               <div className="flex flex-wrap justify-between pt-2">
                 <Button type="button" variant="outline" onClick={() => setTab("legal")}>
@@ -1393,6 +1535,146 @@ function AddEmployeeDialog({ onClose }) {
                 title="Placement"
                 desc="Where the employee sits in the organization"
               />
+
+              {/* Tenant Placement Scope Card */}
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 space-y-3 dark:border-emerald-950 dark:bg-emerald-950/20">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
+                    Backend Tenant Placement
+                  </div>
+                  <Badge variant="outline" className="border-emerald-300 bg-white text-emerald-800 text-[11px] font-medium dark:bg-black dark:text-emerald-300">
+                    {isSuperAdmin
+                      ? (selectedCompanyId
+                          ? (selectedBranchId ? "Branch Placement (All 3 IDs)" : "Company Placement (Org + Company)")
+                          : "Organization Placement (Org ID Only)")
+                      : (isCompanyAdmin
+                          ? (selectedBranchId ? "Branch Placement" : "Company Placement")
+                          : (isBranchAdmin ? "Branch Placement (Locked)" : "Restricted"))}
+                  </Badge>
+                </div>
+
+                {isEmployee && (
+                  <p className="text-xs font-medium text-destructive">
+                    Access Restricted: Employees cannot create or onboard other employees.
+                  </p>
+                )}
+
+                {isSuperAdmin && (
+                  <FieldRow>
+                    <Field label="Company Placement (Optional)">
+                      <Select
+                        value={selectedCompanyId || "none"}
+                        onValueChange={(val) => {
+                          setSelectedCompanyId(val === "none" ? "" : val);
+                          setSelectedBranchId("");
+                        }}
+                      >
+                        <SelectTrigger className="bg-white dark:bg-slate-900">
+                          <SelectValue placeholder="Organization Level (No Company)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Organization Level (No Company)</SelectItem>
+                          {backendCompanies.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name} {c.code ? `(${c.code})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Leave unselected to place employee at Organization level.
+                      </p>
+                    </Field>
+
+                    <Field label="Branch Placement (Optional)">
+                      <Select
+                        disabled={!selectedCompanyId || backendBranches.length === 0}
+                        value={selectedBranchId || "none"}
+                        onValueChange={(val) => setSelectedBranchId(val === "none" ? "" : val)}
+                      >
+                        <SelectTrigger className="bg-white dark:bg-slate-900">
+                          <SelectValue
+                            placeholder={
+                              !selectedCompanyId
+                                ? "Select a company first"
+                                : backendBranches.length
+                                  ? "Company Level (No Branch)"
+                                  : "No branches registered"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Company Level (No Branch)</SelectItem>
+                          {backendBranches.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name} {b.code ? `(${b.code})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Select a branch to place employee at Branch level.
+                      </p>
+                    </Field>
+                  </FieldRow>
+                )}
+
+                {isCompanyAdmin && (
+                  <FieldRow>
+                    <Field label="Company Scope (Locked to your session)">
+                      <Input
+                        value={sessionCompanyId || "Assigned Company"}
+                        disabled
+                        className="bg-white font-mono text-xs dark:bg-slate-900"
+                      />
+                    </Field>
+
+                    <Field label="Branch Placement (Optional)">
+                      <Select
+                        value={selectedBranchId || "none"}
+                        onValueChange={(val) => setSelectedBranchId(val === "none" ? "" : val)}
+                      >
+                        <SelectTrigger className="bg-white dark:bg-slate-900">
+                          <SelectValue
+                            placeholder={
+                              backendBranches.length
+                                ? "Company Level (No Branch)"
+                                : "No branches registered"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Company Level (No Branch)</SelectItem>
+                          {backendBranches.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name} {b.code ? `(${b.code})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  </FieldRow>
+                )}
+
+                {isBranchAdmin && (
+                  <FieldRow>
+                    <Field label="Company Scope (Locked)">
+                      <Input
+                        value={sessionCompanyId || "Assigned Company"}
+                        disabled
+                        className="bg-white font-mono text-xs dark:bg-slate-900"
+                      />
+                    </Field>
+                    <Field label="Branch Scope (Locked to your branch)">
+                      <Input
+                        value={sessionBranchId || "Assigned Branch"}
+                        disabled
+                        className="bg-white font-mono text-xs dark:bg-slate-900"
+                      />
+                    </Field>
+                  </FieldRow>
+                )}
+              </div>
 
               <FieldRow>
                 <Field label="Employee ID">
@@ -1684,11 +1966,22 @@ function AddEmployeeDialog({ onClose }) {
         </Tabs>
 
         <DialogFooter className="bg-muted/30 border-t px-6 py-4">
-          <Button type="button" variant="outline" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="submit" className="bg-gradient-emerald shadow-premium text-white">
-            Create Employee
+          <Button
+            type="submit"
+            disabled={submitting || isEmployee}
+            className="bg-gradient-emerald shadow-premium text-white flex items-center gap-2"
+          >
+            {submitting ? (
+              <>
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                <span>Creating Employee…</span>
+              </>
+            ) : (
+              "Create Employee"
+            )}
           </Button>
         </DialogFooter>
       </form>

@@ -111,24 +111,39 @@ function Login() {
   async function submit(e) {
     e.preventDefault();
 
-    // SUPER ADMIN: authenticate through the separate FastAPI backend.
-    if (tab === "super") {
-      try {
-        await SuperAdmin_auth.login(login.trim(), password);
+    // Authenticate through the backend API for all roles
+    try {
+      const authData = await SuperAdmin_auth.login(login.trim(), password);
+      const user = authData?.user;
+      const roleUpper = String(user?.role || "").toUpperCase();
 
-        toast.success("Super Admin login successful");
-
-        router.push(
-          buildHref({ to: "/org/dashboard" }),
-        );
-
+      if (tab === "super" && roleUpper !== "SUPER_ADMIN" && roleUpper !== "SUPERADMIN") {
+        toast.error("This account is not a Super Admin — use the Admin or Employee tab");
         return;
-      } catch (error) {
-        const detail = error.response?.data?.detail;
+      }
 
-        let message =
-          "Super Admin login failed. Please check your credentials.";
+      if (tab === "admin" && roleUpper !== "COMPANY_ADMIN" && roleUpper !== "BRANCH_ADMIN") {
+        toast.error(
+          roleUpper === "SUPER_ADMIN" || roleUpper === "SUPERADMIN"
+            ? "Super Admins sign in on the Super Admin tab"
+            : "Company / Branch Admin access only — other roles use the Employee tab",
+        );
+        return;
+      }
 
+      const roleLabel = roleUpper ? roleUpper.replace(/_/g, " ") : "User";
+      toast.success(`${user?.full_name || user?.name || roleLabel} login successful`);
+
+      const targetPath = roleUpper === "EMPLOYEE" ? "/emp/dashboard" : "/org/dashboard";
+      router.push(buildHref({ to: targetPath }));
+      return;
+    } catch (error) {
+      const detail = error.response?.data?.detail;
+      const status = error.response?.status;
+
+      // If backend returned invalid credentials or user does not exist in local mocks, show error
+      if (status === 401 || status === 403 || (detail && !userByLogin(login))) {
+        let message = "Login failed. Please check your credentials.";
         if (typeof detail === "string") {
           message = detail;
         } else if (Array.isArray(detail)) {
@@ -137,7 +152,6 @@ function Login() {
             .filter(Boolean)
             .join(", ");
         }
-
         toast.error(message);
         return;
       }
