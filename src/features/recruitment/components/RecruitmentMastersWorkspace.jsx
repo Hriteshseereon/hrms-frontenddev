@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "@/lib/router";
 import { buildHref } from "@/lib/navigation";
 import {
@@ -26,6 +26,8 @@ import {
 import { JOB_TYPES, STATUSES } from "@/features/recruitment/data/recruitment-data";
 import { createPersistentStore } from "@/lib/persist";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
+// NEW: Job Type API (adjust the path to where you saved job_type.js)
+import { createJobTypeApi } from "@/api/job_type";
 
 /**
  * Career-portal settings per entity. The three "Save" buttons below used to toast without storing anything.
@@ -75,6 +77,10 @@ const nameDescStatus = [
 ];
 
 export function RecruitmentMasters() {
+  const activeOrgId = useActiveOrgId();
+  // NEW: stable adapter, re-created only when the organization changes
+  const jobTypeApi = useMemo(() => createJobTypeApi(activeOrgId), [activeOrgId]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -123,6 +129,7 @@ export function RecruitmentMasters() {
               description: `${n} engagement`,
               status: "Active",
             }))}
+            api={jobTypeApi}
           />
         </TabsContent>
 
