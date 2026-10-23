@@ -23,7 +23,9 @@ SuperAdmin_axios.interceptors.request.use(
       }
     }
 
-    const isLoginRequest = config.url?.includes("/auth/super-admins/login");
+    const isLoginRequest =
+      config.url?.includes("/auth/super-admins/login") ||
+      config.url?.includes("/auth/login");
 
     // Super Admin login stores a namespaced token. The generic auth flow also
     // uses access_token, so accept it when that flow authenticated this user.
@@ -44,7 +46,7 @@ SuperAdmin_axios.interceptors.response.use(
   (response) => response,
   async (error) => {
     const request = error.config;
-    const isAuthRequest = /\/auth\/(?:super-admins\/login|refresh)/.test(
+    const isAuthRequest = /\/auth\/(?:super-admins\/login|login|refresh)/.test(
       request?.url ?? "",
     );
     const refreshToken =

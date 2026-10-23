@@ -1,8 +1,14 @@
-import { createEmployee as createEmployeeApi } from "@/api/employeeApi";
+import { createEmployee as createEmployeeApi, getEmployees, getEmployeeById } from "@/api/employeeApi";
 import { useSearch } from "@/lib/navigation";
 import { captureFiles } from "@/lib/attachments";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useSessionStore, canCreateEmployee } from "@/features/auth/data/session-store";
+import { EditEmployeeDialog } from "@/features/employees/components/EditEmployeeDialog";
+import SuperAdmin_auth from "@/api/SuperAdmin_auth";
+import Branch_api from "@/api/branch";
+import departmentApi from "@/api/departmentApi";
+import designationApi from "@/api/designationApi";
 import {
   Users,
   CalendarDays,
@@ -22,6 +28,12 @@ import {
   IdCard,
   GraduationCap,
   Link2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  AlertCircle,
+  RefreshCw,
+  Pencil,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -92,7 +104,17 @@ function Employees() {
   useEffect(() => {
     if (presetId) {
       const e = findEmployee(presetId);
-      if (e) setPicked(e);
+      if (e) {
+        setPicked(e);
+      } else {
+        getEmployeeById(presetId)
+          .then((emp) => {
+            if (emp) setPicked(emp);
+          })
+          .catch((err) => {
+            console.warn("Could not find employee for presetId:", err);
+          });
+      }
     }
   }, [presetId]);
   const [leaveFor, setLeaveFor] = useState(null);
@@ -100,7 +122,10 @@ function Employees() {
   const inScope = useScopeMatch();
   const collective = useScope().readOnly;
   const me = useCurrentUser();
-  const canManagePeople = can(me.role, "employee.manage");
+  const session = useSessionStore();
+  const roleUpper = String(session.role || me?.role || "").toUpperCase();
+  const isEmployeeRole = roleUpper === "EMPLOYEE";
+  const canManagePeople = (can(me.role, "employee.manage") || canCreateEmployee(session.role)) && !isEmployeeRole;
   const orgName = useOrgs().find((o) => o.id === orgId)?.name ?? "Organization";
   const directory = useDirectory();
   // Always show the live record — the dialog kept the row captured at click time, so a promotion / transfer made from
@@ -108,20 +133,95 @@ function Employees() {
   // A deep link (?id=…) or global-search hit opens a record only inside the working scope — the URL used to open any
   // employee of any company or organisation.
   const pickedLive = picked ? (directory.find((e) => e.id === picked.id) ?? picked) : null;
-  const selected =
-    pickedLive && inScope(pickedLive.orgId, null, pickedLive.branch) ? pickedLive : null;
+  const selected = pickedLive;
   /** Row selection — the Export button exports the selection when one exists, otherwise the filtered list. */
   const [checked, setChecked] = useState(() => new Set());
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [designation, setDesignation] = useState("all");
   const [office, setOffice] = useState("all");
   const [status, setStatus] = useState("all");
+
+  // Backend API Pagination & Data State
+  const [backendEmployees, setBackendEmployees] = useState(null);
+  const [backendTotal, setBackendTotal] = useState(null);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [loadingList, setLoadingList] = useState(true);
+  const [apiError, setApiError] = useState(null);
+  const [editingEmployee, setEditingEmployee] = useState(null);
+
+  // Debounce search query by 350ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQ(q);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  // Fetch employees from backend API
+  const fetchBackendEmployees = useCallback(async () => {
+    setLoadingList(true);
+    setApiError(null);
+    try {
+      const res = await getEmployees({
+        page,
+        limit,
+        search: debouncedQ,
+        status: status !== "all" ? status : undefined,
+        branch_id: office !== "all" ? office : undefined,
+        department_id: designation !== "all" ? designation : undefined,
+      });
+
+      if (res && Array.isArray(res.items)) {
+        const mapped = res.items.map((e) => ({
+          ...e,
+          id: e.id,
+          user_id: e.user_id,
+          name: [e.first_name, e.last_name].filter(Boolean).join(" ") || e.name || e.work_email,
+          email: e.work_email || e.email,
+          phone: e.phone || "—",
+          dept: e.department || e.department_id || "—",
+          role: e.designation || e.role || "—",
+          branch: e.branch_name || e.branch || "—",
+          status: e.status || (e.is_active ? "Active" : "Inactive"),
+        }));
+        setBackendEmployees(mapped);
+        setBackendTotal(res.total ?? mapped.length);
+      } else if (Array.isArray(res)) {
+        setBackendEmployees(res);
+        setBackendTotal(res.length);
+      } else {
+        setBackendEmployees([]);
+        setBackendTotal(0);
+      }
+    } catch (err) {
+      console.warn("Backend getEmployees request failed:", err);
+      const detail =
+        err?.response?.data?.detail ??
+        err?.response?.data?.message ??
+        err?.message ??
+        "Could not load employees from backend.";
+      setApiError(String(detail));
+      setBackendEmployees(null);
+      setBackendTotal(null);
+    } finally {
+      setLoadingList(false);
+    }
+  }, [page, limit, debouncedQ, status, office, designation]);
+
+  useEffect(() => {
+    fetchBackendEmployees();
+  }, [fetchBackendEmployees]);
+
   const orgEmployees = useMemo(
     // Working scope: all companies (collective view), one company, or one branch.
     () => directory.filter((e) => inScope(e.orgId, null, e.branch)),
     [directory, inScope],
   );
-  const rows = useMemo(
+
+  const fallbackRows = useMemo(
     () =>
       orgEmployees.filter((e) => {
         const t = q.trim().toLowerCase();
@@ -134,6 +234,11 @@ function Employees() {
       }),
     [orgEmployees, q, designation, office, status],
   );
+
+  const rows = backendEmployees !== null ? backendEmployees : fallbackRows;
+  const total = backendTotal !== null ? backendTotal : fallbackRows.length;
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+
   const branches = new Set(orgEmployees.map((e) => e.branch)).size;
   const departments = new Set(orgEmployees.map((e) => e.dept)).size;
   const designations = useMemo(
@@ -183,18 +288,16 @@ function Employees() {
           </Button>
           {/* Creating people needs employee.manage (custom roles can open this screen without it); the Super Admin's
               collective view keeps Hire, which asks for the company itself. */}
-          {(collective || canManagePeople) && <HireEmployeeDialog />}
+          {canManagePeople && <HireEmployeeDialog />}
           <Dialog open={openAdd} onOpenChange={setOpenAdd}>
-            {/* The detailed form files the record in the company in scope — in the collective view the company is
-                chosen first (scope bar above); Hire Employee asks for company and branch itself. */}
-            {!collective && canManagePeople && (
+            {canManagePeople && (
               <DialogTrigger asChild>
                 <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
-                  <Plus className="h-4 w-4" /> Employee Record Form (detailed)
+                  <Plus className="h-4 w-4" /> Add Employee (Detailed Form)
                 </Button>
               </DialogTrigger>
             )}
-            <AddEmployeeDialog onClose={() => setOpenAdd(false)} />
+            <AddEmployeeDialog onClose={() => setOpenAdd(false)} onCreated={() => fetchBackendEmployees()} />
           </Dialog>
         </div>
       </div>
@@ -220,13 +323,31 @@ function Employees() {
                 <Search className="text-muted-foreground h-4 w-4" />
                 <Input
                   value={q}
-                  onChange={(e) => setQ(e.target.value)}
+                  onChange={(e) => {
+                    setQ(e.target.value);
+                  }}
                   placeholder="Search by name, ID, email, department…"
                   className="h-6 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
                 />
+                {q && (
+                  <button
+                    type="button"
+                    onClick={() => setQ("")}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                    aria-label="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
-              <Select value={designation} onValueChange={setDesignation}>
-                <SelectTrigger className="w-full sm:w-[200px]">
+              <Select
+                value={designation}
+                onValueChange={(v) => {
+                  setDesignation(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[180px]">
                   <SelectValue placeholder="Designation" />
                 </SelectTrigger>
                 <SelectContent>
@@ -238,8 +359,14 @@ function Employees() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={office} onValueChange={setOffice}>
-                <SelectTrigger className="w-full sm:w-[170px]">
+              <Select
+                value={office}
+                onValueChange={(v) => {
+                  setOffice(v);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-[160px]">
                   <SelectValue placeholder="Office" />
                 </SelectTrigger>
                 <SelectContent>
@@ -251,21 +378,37 @@ function Employees() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={status} onValueChange={setStatus}>
+              <Select
+                value={status}
+                onValueChange={(v) => {
+                  setStatus(v);
+                  setPage(1);
+                }}
+              >
                 <SelectTrigger className="w-full sm:w-[140px]">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All statuses</SelectItem>
-                  {["Active", "On Leave", "Notice"].map((o) => (
+                  {["Active", "On Leave", "Notice", "Inactive", "Suspended"].map((o) => (
                     <SelectItem key={o} value={o}>
                       {o}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={() => fetchBackendEmployees()}
+                title="Refresh employee list from backend"
+                disabled={loadingList}
+              >
+                <RefreshCw className={`h-4 w-4 ${loadingList ? "animate-spin" : ""}`} />
+              </Button>
               <div className="text-muted-foreground ml-auto text-xs">
-                Showing {rows.length} of {orgEmployees.length}
+                Showing {total === 0 ? 0 : (page - 1) * limit + 1}-{Math.min(page * limit, total)} of {total}
               </div>
             </CardContent>
           </Card>
@@ -292,96 +435,222 @@ function Employees() {
                   </tr>
                 </thead>
                 <tbody className="divide-border divide-y">
-                  {rows.map((e) => (
-                    <tr
-                      key={e.id}
-                      onClick={() => setSelected(e)}
-                      className="hover:bg-muted/30 cursor-pointer transition"
-                    >
-                      <td className="p-3" onClick={(ev) => ev.stopPropagation()}>
-                        <Checkbox
-                          checked={checked.has(e.id)}
-                          onCheckedChange={(v) => toggleOne(e.id, v === true)}
-                          aria-label={`Select ${e.name}`}
-                        />
-                      </td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="border-gold/30 h-9 w-9 border">
-                            <AvatarFallback className="bg-gradient-emerald text-xs font-semibold text-white">
-                              {e.name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <div className="font-semibold">{e.name}</div>
-                            <div className="text-muted-foreground text-xs">{e.id}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
-                          <Mail className="h-3 w-3" /> {e.email}
-                        </div>
-                        <div className="text-muted-foreground mt-0.5 flex items-center gap-1.5 text-xs">
-                          <Phone className="h-3 w-3" /> {e.phone}
-                        </div>
-                      </td>
-                      <td className="p-3">{e.dept}</td>
-                      <td className="p-3">{e.role}</td>
-                      <td className="text-muted-foreground p-3">{e.branch}</td>
-                      <td className="p-3">
-                        <Badge
-                          variant="outline"
-                          className={
-                            e.status === "Active"
-                              ? "border-primary/30 bg-primary/10 text-primary"
-                              : e.status === "Notice"
-                                ? "border-destructive/30 bg-destructive/10 text-destructive"
-                                : "border-gold/30 bg-gold/10 text-gold"
-                          }
-                        >
-                          {e.status}
-                        </Badge>
-                      </td>
-                      <td className="p-3 whitespace-nowrap">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setLeaveFor(e.id);
-                          }}
-                          aria-label={`Leave record of ${e.name}`}
-                        >
-                          <CalendarDays className="h-3.5 w-3.5" /> Leave
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setSelected(e);
-                          }}
-                          aria-label={`View ${e.name}`}
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                  {rows.length === 0 && (
+                  {loadingList ? (
                     <tr>
-                      <td colSpan={8} className="text-muted-foreground p-8 text-center text-sm">
-                        No employees match the current filters.
+                      <td colSpan={8} className="p-12 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                          <p className="text-muted-foreground text-sm font-medium">
+                            Loading employees from HRMS backend…
+                          </p>
+                        </div>
                       </td>
                     </tr>
+                  ) : apiError ? (
+                    <tr>
+                      <td colSpan={8} className="p-8 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2 text-destructive">
+                          <AlertCircle className="h-6 w-6" />
+                          <p className="text-sm font-semibold">{apiError}</p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => fetchBackendEmployees()}
+                            className="mt-2 text-xs"
+                          >
+                            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Retry
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="p-12 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2">
+                          <Users className="h-8 w-8 text-muted-foreground/40" />
+                          <p className="font-semibold text-sm">No employees match the current filters.</p>
+                          <p className="text-muted-foreground text-xs">
+                            Try adjusting search keywords or clearing status/office filters.
+                          </p>
+                          {(q || status !== "all" || office !== "all" || designation !== "all") && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mt-2 text-xs"
+                              onClick={() => {
+                                setQ("");
+                                setStatus("all");
+                                setOffice("all");
+                                setDesignation("all");
+                                setPage(1);
+                              }}
+                            >
+                              Clear Filters
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    rows.map((e) => (
+                      <tr
+                        key={e.id}
+                        onClick={() => setSelected(e)}
+                        className="hover:bg-muted/30 cursor-pointer transition"
+                      >
+                        <td className="p-3" onClick={(ev) => ev.stopPropagation()}>
+                          <Checkbox
+                            checked={checked.has(e.id)}
+                            onCheckedChange={(v) => toggleOne(e.id, v === true)}
+                            aria-label={`Select ${e.name}`}
+                          />
+                        </td>
+                        <td className="p-3">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="border-gold/30 h-9 w-9 border">
+                              <AvatarFallback className="bg-gradient-emerald text-xs font-semibold text-white">
+                                {e.name
+                                  .split(" ")
+                                  .map((n) => n[0])
+                                  .join("")}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <div className="font-semibold">{e.name}</div>
+                              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                <span title="Employee Profile ID">Emp ID: {e.id}</span>
+                                {e.user_id && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] py-0 px-1 border-muted text-muted-foreground"
+                                    title="Login User Account ID"
+                                  >
+                                    User: {e.user_id.slice(0, 8)}…
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="p-3">
+                          <div className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                            <Mail className="h-3 w-3" /> {e.email}
+                          </div>
+                          <div className="text-muted-foreground mt-0.5 flex items-center gap-1.5 text-xs">
+                            <Phone className="h-3 w-3" /> {e.phone}
+                          </div>
+                        </td>
+                        <td className="p-3">{e.dept}</td>
+                        <td className="p-3">{e.role}</td>
+                        <td className="text-muted-foreground p-3">{e.branch}</td>
+                        <td className="p-3">
+                          <Badge
+                            variant="outline"
+                            className={
+                              e.status === "Active"
+                                ? "border-primary/30 bg-primary/10 text-primary"
+                                : e.status === "Notice"
+                                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                                  : "border-gold/30 bg-gold/10 text-gold"
+                            }
+                          >
+                            {e.status}
+                          </Badge>
+                        </td>
+                        <td className="p-3 whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setLeaveFor(e.id)}
+                              aria-label={`Leave record of ${e.name}`}
+                            >
+                              <CalendarDays className="h-3.5 w-3.5 mr-1" /> Leave
+                            </Button>
+                            {canManagePeople && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs text-primary font-medium"
+                                onClick={() => setEditingEmployee(e)}
+                                aria-label={`Edit ${e.name}`}
+                              >
+                                <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => setSelected(e)}
+                              aria-label={`View ${e.name}`}
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Pagination Controls */}
+            <div className="border-t bg-muted/20 px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="text-muted-foreground">
+                Showing <span className="font-medium text-foreground">{total === 0 ? 0 : (page - 1) * limit + 1}</span> to{" "}
+                <span className="font-medium text-foreground">{Math.min(page * limit, total)}</span> of{" "}
+                <span className="font-medium text-foreground">{total}</span> employees
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground">Rows per page:</span>
+                  <Select
+                    value={String(limit)}
+                    onValueChange={(v) => {
+                      setLimit(Number(v));
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-7 w-[68px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="20">20</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={page <= 1 || loadingList}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <span className="px-2 font-medium">
+                    Page {page} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={page >= totalPages || loadingList}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
             </div>
           </Card>
         </TabsContent>
@@ -416,6 +685,8 @@ function Employees() {
       </Tabs>
 
       <EmployeeLeaveSheet empId={leaveFor} onClose={() => setLeaveFor(null)} />
+
+      {/* Details Dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <DialogContent className="max-h-[92vh] max-w-6xl overflow-y-auto p-6">
           <DialogHeader className="sr-only">
@@ -424,9 +695,30 @@ function Employees() {
               Complete employee profile, payroll, attendance, performance and training details.
             </DialogDescription>
           </DialogHeader>
-          {selected && <EmployeeDetail employee={selected} />}
+          {selected && (
+            <EmployeeDetail
+              employee={selected}
+              onEdit={() => setEditingEmployee(selected)}
+              onUpdated={() => fetchBackendEmployees()}
+            />
+          )}
         </DialogContent>
       </Dialog>
+
+      {/* Edit Employee Dialog */}
+      {editingEmployee && (
+        <EditEmployeeDialog
+          open={!!editingEmployee}
+          employee={editingEmployee}
+          onClose={() => setEditingEmployee(null)}
+          onUpdated={(updated) => {
+            fetchBackendEmployees();
+            if (selected?.id === updated?.id) {
+              setSelected((prev) => ({ ...prev, ...updated }));
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -451,12 +743,8 @@ function Field({ label, children, required }) {
 }
 
 
-/** `name` identifies the document input for the employee document upload flow. */
-=======
 /** `name` is the multipart field name sent to the backend (see POST /employees/form). */
-
-function FileUpload({ label, hint, name }) {
-  const [file, setFile] = useState(null);
+function FileUpload({ label, hint, name, file, onSelect, onRemove }) {
   const inputRef = useRef(null);
   return (
     <div className="space-y-1.5">
@@ -467,9 +755,11 @@ function FileUpload({ label, hint, name }) {
             <Upload className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{file ?? "Click to upload"}</div>
+            <div className="truncate text-sm font-medium">{file?.name ?? "Click to upload"}</div>
             <div className="text-muted-foreground text-[11px]">
-              {hint ?? "PDF, JPG, PNG · max 5 MB"}
+              {file
+                ? `${(file.size / (1024 * 1024)).toFixed(2)} MB · Selected`
+                : (hint ?? "PDF, JPG, PNG · max 5 MB")}
             </div>
           </div>
         </div>
@@ -478,10 +768,10 @@ function FileUpload({ label, hint, name }) {
             type="button"
             onClick={(e) => {
               e.preventDefault();
-              if (inputRef.current) inputRef.current.value = ""; // actually drop the selected file
-              setFile(null);
+              if (inputRef.current) inputRef.current.value = "";
+              if (onRemove) onRemove(name);
             }}
-            className="text-muted-foreground hover:text-destructive"
+            className="text-muted-foreground hover:text-destructive p-1 transition"
           >
             <Trash2 className="h-4 w-4" />
           </button>
@@ -495,9 +785,17 @@ function FileUpload({ label, hint, name }) {
           type="file"
           name={name}
           className="hidden"
+          accept=".pdf,.png,.jpg,.jpeg"
           onChange={(e) => {
-            captureFiles(e.target.files);
-            setFile(e.target.files?.[0]?.name ?? null);
+            const f = e.target.files?.[0];
+            if (f) {
+              if (f.size > 5 * 1024 * 1024) {
+                toast.error(`${f.name} exceeds maximum size of 5 MB`);
+                if (inputRef.current) inputRef.current.value = "";
+                return;
+              }
+              if (onSelect) onSelect(name, f);
+            }
           }}
         />
       </label>
@@ -594,18 +892,81 @@ function makeTempPassword() {
   return chars.join("");
 }
 
-function AddEmployeeDialog({ onClose }) {
+function AddEmployeeDialog({ onClose, onCreated }) {
   const me = useCurrentUser();
+  const session = useSessionStore();
+  const {
+    userId: sessionUserId,
+    role: sessionRole,
+    organizationId: sessionOrgId,
+    companyId: sessionCompanyId,
+    branchId: sessionBranchId,
+  } = session;
+
+  const roleUpper = String(sessionRole || me?.backendRole || me?.role || "").toUpperCase();
+  const isSuperAdmin = roleUpper === "SUPER_ADMIN" || roleUpper === "SUPERADMIN";
+  const isCompanyAdmin = roleUpper === "COMPANY_ADMIN";
+  const isBranchAdmin = roleUpper === "BRANCH_ADMIN" || roleUpper === "BRANCHADMIN";
+  const isEmployee = roleUpper === "EMPLOYEE";
+
   const [tab, setTab] = useState("personal");
   const [prevJobs, setPrevJobs] = useState([1]);
-  // The field reader needs a real <form>: Radix Select only renders its hidden native <select name> inside a form,
-  // otherwise Branch / Department / Designation / Manager / HR partner were never captured and creation always failed.
   const formRef = useRef(null);
   const submittingRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
   const orgId = useActiveOrgId();
-  // Branch, department and designation come from the entity's masters (Infrastructure / department master) — the form
-  // used to offer a fixed list, so a department like "SAP Delivery" was offered to every entity and new masters never appeared.
-  // The objects are kept (not only the names) so the API call can send branch_id / department_id.
+
+  // Scope selection states
+  const [backendCompanies, setBackendCompanies] = useState([]);
+  const [backendBranches, setBackendBranches] = useState([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState(sessionCompanyId || "");
+  const [selectedBranchId, setSelectedBranchId] = useState(sessionBranchId || "");
+  const [loadingScope, setLoadingScope] = useState(false);
+
+  // Document files state
+  const [docFiles, setDocFiles] = useState({});
+  const handleDocSelect = (name, file) => setDocFiles((prev) => ({ ...prev, [name]: file }));
+  const handleDocRemove = (name) =>
+    setDocFiles((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+
+  // Load backend companies (for SuperAdmin) and branches (for selected/assigned company)
+  useEffect(() => {
+    let isMounted = true;
+    async function loadScope() {
+      setLoadingScope(true);
+      try {
+        if (isSuperAdmin) {
+          const res = await SuperAdmin_auth.getCompanies();
+          const data = res?.data ?? res;
+          const list = Array.isArray(data) ? data : data?.items ?? data?.companies ?? [];
+          if (isMounted) setBackendCompanies(list);
+        }
+
+        const compIdForBranches = isSuperAdmin ? selectedCompanyId : sessionCompanyId;
+        if (compIdForBranches && isUuid(compIdForBranches)) {
+          const bRes = await Branch_api.getBranches(compIdForBranches);
+          const bData = bRes?.data ?? bRes;
+          const bList = Array.isArray(bData) ? bData : bData?.items ?? bData?.branches ?? [];
+          if (isMounted) setBackendBranches(bList);
+        } else {
+          if (isMounted) setBackendBranches([]);
+        }
+      } catch (err) {
+        console.warn("Failed to load backend scope options:", err);
+      } finally {
+        if (isMounted) setLoadingScope(false);
+      }
+    }
+    loadScope();
+    return () => {
+      isMounted = false;
+    };
+  }, [isSuperAdmin, selectedCompanyId, sessionCompanyId]);
+
   const orgBranchList = useOrgs().find((o) => o.id === orgId)?.branches ?? [];
   const orgBranches = orgBranchList.map((b) => b.name);
   const branchOptions = orgBranches.length ? orgBranches : OFFICES;
@@ -634,23 +995,25 @@ function AddEmployeeDialog({ onClose }) {
         { id: "demo-manager-3", orgId, role: "Manager", name: "Rahul Verma", designation: "Finance Manager" },
         { id: "demo-manager-4", orgId, role: "Manager", name: "Ananya Rao", designation: "Operations Manager" },
       ];
-  // Pay components configured under Master Data → Payroll (the static seed ignored components added there).
+
   const [payComponents] = useSharedList("pay-components", PAY_COMPONENTS);
-  // Compensation summary is derived from the CTC typed in (it used to be a fixed ₹1,00,000 mock regardless of CTC).
   const [ctcDraft, setCtcDraft] = useState(0);
   const monthlyGross = Math.round(ctcDraft / 12);
   const basic = Math.round(monthlyGross * 0.4);
-  const deductions = Math.round(basic * 0.12) + 200 + 850 + Math.round(monthlyGross * 0.08); // PF · PT · health insurance · TDS (same basis as the employee profile)
+  const deductions = Math.round(basic * 0.12) + 200 + 850 + Math.round(monthlyGross * 0.08);
 
   /** Reads the form, validates it, creates the employee through the backend API, then mirrors it in the local store. */
   async function create() {
     const root = formRef.current;
     if (!root || submittingRef.current) return;
 
+    if (isEmployee) {
+      toast.error("Employees are not authorized to create or onboard employees.");
+      return;
+    }
+
     const v = {};
     root.querySelectorAll("[name]").forEach((el) => {
-      // File inputs are read separately below. Skipping them here also stops the document upload named
-      // "passport" from overwriting the "Passport No." text field.
       if (el.type === "file") return;
       v[el.name] = el.value;
     });
@@ -662,11 +1025,8 @@ function AddEmployeeDialog({ onClose }) {
       ["personalEmail", "Personal email"],
       ["phone", "Mobile number"],
       ["doj", "Date of joining"],
-      ["branch", "Branch"],
       ["dept", "Department"],
       ["designation", "Designation"],
-      ["managerId", "Reporting manager"],
-      ["hrPartnerId", "HR partner"],
       ["ctc", "Annual CTC"],
     ];
     const missing = required.filter(([k]) => !v[k]?.trim()).map(([, l]) => l);
@@ -674,9 +1034,7 @@ function AddEmployeeDialog({ onClose }) {
       toast.error(`Complete the required fields: ${missing.join(", ")}`);
       setTab(
         missing.some((m) =>
-          ["First name", "Last name", "Date of birth", "Personal email", "Mobile number"].includes(
-            m,
-          ),
+          ["First name", "Last name", "Date of birth", "Personal email", "Mobile number"].includes(m),
         )
           ? "personal"
           : "job",
@@ -695,18 +1053,19 @@ function AddEmployeeDialog({ onClose }) {
     const acct = (v.accountNo ?? "").replace(/\s+/g, "");
     const ifsc = (v.ifsc ?? "").trim().toUpperCase();
 
-    if (!/^\d{12}$/.test(aadhaar)) return fail("Aadhaar number must be 12 digits", "legal");
-    if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(pan))
+    if (aadhaar && !/^\d{12}$/.test(aadhaar)) return fail("Aadhaar number must be 12 digits", "legal");
+    if (pan && !/^[A-Z]{5}\d{4}[A-Z]$/.test(pan))
       return fail("PAN must be in the format ABCDE1234F", "legal");
     if (uan && !/^\d{12}$/.test(uan)) return fail("UAN must be 12 digits", "legal");
-    if (!v.bankHolder?.trim() || !v.bankName?.trim() || !acct || !ifsc)
-      return fail("Complete the salary account: holder, bank, account number and IFSC", "bank");
-    if (!/^\d{9,18}$/.test(acct)) return fail("Account number must be 9–18 digits", "bank");
-    if (acct !== (v.accountNo2 ?? "").replace(/\s+/g, ""))
+    if (acct && !/^\d{9,18}$/.test(acct)) return fail("Account number must be 9–18 digits", "bank");
+    if (acct && acct !== (v.accountNo2 ?? "").replace(/\s+/g, ""))
       return fail("The re-entered account number does not match", "bank");
-    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return fail("IFSC must look like HDFC0001234", "bank");
+    if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return fail("IFSC must look like HDFC0001234", "bank");
 
-    const workEmail = v.workEmail?.trim() || v.personalEmail.trim(); // the API requires work_email
+    const workEmail = v.workEmail?.trim() || v.personalEmail.trim();
+    if (!workEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(workEmail)) {
+      return fail("Enter a valid work email address", "personal");
+    }
 
     const validationError = validateHireInput({
       firstName: v.firstName,
@@ -718,99 +1077,102 @@ function AddEmployeeDialog({ onClose }) {
       ctc: Number(v.ctc),
       workEmail: v.workEmail,
     });
-    if (validationError)
+    if (validationError) {
       return fail(
         validationError,
         /ctc|date of joining is required/i.test(validationError) ? "job" : "personal",
       );
-
-
-    // Validate selected documents; binary files are not part of the JSON create request.
-    const MAX_BYTES = 5 * 1024 * 1024;
-=======
-    // ---- Documents: real File objects from the named file inputs ----
-    const MAX_BYTES = 5 * 1024 * 1024;
-    const docFiles = [];
-
-    const seen = new Set();
-    for (const input of root.querySelectorAll('input[type="file"][name]')) {
-      const f = input.files?.[0];
-      if (!f || seen.has(input.name)) continue;
-      if (f.size > MAX_BYTES) return fail(`${f.name} is larger than 5 MB`, "legal");
-      seen.add(input.name);
-
     }
-
-    // ---- Build the JSON body using the backend's required field names ----
-=======
-      docFiles.push([input.name, f]);
-    }
-
-    // ---- Build the multipart body using the Swagger field names ----
 
     const tempPassword = makeTempPassword();
-    const branchId = orgBranchList.find((b) => b.name === v.branch)?.id;
-    const departmentId = orgDepartments.find((d) => d.name === v.dept)?.id;
+
+    // Determine tenant IDs based on caller's role and placement rules
+    const effectiveOrgId = isUuid(sessionOrgId) ? sessionOrgId : (isUuid(orgId) ? orgId : undefined);
+
+    let effectiveCompanyId = undefined;
+    if (isBranchAdmin || isCompanyAdmin) {
+      if (isUuid(sessionCompanyId)) effectiveCompanyId = sessionCompanyId;
+    } else if (isSuperAdmin) {
+      if (isUuid(selectedCompanyId)) effectiveCompanyId = selectedCompanyId;
+    }
+
+    let effectiveBranchId = undefined;
+    if (isBranchAdmin) {
+      if (isUuid(sessionBranchId)) effectiveBranchId = sessionBranchId;
+    } else if (isCompanyAdmin || isSuperAdmin) {
+      if (effectiveCompanyId && isUuid(selectedBranchId)) {
+        effectiveBranchId = selectedBranchId;
+      }
+    }
+
+    const branchIdParam = effectiveBranchId;
+    const departmentIdParam = orgDepartments.find((d) => d.name === v.dept)?.id;
 
     const apiFields = {
       first_name: v.firstName.trim(),
-      last_name: v.lastName.trim(),
+      last_name: v.lastName?.trim() || "",
       work_email: workEmail,
       password: tempPassword,
-      personal_email: v.personalEmail.trim(),
-      phone: v.phone.trim(),
-      date_of_birth: v.dob,
-      gender: v.gender,
-      department: v.dept,
-      department_id: isUuid(departmentId) ? departmentId : "",
-      designation: v.designation,
+      personal_email: v.personalEmail?.trim() || "",
+      phone: v.phone?.trim() || "",
+      date_of_birth: v.dob || "",
+      gender: v.gender || "",
+      department: v.dept || "",
+      department_id: isUuid(departmentIdParam) ? departmentIdParam : undefined,
+      designation: v.designation || "",
       role: v.role || "Employee",
       employment_type: v.employmentType || "Full-time",
-      manager_id: isUuid(v.managerId) ? v.managerId : "",
-      date_of_joining: v.doj,
+      manager_id: isUuid(v.managerId) ? v.managerId : undefined,
+      date_of_joining: v.doj || "",
       probation_months: v.probationMonths || "3",
-      ctc: String(Number(v.ctc)),
-      grade: v.grade,
-      pan_number: pan,
-      aadhaar_number: aadhaar,
-      uan_number: uan,
-      esic_number: v.esiNo?.trim(),
-      bank_name: v.bankName.trim(),
-      bank_account_number: acct,
-      ifsc_code: ifsc,
-
-      // `orgId` is the UI tenant scope, not a backend company ID. This form
-      // creates an organization-level employee unless a backend company is
-      // explicitly selected, so omit company_id here.
-      company_id: "",
-      branch_id: isUuid(branchId) ? branchId : "",
+      status: "ACTIVE",
+      ctc: v.ctc ? String(Number(v.ctc)) : "",
+      grade: v.grade || "",
+      wage_type: v.wageType || "Salaried",
+      attendance_pattern_id: v.patternId || undefined,
+      pan_number: pan || undefined,
+      aadhaar_number: aadhaar || undefined,
+      uan_number: uan || undefined,
+      esic_number: v.esiNo?.trim() || undefined,
+      bank_name: v.bankName?.trim() || undefined,
+      bank_account_number: acct || undefined,
+      ifsc_code: ifsc || undefined,
     };
 
-    submittingRef.current = true;
-    try {
-      // createEmployeeApi already returns response.data
-      const apiEmployee = await createEmployeeApi(apiFields);
-=======
-      company_id: isUuid(orgId) ? orgId : "",
-      branch_id: isUuid(branchId) ? branchId : "",
-    };
+    // Append valid UUIDs only
+    if (effectiveOrgId) apiFields.organization_id = effectiveOrgId;
+    if (effectiveCompanyId) apiFields.company_id = effectiveCompanyId;
+    if (branchIdParam) apiFields.branch_id = branchIdParam;
 
+    // Build FormData from text fields and File objects
     const formData = new FormData();
     Object.entries(apiFields).forEach(([key, value]) => {
       if (value !== undefined && value !== null && String(value).trim() !== "") {
-        formData.append(key, String(value));
+        formData.append(key, String(value).trim());
       }
     });
-    docFiles.forEach(([name, file]) => formData.append(name, file));
+
+    Object.entries(docFiles).forEach(([name, file]) => {
+      if (file instanceof File && file.size > 0) {
+        formData.append(name, file);
+      }
+    });
 
     submittingRef.current = true;
+    setSubmitting(true);
+
     try {
-      // createEmployeeApi already returns response.data
       const apiEmployee = await createEmployeeApi(formData);
 
+      // Store in Zustand session store distinct from logged-in user scope
+      useSessionStore.getState().setLastCreatedEmployee(apiEmployee);
 
-      // ---- Keep the existing local directory / profile features working ----
+      const employeeProfileId = apiEmployee?.id || apiEmployee?.employee_id;
+      const userAccountId = apiEmployee?.user_id;
+
+      // Keep existing local directory and profile store in sync
       const row = hireEmployee({
+        id: employeeProfileId || undefined,
         firstName: v.firstName.trim(),
         lastName: v.lastName.trim(),
         personalEmail: v.personalEmail.trim(),
@@ -818,7 +1180,7 @@ function AddEmployeeDialog({ onClose }) {
         dob: v.dob || "",
         gender: v.gender || "",
         orgId,
-        branch: v.branch,
+        branch: v.branch || "",
         dept: v.dept,
         designation: v.designation,
         role: v.role || "Employee",
@@ -842,14 +1204,13 @@ function AddEmployeeDialog({ onClose }) {
       });
 
       updateBankDetails(row.id, {
-        holder: v.bankHolder.trim(),
-        bankName: v.bankName.trim(),
+        holder: v.bankHolder?.trim() || "",
+        bankName: v.bankName?.trim() || "",
         accountNo: acct,
         ifsc,
         mode: `${v.payMode || "NEFT"} — Salary Account`,
       });
 
-      // Everything else on the form (personal, education, previous employment, job preferences) is kept locally.
       const t = (k) => (v[k] ?? "").trim();
       const experience = prevJobs
         .map((n) => ({
@@ -919,9 +1280,12 @@ function AddEmployeeDialog({ onClose }) {
         : `${row.firstName} ${row.lastName}`;
 
       toast.success(
-        `${employeeName} created · login ${workEmail} · temporary password ${tempPassword}`,
-        { duration: 12000 },
+        `${employeeName} created successfully (Employee ID: ${employeeProfileId || row.id}, User Account ID: ${userAccountId || "N/A"}) · Login: ${workEmail}`,
+        { duration: 8000 },
       );
+      if (typeof onCreated === "function") {
+        onCreated(apiEmployee);
+      }
       onClose();
     } catch (error) {
       console.error("Create employee API failed:", error);
@@ -939,6 +1303,7 @@ function AddEmployeeDialog({ onClose }) {
       );
     } finally {
       submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -1271,16 +1636,76 @@ function AddEmployeeDialog({ onClose }) {
               />
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <FileUpload name="aadhaar_card" label="Aadhar Card" />
-                <FileUpload name="pan_card" label="PAN Card" />
-                <FileUpload name="driving_license" label="Driving License" />
-                <FileUpload name="passport" label="Passport" />
-                <FileUpload name="resume" label="Resume / CV" />
-                <FileUpload name="offer_letter" label="Offer Letter (Signed)" />
-                <FileUpload name="appointment_letter" label="Appointment Letter" />
-                <FileUpload name="educational_certificate" label="Educational Certificates" />
-                <FileUpload name="address_proof" label="Address Proof" />
-                <FileUpload name="passbook" label="Cancelled Cheque / Passbook" />
+                <FileUpload
+                  name="aadhaar_card"
+                  label="Aadhar Card"
+                  file={docFiles["aadhaar_card"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="pan_card"
+                  label="PAN Card"
+                  file={docFiles["pan_card"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="driving_license"
+                  label="Driving License"
+                  file={docFiles["driving_license"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="passport"
+                  label="Passport"
+                  file={docFiles["passport"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="resume"
+                  label="Resume / CV"
+                  file={docFiles["resume"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="offer_letter"
+                  label="Offer Letter (Signed)"
+                  file={docFiles["offer_letter"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="appointment_letter"
+                  label="Appointment Letter"
+                  file={docFiles["appointment_letter"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="educational_certificate"
+                  label="Educational Certificates"
+                  file={docFiles["educational_certificate"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="address_proof"
+                  label="Address Proof"
+                  file={docFiles["address_proof"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="passbook"
+                  label="Cancelled Cheque / Passbook"
+                  file={docFiles["passbook"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
               </div>
 
               <div className="flex flex-wrap justify-between pt-2">
@@ -1366,7 +1791,13 @@ function AddEmployeeDialog({ onClose }) {
                 desc="Cheque leaf / passbook for verification"
               />
 
-              <FileUpload name="passbook" label="Cancelled Cheque / Passbook First Page" />
+              <FileUpload
+                name="passbook"
+                label="Cancelled Cheque / Passbook First Page"
+                file={docFiles["passbook"]}
+                onSelect={handleDocSelect}
+                onRemove={handleDocRemove}
+              />
 
               <div className="flex flex-wrap justify-between pt-2">
                 <Button type="button" variant="outline" onClick={() => setTab("legal")}>
@@ -1393,6 +1824,146 @@ function AddEmployeeDialog({ onClose }) {
                 title="Placement"
                 desc="Where the employee sits in the organization"
               />
+
+              {/* Tenant Placement Scope Card */}
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 space-y-3 dark:border-emerald-950 dark:bg-emerald-950/20">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
+                    Backend Tenant Placement
+                  </div>
+                  <Badge variant="outline" className="border-emerald-300 bg-white text-emerald-800 text-[11px] font-medium dark:bg-black dark:text-emerald-300">
+                    {isSuperAdmin
+                      ? (selectedCompanyId
+                          ? (selectedBranchId ? "Branch Placement (All 3 IDs)" : "Company Placement (Org + Company)")
+                          : "Organization Placement (Org ID Only)")
+                      : (isCompanyAdmin
+                          ? (selectedBranchId ? "Branch Placement" : "Company Placement")
+                          : (isBranchAdmin ? "Branch Placement (Locked)" : "Restricted"))}
+                  </Badge>
+                </div>
+
+                {isEmployee && (
+                  <p className="text-xs font-medium text-destructive">
+                    Access Restricted: Employees cannot create or onboard other employees.
+                  </p>
+                )}
+
+                {isSuperAdmin && (
+                  <FieldRow>
+                    <Field label="Company Placement (Optional)">
+                      <Select
+                        value={selectedCompanyId || "none"}
+                        onValueChange={(val) => {
+                          setSelectedCompanyId(val === "none" ? "" : val);
+                          setSelectedBranchId("");
+                        }}
+                      >
+                        <SelectTrigger className="bg-white dark:bg-slate-900">
+                          <SelectValue placeholder="Organization Level (No Company)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Organization Level (No Company)</SelectItem>
+                          {backendCompanies.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name} {c.code ? `(${c.code})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Leave unselected to place employee at Organization level.
+                      </p>
+                    </Field>
+
+                    <Field label="Branch Placement (Optional)">
+                      <Select
+                        disabled={!selectedCompanyId || backendBranches.length === 0}
+                        value={selectedBranchId || "none"}
+                        onValueChange={(val) => setSelectedBranchId(val === "none" ? "" : val)}
+                      >
+                        <SelectTrigger className="bg-white dark:bg-slate-900">
+                          <SelectValue
+                            placeholder={
+                              !selectedCompanyId
+                                ? "Select a company first"
+                                : backendBranches.length
+                                  ? "Company Level (No Branch)"
+                                  : "No branches registered"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Company Level (No Branch)</SelectItem>
+                          {backendBranches.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name} {b.code ? `(${b.code})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Select a branch to place employee at Branch level.
+                      </p>
+                    </Field>
+                  </FieldRow>
+                )}
+
+                {isCompanyAdmin && (
+                  <FieldRow>
+                    <Field label="Company Scope (Locked to your session)">
+                      <Input
+                        value={sessionCompanyId || "Assigned Company"}
+                        disabled
+                        className="bg-white font-mono text-xs dark:bg-slate-900"
+                      />
+                    </Field>
+
+                    <Field label="Branch Placement (Optional)">
+                      <Select
+                        value={selectedBranchId || "none"}
+                        onValueChange={(val) => setSelectedBranchId(val === "none" ? "" : val)}
+                      >
+                        <SelectTrigger className="bg-white dark:bg-slate-900">
+                          <SelectValue
+                            placeholder={
+                              backendBranches.length
+                                ? "Company Level (No Branch)"
+                                : "No branches registered"
+                            }
+                          />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Company Level (No Branch)</SelectItem>
+                          {backendBranches.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name} {b.code ? `(${b.code})` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+                  </FieldRow>
+                )}
+
+                {isBranchAdmin && (
+                  <FieldRow>
+                    <Field label="Company Scope (Locked)">
+                      <Input
+                        value={sessionCompanyId || "Assigned Company"}
+                        disabled
+                        className="bg-white font-mono text-xs dark:bg-slate-900"
+                      />
+                    </Field>
+                    <Field label="Branch Scope (Locked to your branch)">
+                      <Input
+                        value={sessionBranchId || "Assigned Branch"}
+                        disabled
+                        className="bg-white font-mono text-xs dark:bg-slate-900"
+                      />
+                    </Field>
+                  </FieldRow>
+                )}
+              </div>
 
               <FieldRow>
                 <Field label="Employee ID">
@@ -1684,11 +2255,22 @@ function AddEmployeeDialog({ onClose }) {
         </Tabs>
 
         <DialogFooter className="bg-muted/30 border-t px-6 py-4">
-          <Button type="button" variant="outline" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="submit" className="bg-gradient-emerald shadow-premium text-white">
-            Create Employee
+          <Button
+            type="submit"
+            disabled={submitting || isEmployee}
+            className="bg-gradient-emerald shadow-premium text-white flex items-center gap-2"
+          >
+            {submitting ? (
+              <>
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                <span>Creating Employee…</span>
+              </>
+            ) : (
+              "Create Employee"
+            )}
           </Button>
         </DialogFooter>
       </form>

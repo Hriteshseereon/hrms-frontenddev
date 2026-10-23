@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Mail,
   Phone,
@@ -20,7 +20,12 @@ import {
   Download,
   BadgeCheck,
   UserCheck,
+  Pencil,
+  ExternalLink,
+  Upload,
 } from "lucide-react";
+import { getEmployeeById } from "@/api/employeeApi";
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { toast } from "sonner";
 import {
   Select,
@@ -129,10 +134,58 @@ export function DataTable({ head, rows }) {
 }
 
 /** Full 360° employee record. Used by the admin dialog and the employee portal. */
-export function EmployeeDetail({ employee, selfView = false }) {
-  const p = getEmployeeProfile(employee.id);
+export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }) {
+  const [apiData, setApiData] = useState(null);
+  const [loadingBackend, setLoadingBackend] = useState(false);
+
+  const session = useSessionStore();
+  const sessionRole = String(session.role || "").toUpperCase();
+  const isEmployeeRole = sessionRole === "EMPLOYEE";
+  const canEdit = !selfView && !isEmployeeRole && typeof onEdit === "function";
+
+  const empId = employee?.id;
+
+  useEffect(() => {
+    if (!empId) return;
+    let isMounted = true;
+    setLoadingBackend(true);
+    getEmployeeById(empId)
+      .then((data) => {
+        if (isMounted) setApiData(data);
+      })
+      .catch((err) => {
+        console.warn("Could not load backend employee details:", err);
+      })
+      .finally(() => {
+        if (isMounted) setLoadingBackend(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [empId]);
+
+  const merged = { ...employee, ...apiData };
+  const p = getEmployeeProfile(empId || employee?.id);
   const [tab, setTab] = useState("profile");
   const [leaveOpen, setLeaveOpen] = useState(false);
+
+  const fullName =
+    [merged.first_name, merged.last_name].filter(Boolean).join(" ") || merged.name || "Employee";
+  const workEmail = merged.work_email || merged.email || "";
+  const phone = merged.phone || "";
+  const dept = merged.department || merged.dept || "—";
+  const role = merged.designation || merged.role || "—";
+  const branchName = merged.branch_name || merged.branch || "—";
+  const companyName = merged.company_name || "";
+  const status = merged.status || "Active";
+  const employeeProfileId = merged.id;
+  const userAccountId = merged.user_id;
+  const grade = merged.grade || p.job.grade;
+  const wageType = merged.wage_type || p.job.wageType;
+  const ctc = merged.ctc !== undefined && merged.ctc !== "" ? Number(merged.ctc) : p.payroll.ctc;
+  const doj = merged.date_of_joining || p.job.dateOfJoining;
+  const probationMonths =
+    merged.probation_months !== undefined ? merged.probation_months : p.job.probationMonths;
 
   const totalEarnings = p.payroll.earnings.reduce((s, e) => s + e.amount, 0);
   const totalDeductions = p.payroll.deductions.reduce((s, e) => s + e.amount, 0);
@@ -144,39 +197,74 @@ export function EmployeeDetail({ employee, selfView = false }) {
         <div className="flex flex-wrap items-center gap-4">
           <Avatar className="border-gold/50 h-16 w-16 border-2">
             <AvatarFallback className="bg-white/10 text-lg font-bold text-white">
-              {initials(employee.name)}
+              {initials(fullName)}
             </AvatarFallback>
           </Avatar>
           <div className="min-w-[220px]">
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold tracking-tight">{employee.name}</h2>
+              <h2 className="text-xl font-bold tracking-tight">{fullName}</h2>
               <BadgeCheck className="text-gold h-4 w-4" />
+              {loadingBackend && (
+                <span className="text-[11px] text-white/70 italic">(Syncing backend…)</span>
+              )}
             </div>
             <div className="text-sm text-white/70">
-              {employee.role} · {employee.dept}
+              {role} · {dept} {companyName ? `· ${companyName}` : ""}
             </div>
             <div className="mt-1 flex flex-wrap gap-3 text-xs text-white/60">
               <span className="flex items-center gap-1">
-                <Mail className="h-3 w-3" /> {employee.email}
+                <Mail className="h-3 w-3" /> {workEmail || "—"}
               </span>
               <span className="flex items-center gap-1">
-                <Phone className="h-3 w-3" /> {employee.phone}
+                <Phone className="h-3 w-3" /> {phone || "—"}
               </span>
               <span className="flex items-center gap-1">
-                <MapPin className="h-3 w-3" /> {employee.branch}
+                <MapPin className="h-3 w-3" /> {branchName}
               </span>
             </div>
           </div>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
-            <Badge variant="outline" className="border-gold/40 text-gold bg-white/10">
-              {employee.id}
-            </Badge>
-            <Badge variant="outline" className="border-white/30 bg-white/10 text-white">
-              {employee.status}
-            </Badge>
-            <Badge variant="outline" className="border-white/30 bg-white/10 text-white">
-              Grade {p.job.grade} · {p.job.wageType}
-            </Badge>
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center gap-1.5">
+                <Badge
+                  variant="outline"
+                  className="border-gold/40 text-gold bg-white/10"
+                  title="Employee Profile ID"
+                >
+                  Emp ID: {employeeProfileId}
+                </Badge>
+                {userAccountId && (
+                  <Badge
+                    variant="outline"
+                    className="border-white/30 text-white/80 bg-white/10 text-[10px]"
+                    title="User Account Login ID"
+                  >
+                    User: {userAccountId.slice(0, 8)}…
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Badge variant="outline" className="border-white/30 bg-white/10 text-white">
+                  {status}
+                </Badge>
+                {grade && (
+                  <Badge variant="outline" className="border-white/30 bg-white/10 text-white">
+                    Grade {grade} · {wageType}
+                  </Badge>
+                )}
+              </div>
+            </div>
+            {canEdit && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={onEdit}
+                className="bg-white text-emerald-800 hover:bg-white/90 shadow-sm font-medium"
+              >
+                <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit Employee
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -231,15 +319,15 @@ export function EmployeeDetail({ employee, selfView = false }) {
           <Section title="Personal Information" icon={User}>
             <KV
               items={[
-                ["Date of Birth", p.personal.dob],
-                ["Gender", p.personal.gender],
-                ["Blood Group", p.personal.bloodGroup],
-                ["Marital Status", p.personal.maritalStatus],
-                ["Nationality", p.personal.nationality],
-                ["Personal Email", p.personal.personalEmail],
-                ["Emergency Contact", p.personal.emergencyContact],
-                ["Current Address", p.personal.currentAddress],
-                ["Permanent Address", p.personal.permanentAddress],
+                ["Date of Birth", merged.date_of_birth || p.personal.dob || "—"],
+                ["Gender", merged.gender || p.personal.gender || "—"],
+                ["Personal Email", merged.personal_email || p.personal.personalEmail || "—"],
+                ["Work Email", workEmail || "—"],
+                ["Phone Number", phone || "—"],
+                ["Blood Group", p.personal.bloodGroup || "—"],
+                ["Nationality", p.personal.nationality || "—"],
+                ["Current Address", p.personal.currentAddress || "—"],
+                ["Permanent Address", p.personal.permanentAddress || "—"],
               ]}
             />
           </Section>
@@ -262,37 +350,44 @@ export function EmployeeDetail({ employee, selfView = false }) {
           <Section title="Employment Details" icon={Building2}>
             <KV
               items={[
-                ["Employee ID", employee.id],
-                ["Department", employee.dept],
-                ["Designation", employee.role],
-                ["Date of Joining", p.job.dateOfJoining],
-                ["Confirmation Date", p.job.confirmationDate],
-                ["Employment Type", p.job.employmentType],
-                ["Work Mode", p.job.workMode],
-                ["Salary Grade", p.job.grade],
-                ["Wage type", p.job.wageType],
-                ["Shift", p.job.shift],
-                ["Reporting Manager", p.job.reportingManager],
-                ["Probation", `${p.job.probationMonths} months`],
-                ["Notice Period", `${p.job.noticePeriodDays} days`],
-                ["Work Location", p.job.location],
-                ["Status", employee.status],
+                ["Employee Profile ID", employeeProfileId],
+                ["Login User Account ID", userAccountId || "—"],
+                ["Company", companyName || "—"],
+                ["Branch / Office", branchName || "—"],
+                ["Placement Level", merged.placement_level || "—"],
+                ["Department", dept],
+                ["Designation", role],
+                ["Date of Joining", doj || "—"],
+                ["Confirmation Date", p.job.confirmationDate || "—"],
+                ["Employment Type", merged.employment_type || p.job.employmentType || "—"],
+                ["Reporting Manager", merged.manager_name || p.job.reportingManager || "—"],
+                ["Probation", `${probationMonths} months`],
+                ["Salary Grade", grade || "—"],
+                ["Wage Type", wageType || "—"],
+                ["Status", status],
               ]}
             />
           </Section>
           <ManagerAssignment employee={employee} />
           <WorkConfigCard empId={employee.id} branch={employee.branch} />
 
-          <Section title="Statutory & Compliance" icon={ShieldCheck}>
+          <Section title="Statutory & Banking Details" icon={ShieldCheck}>
             <KV
               items={[
-                ["PAN", p.payroll.statutory.pan],
-                ["UAN", p.payroll.statutory.uan],
-                ["PF Number", p.payroll.statutory.pfNo],
-                ["ESI Number", p.payroll.statutory.esiNo],
-                ...(p.payroll.statutory.aadhaar
-                  ? [["Aadhaar", `XXXX XXXX ${p.payroll.statutory.aadhaar.slice(-4)}`]]
-                  : []),
+                ["PAN Number", merged.pan_number || p.payroll.statutory.pan || "—"],
+                [
+                  "Aadhaar Number",
+                  merged.aadhaar_number
+                    ? `XXXX XXXX ${String(merged.aadhaar_number).slice(-4)}`
+                    : p.payroll.statutory.aadhaar
+                      ? `XXXX XXXX ${p.payroll.statutory.aadhaar.slice(-4)}`
+                      : "—",
+                ],
+                ["UAN Number", merged.uan_number || p.payroll.statutory.uan || "—"],
+                ["ESIC Number", merged.esic_number || p.payroll.statutory.esiNo || "—"],
+                ["Bank Name", merged.bank_name || "—"],
+                ["Account Number", merged.bank_account_number || "—"],
+                ["IFSC Code", merged.ifsc_code || "—"],
               ]}
             />
           </Section>
@@ -628,7 +723,60 @@ export function EmployeeDetail({ employee, selfView = false }) {
 
         {/* Documents */}
         <TabsContent value="documents" className="space-y-4 pt-4">
-          <Section title="Documents" icon={FileText}>
+          <Section
+            title="Backend S3 Document Register"
+            icon={FileText}
+            action={
+              canEdit && (
+                <Button variant="outline" size="sm" onClick={onEdit} className="h-7 text-xs">
+                  <Upload className="mr-1 h-3.5 w-3.5" /> Upload / Replace Files
+                </Button>
+              )
+            }
+          >
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {[
+                { label: "Aadhaar Card", url: merged.aadhaar_card_url },
+                { label: "PAN Card", url: merged.pan_card_url },
+                { label: "Driving License", url: merged.driving_license_url },
+                { label: "Passport", url: merged.passport_url },
+                { label: "Resume / CV", url: merged.resume_url },
+                { label: "Offer Letter", url: merged.offer_letter_url },
+                { label: "Appointment Letter", url: merged.appointment_letter_url },
+                { label: "Educational Certificate", url: merged.educational_certificate_url },
+                { label: "Address Proof", url: merged.address_proof_url },
+                { label: "Cancelled Cheque / Passbook", url: merged.passbook_url },
+              ].map(({ label, url }) => (
+                <div
+                  key={label}
+                  className="flex items-center justify-between rounded-lg border p-3 text-sm"
+                >
+                  <div>
+                    <div className="font-medium">{label}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {url ? "Available on S3" : "Not uploaded"}
+                    </div>
+                  </div>
+                  {url ? (
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition"
+                    >
+                      <Download className="h-3.5 w-3.5" /> View / Download
+                    </a>
+                  ) : (
+                    <Badge variant="outline" className="text-muted-foreground text-[10px]">
+                      Not Uploaded
+                    </Badge>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          <Section title="System Documents & Letters" icon={FileText}>
             <DataTable
               head={["Document", "Type", "Uploaded", "Status", ""]}
               rows={p.documents.map((d) => [
@@ -655,10 +803,10 @@ export function EmployeeDetail({ employee, selfView = false }) {
                       title: d.name,
                       reference: `${d.type} · ${employee.id}`,
                       recipient: {
-                        name: employee.name,
-                        lines: [employee.role, employee.dept, employee.branch],
+                        name: fullName,
+                        lines: [role, dept, branchName],
                       },
-                      bodyHtml: `<p>This is a system-generated copy of the document <b>${d.name}</b> (${d.type}) held on file for ${employee.name} (${employee.id}).</p><p>Uploaded on <b>${d.uploaded}</b> · Verification status <b>${d.status}</b>.</p><p>This copy is issued for record-keeping purposes and reflects the document register as on ${new Date().toLocaleDateString("en-IN")}.</p>`,
+                      bodyHtml: `<p>This is a system-generated copy of the document <b>${d.name}</b> (${d.type}) held on file for ${fullName} (${employee.id}).</p><p>Uploaded on <b>${d.uploaded}</b> · Verification status <b>${d.status}</b>.</p><p>This copy is issued for record-keeping purposes and reflects the document register as on ${new Date().toLocaleDateString("en-IN")}.</p>`,
                       signatory: { name: "Human Resources", designation: "HR Operations" },
                     });
                     toast[ok ? "success" : "error"](
@@ -696,7 +844,10 @@ export function EmployeeDetail({ employee, selfView = false }) {
         <TabsContent value="timeline" className="pt-4">
           <Section title="Employment Timeline" icon={History}>
             <ol className="border-border relative space-y-6 border-l pl-6">
-              {p.timeline.map((t, i) => (
+              {(merged.timeline && Array.isArray(merged.timeline) && merged.timeline.length > 0
+                ? merged.timeline
+                : p.timeline
+              ).map((t, i) => (
                 <li key={i}>
                   <span
                     className={cn(
@@ -710,9 +861,9 @@ export function EmployeeDetail({ employee, selfView = false }) {
                             : "bg-muted-foreground",
                     )}
                   />
-                  <div className="text-muted-foreground text-xs">{t.date}</div>
-                  <div className="text-sm font-semibold">{t.title}</div>
-                  <div className="text-muted-foreground text-sm">{t.detail}</div>
+                  <div className="text-muted-foreground text-xs">{t.date || t.timestamp || "—"}</div>
+                  <div className="text-sm font-semibold">{t.title || t.event || "Update"}</div>
+                  <div className="text-muted-foreground text-sm">{t.detail || t.description || ""}</div>
                 </li>
               ))}
             </ol>
