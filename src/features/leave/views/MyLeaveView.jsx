@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Plane, Plus, Paperclip } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Plane, Plus, Paperclip, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +25,7 @@ import { useCurrentEmployee } from "@/features/auth/data/emp-session";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { LeaveApplyForm } from "@/features/leave/components/LeavePieces";
 import { CompOffCard } from "@/features/attendance/components/CompOffCard";
+import { leaveApi } from "@/api/leaveApi";
 
 const tone = {
   Pending: "border-gold/40 bg-gold/10 text-gold",
@@ -38,13 +39,100 @@ function EmpLeave() {
   // Shared with the Org Admin Leave module so admin approvals and employee
   // applications always reflect the same list.
   const [allRows] = useLeaveApplications();
-  const rows = allRows.filter((a) => a.empId === me.id);
-  const balances = leaveBalances(me.id, allRows);
+  const localRows = allRows.filter((a) => a.empId === me.id);
+  const localBalances = leaveBalances(me.id, allRows);
+
+  const [liveBalances, setLiveBalances] = useState(null);
+  const [liveRows, setLiveRows] = useState(null);
+  const [loading, setLoading] = useState(false);
+
   const [open, setOpen] = useState(false);
   const [openBehalf, setOpenBehalf] = useState(false);
   const [detail, setDetail] = useState(null);
   const user = useCurrentUser();
   const isHr = ["HR", "CHRO", "Admin", "SuperAdmin"].includes(user.role);
+
+  const handleOpenDetail = async (r) => {
+    setDetail(r);
+    try {
+      const res = await leaveApi.getApplicationDetail(r.id);
+      if (res && res.data) {
+        const a = res.data;
+        setDetail((prev) => ({
+          ...prev,
+          ...a,
+          id: a.application_code || a.id || prev?.id,
+          leaveType: a.leave_type || a.leaveType || prev?.leaveType,
+          from: a.from_date || a.from || prev?.from,
+          to: a.to_date || a.to || prev?.to,
+          dayPart: a.day_part || a.dayPart || prev?.dayPart,
+          reasonCategory: a.reason_category || a.reasonCategory || prev?.reasonCategory,
+          contactDuringLeave:
+            a.contact_during_leave || a.contactDuringLeave || prev?.contactDuringLeave,
+          locationDuringLeave:
+            a.location_during_leave || a.locationDuringLeave || prev?.locationDuringLeave,
+          handoverTo: a.handover_to || a.handoverTo || prev?.handoverTo,
+          handoverNotes: a.handover_notes || a.handoverNotes || prev?.handoverNotes,
+          decisionReason: a.decision_reason || a.decisionReason || prev?.decisionReason,
+          decidedBy: a.decided_by || a.decidedBy || prev?.decidedBy,
+          decidedOn: a.decided_on || a.decidedOn || prev?.decidedOn,
+          chainLog: a.chain_log || a.chainLog || prev?.chainLog,
+          attachment: (a.documents && a.documents[0]) || a.attachment || prev?.attachment,
+        }));
+      }
+    } catch {
+      // Keep existing data
+    }
+  };
+
+  const fetchLeaveData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [balRes, appsRes] = await Promise.allSettled([
+        leaveApi.getMyBalances(),
+        leaveApi.getMyApplications(),
+      ]);
+      if (balRes.status === "fulfilled" && balRes.value) {
+        const d = balRes.value.data || balRes.value;
+        if (Array.isArray(d)) setLiveBalances(d);
+      }
+      if (appsRes.status === "fulfilled" && appsRes.value) {
+        const d = appsRes.value.data || appsRes.value;
+        const list = Array.isArray(d) ? d : (d?.items || d?.applications || []);
+        if (Array.isArray(list)) {
+          const normalized = list.map((a) => ({
+            ...a,
+            id: a.application_code || a.id,
+            leaveType: a.leave_type || a.leaveType,
+            from: a.from_date || a.from,
+            to: a.to_date || a.to,
+            dayPart: a.day_part || a.dayPart || "Full day",
+            reasonCategory: a.reason_category || a.reasonCategory,
+            contactDuringLeave: a.contact_during_leave || a.contactDuringLeave,
+            locationDuringLeave: a.location_during_leave || a.locationDuringLeave,
+            handoverTo: a.handover_to || a.handoverTo,
+            handoverNotes: a.handover_notes || a.handoverNotes,
+            decisionReason: a.decision_reason || a.decisionReason,
+            decidedBy: a.decided_by || a.decidedBy,
+            decidedOn: a.decided_on || a.decidedOn,
+            attachment: (a.documents && a.documents[0]) || a.attachment,
+          }));
+          setLiveRows(normalized);
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch leave data from backend:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLeaveData();
+  }, [fetchLeaveData]);
+
+  const balances = liveBalances && liveBalances.length > 0 ? liveBalances : localBalances;
+  const rows = liveRows && liveRows.length > 0 ? liveRows : localRows;
 
   return (
     <div className="space-y-6">
@@ -57,7 +145,17 @@ function EmpLeave() {
             Apply for leave, attach documents and track approvals and remaining balance.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={loading}
+            onClick={fetchLeaveData}
+            title="Refresh leave balances & requests"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline ml-1.5">Refresh</span>
+          </Button>
           {isHr && (
             <Dialog open={openBehalf} onOpenChange={setOpenBehalf}>
               <DialogTrigger asChild>
@@ -73,7 +171,7 @@ function EmpLeave() {
                     the employee's ledger.
                   </DialogDescription>
                 </DialogHeader>
-                <LeaveApplyForm onDone={() => setOpenBehalf(false)} />
+                <LeaveApplyForm onDone={() => { setOpenBehalf(false); fetchLeaveData(); }} />
               </DialogContent>
             </Dialog>
           )}
@@ -91,7 +189,7 @@ function EmpLeave() {
                   reason, supporting documents, contact and handover.
                 </DialogDescription>
               </DialogHeader>
-              <LeaveApplyForm empId={me.id} onDone={() => setOpen(false)} />
+              <LeaveApplyForm empId={me.id} onDone={() => { setOpen(false); fetchLeaveData(); }} />
             </DialogContent>
           </Dialog>
         </div>
@@ -138,7 +236,7 @@ function EmpLeave() {
             </thead>
             <tbody className="divide-border divide-y">
               {rows.map((r) => (
-                <tr key={r.id} className={clickableRow} onClick={() => setDetail(r)}>
+                <tr key={r.id} className={clickableRow} onClick={() => handleOpenDetail(r)}>
                   <td className="p-3 font-medium">{r.id}</td>
                   <td className="p-3">{r.leaveType}</td>
                   <td className="p-3 whitespace-nowrap">
@@ -172,11 +270,18 @@ function EmpLeave() {
                         size="sm"
                         variant="outline"
                         className="text-destructive"
-                        onClick={() => {
+                        onClick={async () => {
                           const verb = r.status === "Pending" ? "Withdraw" : "Cancel";
                           if (!window.confirm(`${verb} leave request ${r.id}?`)) return;
-                          const res = cancelLeaveApplication(r.id, user);
-                          toast[res.ok ? "success" : "error"](res.message);
+                          try {
+                            const res = await leaveApi.cancelApplication(r.id);
+                            toast.success(res?.message || `${verb} successful`);
+                            fetchLeaveData();
+                          } catch (err) {
+                            const res = cancelLeaveApplication(r.id, user);
+                            toast[res.ok ? "success" : "error"](res.message);
+                            fetchLeaveData();
+                          }
                         }}
                       >
                         {r.status === "Pending" ? "Withdraw" : "Cancel"}

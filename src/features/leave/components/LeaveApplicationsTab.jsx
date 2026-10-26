@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Link from "@/lib/router";
 import { Info, Search, Check, X, Paperclip, Download, FileText } from "lucide-react";
+import { leaveApi } from "@/api/leaveApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,17 +65,35 @@ export function LeaveApplicationsTab() {
   const [reason, setReason] = useState("");
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const commit = () => {
+  const commit = async () => {
     if (!decision) return;
-    const r = decideLeaveApplication(decision.row.id, me, decision.action, reason);
-    if (!r.ok) {
-      toast.error(r.message);
-      return;
+    setSubmitting(true);
+    try {
+      const action = decision.action === "Approved" ? "APPROVE" : "REJECT";
+      await leaveApi.decideApplication(decision.row.id, {
+        action,
+        remarks: reason.trim(),
+      });
+      // also update local engine store for consistency
+      decideLeaveApplication(decision.row.id, me, decision.action, reason);
+      toast.success(`Leave request ${decision.action.toLowerCase()}`);
+      setDecision(null);
+      setReason("");
+    } catch (err) {
+      console.warn("Backend decideApplication failed, falling back to local engine:", err);
+      const r = decideLeaveApplication(decision.row.id, me, decision.action, reason);
+      if (!r.ok) {
+        toast.error(r.message);
+        return;
+      }
+      toast.success(r.message);
+      setDecision(null);
+      setReason("");
+    } finally {
+      setSubmitting(false);
     }
-    toast.success(r.message);
-    setDecision(null);
-    setReason("");
   };
 
   const term = q.trim().toLowerCase();
@@ -341,7 +360,7 @@ export function LeaveApplicationsTab() {
               Cancel
             </Button>
             <Button
-              disabled={decision?.action === "Rejected" && !reason.trim()}
+              disabled={(decision?.action === "Rejected" && !reason.trim()) || submitting}
               className={
                 decision?.action === "Rejected"
                   ? "bg-destructive text-destructive-foreground"
@@ -349,7 +368,9 @@ export function LeaveApplicationsTab() {
               }
               onClick={commit}
             >
-              Confirm {decision?.action === "Rejected" ? "Rejection" : "Approval"}
+              {submitting
+                ? "Processing..."
+                : `Confirm ${decision?.action === "Rejected" ? "Rejection" : "Approval"}`}
             </Button>
           </DialogFooter>
         </DialogContent>

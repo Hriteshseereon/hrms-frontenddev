@@ -1,8 +1,9 @@
 // Comp-off balance + redemption, embedded on the employee's Leave page.
 // Auto-accrual runs live against the punch/tour stores — no manual entry.
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CalendarClock, Plus, History } from "lucide-react";
 import { toast } from "sonner";
+import { leaveApi } from "@/api/leaveApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,15 +36,52 @@ const tone = {
 };
 
 export function CompOffCard({ employeeId }) {
-  const balance = useCompOffAutoAccrual(employeeId);
+  const localBalance = useCompOffAutoAccrual(employeeId);
   const ledger = useCompOffLedgerOf(employeeId);
-  const redemptions = useMyCompOffRedemptions(employeeId);
+  const localRedemptions = useMyCompOffRedemptions(employeeId);
+  const [liveCompOff, setLiveCompOff] = useState(null);
   const [open, setOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [reason, setReason] = useState("");
   const [half, setHalf] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const fetchLiveCompOff = useCallback(async () => {
+    try {
+      const res = await leaveApi.getMyCompOffSummary();
+      if (res && res.data) {
+        setLiveCompOff(res.data);
+      }
+    } catch (err) {
+      console.warn("Could not fetch comp-off summary from backend:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLiveCompOff();
+  }, [fetchLiveCompOff]);
+
+  const balance = liveCompOff
+    ? {
+        earned: liveCompOff.earned ?? localBalance.earned,
+        redeemed: liveCompOff.redeemed ?? localBalance.redeemed,
+        available: liveCompOff.available ?? localBalance.available,
+      }
+    : localBalance;
+
+  const redemptions =
+    liveCompOff && Array.isArray(liveCompOff.redemptions) && liveCompOff.redemptions.length > 0
+      ? liveCompOff.redemptions.map((r) => ({
+          id: r.id || r.redemption_code,
+          fromDate: r.from_date || r.fromDate,
+          toDate: r.to_date || r.toDate,
+          days: r.days || (r.half_day ? 0.5 : 1),
+          status: r.status,
+          reason: r.reason,
+        }))
+      : localRedemptions;
 
   // Working days only (weekends are off anyway), 0 when the range is reversed — the old calendar-day count clamped a
   // reversed range to 1 day. Credits accrue in 0.5-day units, so a single day can be redeemed as a half day.
@@ -53,7 +91,60 @@ export function CompOffCard({ employeeId }) {
     .filter((r) => r.status === "Pending Approval")
     .reduce((s, r) => s + r.days, 0);
   const free = Math.max(0, balance.available - onHold);
-  const valid = from && to && days > 0 && days <= free && reason.trim();
+  const valid = from && to && days > 0 && days <= free && reason.trim() && !submitting;
+
+  const handleRedeem = async () => {
+    setSubmitting(true);
+    try {
+      await leaveApi.submitCompOffRedemption({
+        from_date: from,
+        to_date: to,
+        half_day: half,
+        reason: reason.trim(),
+      });
+      toast.success("Comp-off redemption submitted to your HOD");
+      setOpen(false);
+      setFrom("");
+      setTo("");
+      setReason("");
+      setHalf(false);
+      fetchLiveCompOff();
+    } catch (err) {
+      console.warn("Backend submitCompOffRedemption failed, falling back to local store:", err);
+      try {
+        requestCompOffRedemption({
+          employeeId,
+          fromDate: from,
+          toDate: to,
+          days,
+          reason: reason.trim(),
+        });
+        toast.success("Comp-off redemption submitted to your HOD");
+        setOpen(false);
+        setFrom("");
+        setTo("");
+        setReason("");
+        setHalf(false);
+        fetchLiveCompOff();
+      } catch (e) {
+        toast.error(e.message);
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleWithdraw = async (id) => {
+    try {
+      await leaveApi.withdrawCompOffRedemption(id);
+      toast.success("Withdrawn");
+      fetchLiveCompOff();
+    } catch (err) {
+      withdrawCompOffRedemption(id);
+      toast.success("Withdrawn");
+      fetchLiveCompOff();
+    }
+  };
 
   return (
     <Card className="shadow-card">
@@ -152,29 +243,11 @@ export function CompOffCard({ employeeId }) {
                 Cancel
               </Button>
               <Button
-                disabled={!valid}
+                disabled={!valid || submitting}
                 className="bg-gradient-emerald text-white"
-                onClick={() => {
-                  try {
-                    requestCompOffRedemption({
-                      employeeId,
-                      fromDate: from,
-                      toDate: to,
-                      days,
-                      reason: reason.trim(),
-                    });
-                    toast.success("Comp-off redemption submitted to your HOD");
-                    setOpen(false);
-                    setFrom("");
-                    setTo("");
-                    setReason("");
-                    setHalf(false);
-                  } catch (e) {
-                    toast.error(e.message);
-                  }
-                }}
+                onClick={handleRedeem}
               >
-                Submit request
+                {submitting ? "Submitting..." : "Submit request"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -199,10 +272,7 @@ export function CompOffCard({ employeeId }) {
                     <button
                       aria-label={`Withdraw ${r.id}`}
                       className="text-muted-foreground hover:text-destructive"
-                      onClick={() => {
-                        withdrawCompOffRedemption(r.id);
-                        toast.success("Withdrawn");
-                      }}
+                      onClick={() => handleWithdraw(r.id)}
                     >
                       ×
                     </button>
