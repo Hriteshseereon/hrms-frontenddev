@@ -1,8 +1,15 @@
+import { useMemo } from "react";
 import { MapPin } from "lucide-react";
 import { CrudSection } from "@/components/common/CrudSection";
 import { JOB_LOCATIONS, STATUSES } from "@/features/recruitment/data/recruitment-data";
+import { useActiveOrgId } from "@/features/organization/data/group-data";
+import { createJobLocationApi } from "@/features/recruitment/data/recruitmentMasterAdapters";
 
 export function LocationsWorkspace() {
+  const activeOrgId = useActiveOrgId();
+  // Stable adapter, re-created only when the organization changes
+  const jobLocationApi = useMemo(() => createJobLocationApi(activeOrgId), [activeOrgId]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -42,6 +49,7 @@ export function LocationsWorkspace() {
           },
         ]}
         seed={JOB_LOCATIONS}
+        api={jobLocationApi}
       />
     </div>
   );

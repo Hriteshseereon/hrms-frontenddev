@@ -1,8 +1,15 @@
+import { useMemo } from "react";
 import { FileText } from "lucide-react";
 import { CrudSection } from "@/components/common/CrudSection";
 import { STATUSES } from "@/features/recruitment/data/recruitment-data";
+import { useActiveOrgId } from "@/features/organization/data/group-data";
+import { createInterviewRoundApi } from "@/features/recruitment/data/recruitmentMasterAdapters";
 
 export function RoundsWorkspace() {
+  const activeOrgId = useActiveOrgId();
+  // Stable adapter, re-created only when the organization changes
+  const interviewRoundApi = useMemo(() => createInterviewRoundApi(activeOrgId), [activeOrgId]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -53,6 +60,7 @@ export function RoundsWorkspace() {
             description: "Live pitch simulation.",
           },
         ]}
+        api={interviewRoundApi}
       />
     </div>
   );

@@ -32,6 +32,10 @@ import { createJobTypeApi } from "@/api/job_type";
 import { createCandidateSourceApi } from "@/api/candidate_source";
 // Interview Type API (adjust the path to where you saved interview_type.js)
 import { createInterviewTypeApi } from "@/api/interview_type";
+// Onboarding Checklist API (adjust the path to where you saved onboarding_checklist.js)
+import { createOnboardingChecklistApi } from "@/api/onboarding_checklist";
+// About Company API (adjust the path to where you saved about_company.js)
+import SuperAdmin_aboutCompany from "@/api/about_company";
 
 /**
  * Career-portal settings per entity. The three "Save" buttons below used to toast without storing anything.
@@ -90,6 +94,10 @@ export function RecruitmentMasters() {
   );
   const interviewTypeApi = useMemo(
     () => createInterviewTypeApi(activeOrgId),
+    [activeOrgId],
+  );
+  const onboardingChecklistApi = useMemo(
+    () => createOnboardingChecklistApi(activeOrgId),
     [activeOrgId],
   );
 
@@ -214,6 +222,7 @@ export function RecruitmentMasters() {
                 description: "IT and admin provisioning.",
               },
             ]}
+            api={onboardingChecklistApi}
           />
         </TabsContent>
 
@@ -283,11 +292,65 @@ function AboutCompany() {
   const [mission, setMission] = useState(saved.mission);
   const [size, setSize] = useState(saved.size);
   const [industry, setIndustry] = useState(saved.industry);
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     setMission(saved.mission);
     setSize(saved.size);
     setIndustry(saved.industry);
   }, [saved.mission, saved.size, saved.industry]);
+
+  // GET /recruitment/about-company — load the saved record for this organization.
+  useEffect(() => {
+    let alive = true;
+    SuperAdmin_aboutCompany
+      .get(orgId)
+      .then((record) => {
+        if (!alive || !record) return;
+        setMission(record.mission ?? "");
+        setSize(record.company_size ?? "");
+        setIndustry(record.industry ?? "");
+      })
+      .catch((error) => {
+        if (!alive) return;
+        console.error("Failed to load About Company:", error);
+        toast.error(
+          error?.response?.data?.detail ||
+            error?.response?.data?.message ||
+            "Unable to load About Company.",
+        );
+      });
+    return () => {
+      alive = false;
+    };
+  }, [orgId]);
+
+  // POST /recruitment/about-company — create or update.
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await SuperAdmin_aboutCompany.save(orgId, { mission, size, industry });
+      // Keep the local career settings in sync for the careers portal preview.
+      saveCareerSettings(orgId, {
+        mission: mission.trim(),
+        size: size.trim(),
+        industry: industry.trim(),
+      });
+      toast.success("Company profile saved");
+    } catch (error) {
+      console.error("Failed to save About Company:", error);
+      const detail = error?.response?.data?.detail;
+      toast.error(
+        (Array.isArray(detail)
+          ? detail.map((d) => d?.msg).filter(Boolean).join(", ")
+          : detail) ||
+          error?.response?.data?.message ||
+          "Unable to save About Company. Please try again.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Card className="shadow-card">
       <CardContent className="space-y-4 p-6">
@@ -308,14 +371,8 @@ function AboutCompany() {
         </div>
         <Button
           className="bg-gradient-emerald text-white"
-          onClick={() => {
-            saveCareerSettings(orgId, {
-              mission: mission.trim(),
-              size: size.trim(),
-              industry: industry.trim(),
-            });
-            toast.success("Company profile saved");
-          }}
+          disabled={saving}
+          onClick={handleSave}
         >
           Save
         </Button>
