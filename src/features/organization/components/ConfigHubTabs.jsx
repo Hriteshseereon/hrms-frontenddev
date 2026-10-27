@@ -1,6 +1,8 @@
-import { useState } from "react";
+// import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { companiesOf, useCurrentTenant } from "@/features/organization/data/tenancy";
-import { useOrgs } from "@/features/organization/data/group-data";
+// import { useOrgs } from "@/features/organization/data/group-data";
+import { useOrgs, useActiveOrgId } from "@/features/organization/data/group-data";
 import { captureFiles } from "@/lib/attachments";
 import Link from "@/lib/router";
 import {
@@ -68,11 +70,15 @@ import {
   savePayrollPolicy,
   processingDateFor,
 } from "@/features/payroll/data/salary-engine";
+// import {
+//   removeAssessmentParam,
+//   saveAssessmentParam,
+//   useAssessmentParams,
+// } from "@/features/recruitment/data/onboarding-data";
 import {
-  removeAssessmentParam,
-  saveAssessmentParam,
-  useAssessmentParams,
-} from "@/features/recruitment/data/onboarding-data";
+  createAssessmentParamApi,
+  apiErrorMessage,
+} from "@/features/recruitment/data/recruitmentMasterAdapters";
 import { saveEvalParam, useEvalParams } from "@/features/performance/data/performance-config";
 import {
   useLeaveMaster,
@@ -1239,8 +1245,11 @@ export function SalaryConfigTab() {
 }
 
 /* --------------------- Assessment & evaluation parameters --------------------- */
+/* --------------------- Assessment & evaluation parameters --------------------- */
 export function AssessmentParamsTab() {
-  const params = useAssessmentParams();
+  const orgId = useActiveOrgId();
+  const api = useMemo(() => createAssessmentParamApi(orgId), [orgId]);
+  const [params, setParams] = useState([]);
   const evals = useEvalParams();
   const [edit, setEdit] = useState(null);
   const [ev, setEv] = useState(null);
@@ -1248,6 +1257,58 @@ export function AssessmentParamsTab() {
   // Next free ids — a count-based id reused an existing one after a parameter was removed, so "Save" overwrote it.
   const nextId = (prefix, rows) =>
     `${prefix}-${String(rows.reduce((m, r) => Math.max(m, Number(r.id.replace(`${prefix}-`, "")) || 0), 0) + 1).padStart(2, "0")}`;
+
+  // GET /recruitment/assessment-parameters
+  const reload = useCallback(async () => {
+    try {
+      setParams(await api.list());
+    } catch (error) {
+      console.error("Failed to load assessment parameters:", error);
+      toast.error(apiErrorMessage(error, "Unable to load assessment parameters."));
+    }
+  }, [api]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  // POST (new) or PUT (existing — rows loaded from the API carry _apiId)
+  const handleSave = async () => {
+    try {
+      if (edit._apiId) await api.update(edit._apiId, edit);
+      else await api.create(edit);
+      setEdit(null);
+      toast.success("Saved");
+      await reload();
+    } catch (error) {
+      console.error("Failed to save assessment parameter:", error);
+      toast.error(apiErrorMessage(error, "Unable to save the parameter."));
+    }
+  };
+
+  // PATCH /{id}/status
+  const handleToggle = async (p, active) => {
+    try {
+      await api.toggleStatus(p._apiId, active);
+      await reload();
+    } catch (error) {
+      console.error("Failed to update status:", error);
+      toast.error(apiErrorMessage(error, "Unable to update the status."));
+    }
+  };
+
+  // DELETE /{id}
+  const handleRemove = async (p) => {
+    try {
+      await api.remove(p._apiId);
+      toast.success("Removed");
+      await reload();
+    } catch (error) {
+      console.error("Failed to remove assessment parameter:", error);
+      toast.error(apiErrorMessage(error, "Unable to remove the parameter."));
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Card className="shadow-card">
@@ -1317,10 +1378,7 @@ export function AssessmentParamsTab() {
                   </td>
                   <td className="p-2">{p.mandatory ? "Yes" : "—"}</td>
                   <td className="p-2">
-                    <Switch
-                      checked={p.active}
-                      onCheckedChange={(v) => saveAssessmentParam({ ...p, active: v })}
-                    />
+                    <Switch checked={p.active} onCheckedChange={(v) => handleToggle(p, v)} />
                   </td>
                   <td className="p-2">
                     <Button size="sm" variant="ghost" className="h-7" onClick={() => setEdit(p)}>
@@ -1330,10 +1388,7 @@ export function AssessmentParamsTab() {
                       size="sm"
                       variant="ghost"
                       className="text-destructive h-7"
-                      onClick={() => {
-                        removeAssessmentParam(p.id);
-                        toast.success("Removed");
-                      }}
+                      onClick={() => handleRemove(p)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -1499,11 +1554,7 @@ export function AssessmentParamsTab() {
               className="bg-gradient-emerald text-white"
               disabled={!edit?.name.trim() || !(edit.weight > 0 && edit.weight <= 100)}
               title="Weight must be between 1 and 100"
-              onClick={() => {
-                saveAssessmentParam(edit);
-                setEdit(null);
-                toast.success("Saved");
-              }}
+              onClick={handleSave}
             >
               Save
             </Button>
