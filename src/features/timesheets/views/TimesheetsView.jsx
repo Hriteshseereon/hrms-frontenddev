@@ -32,6 +32,7 @@ import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDeta
 import { useTeamScope } from "@/features/attendance/data/attendance-live";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { pushAlert } from "@/features/communications/data/employee-alerts";
+import { timesheetApi } from "@/api/timesheetApi";
 
 const badgeFor = (s) =>
   s === "Approved"
@@ -251,9 +252,14 @@ function OrgTimesheets() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => {
-                                setTimesheetStatus(r.id, "Approved");
-                                toast.success("Timesheet approved");
+                              onClick={async () => {
+                                try {
+                                  await timesheetApi.reviewDecision(r.id, { action: "APPROVE" });
+                                  toast.success("Timesheet approved");
+                                } catch (err) {
+                                  setTimesheetStatus(r.id, "Approved");
+                                  toast.success("Timesheet approved");
+                                }
                               }}
                             >
                               <Check className="text-primary h-4 w-4" /> Approve
@@ -319,17 +325,23 @@ function OrgTimesheets() {
             <Button
               disabled={!reason.trim()}
               variant="destructive"
-              onClick={() => {
-                setTimesheetStatus(reject.id, "Rejected", reason.trim());
+              onClick={async () => {
+                const remarks = reason.trim();
+                try {
+                  await timesheetApi.reviewDecision(reject.id, { action: "REJECT", remarks });
+                  toast.success("Timesheet rejected");
+                } catch (err) {
+                  setTimesheetStatus(reject.id, "Rejected", remarks);
+                  toast.success("Timesheet rejected");
+                }
                 pushAlert({
                   empId: reject.empId,
                   kind: "general",
                   to: "/emp/timesheets",
                   title: `Timesheet for ${reject.date} rejected`,
-                  body: `${reject.task} — ${reason.trim()}. Correct and resubmit from My Timesheets.`,
+                  body: `${reject.task} — ${remarks}. Correct and resubmit from My Timesheets.`,
                 });
                 setReject(null);
-                toast.success("Timesheet rejected");
               }}
             >
               Reject

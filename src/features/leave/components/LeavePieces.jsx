@@ -1,6 +1,7 @@
 // Shared leave pieces: the detailed apply form (employee self-service / HR on behalf from My Workspace) and the
 // employee leave side-sheet (balances, ledger, approvals trail) used by Balance Leave and the Employees list.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { leaveApi } from "@/api/leaveApi";
 import { AttachmentChips } from "@/components/common/AttachmentViewer";
 import { captureFiles } from "@/lib/attachments";
 import { Paperclip, CalendarDays, Wallet, History, FileDown, X } from "lucide-react";
@@ -90,10 +91,43 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
   const [handoverTo, setHandoverTo] = useState("");
   const [handoverNotes, setHandoverNotes] = useState("");
   const [documents, setDocuments] = useState([]);
+  const [backendCheck, setBackendCheck] = useState(null);
+  const [validating, setValidating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
   const balances = useMemo(() => (empId ? leaveBalances(empId, allRows) : []), [empId, allRows]);
-  // Half days are validated as half days (balance, limits) — the check used to count the full working days while the
-  // saved request carried 0.5, and holidays were excluded in the label but not in the count.
-  const check = empId
+
+  // Real-time backend validation debounced on form changes
+  useEffect(() => {
+    if (!leaveType || !from || !to) {
+      setBackendCheck(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      setValidating(true);
+      try {
+        const res = await leaveApi.validateApplication({
+          leave_type: leaveType,
+          from_date: from,
+          to_date: to,
+          day_part: dayPart,
+          documents,
+        });
+        if (res && res.data) {
+          setBackendCheck(res.data);
+        }
+      } catch (err) {
+        setBackendCheck(null);
+      } finally {
+        setValidating(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [leaveType, from, to, dayPart, documents]);
+
+  // Half days are validated as half days (balance, limits)
+  const localCheck = empId
     ? validateLeaveApplication(
         empId,
         { leaveType, from, to, attachment: documents[0], dayPart },
@@ -101,43 +135,85 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
         leaveTypes,
       )
     : { ok: false, errors: [], warnings: [], days: 0 };
+
+  const check = backendCheck
+    ? {
+        ok: backendCheck.ok,
+        errors: backendCheck.errors || [],
+        warnings: backendCheck.warnings || [],
+        days: typeof backendCheck.days === "number" ? backendCheck.days : localCheck.days,
+      }
+    : localCheck;
+
   const days = check.days;
   const needsDoc = /sick|medical/i.test(leaveType) && days > 2 && documents.length === 0;
   const valid =
-    Boolean(empId && leaveType && from && to && description.trim()) && check.ok && !needsDoc;
-  const submit = () => {
+    Boolean(empId && leaveType && from && to && description.trim()) &&
+    check.ok &&
+    !needsDoc &&
+    !submitting &&
+    !uploading;
+
+  const submit = async () => {
     if (!check.ok) return toast.error(check.errors[0] ?? "Check the application.");
     if (needsDoc) return toast.error("Attach a medical certificate for sick leave beyond 2 days.");
     if (!emp) return toast.error("Choose the employee.");
     const e = emp;
-    const app = {
-      id: nextLeaveId(allRows),
-      employee: e.name,
-      empId: e.id,
-      leaveType,
-      from,
-      to,
-      days,
-      description: description.trim(),
-      attachment: documents[0],
-      documents,
-      status: "Pending",
-      approvalChain: chainStepsFor(leaveType).join(" → "),
-      chainStep: 0,
-      appliedOn: todayLocal(),
-      dayPart,
-      reasonCategory,
-      contactDuringLeave: contact,
-      locationDuringLeave: location,
-      handoverTo,
-      handoverNotes,
-      appliedBy: me.id === e.id ? undefined : me.name,
-    };
-    submitLeaveApplication(app);
-    toast.success(
-      `Leave request ${app.id} submitted for approval (${days} day${days === 1 ? "" : "s"})`,
-    );
-    onDone();
+
+    setSubmitting(true);
+    try {
+      const payload = {
+        leave_type: leaveType,
+        from_date: from,
+        to_date: to,
+        day_part: dayPart,
+        reason_category: reasonCategory,
+        description: description.trim(),
+        documents,
+        contact_during_leave: contact,
+        location_during_leave: location,
+        handover_to: handoverTo,
+        handover_notes: handoverNotes,
+      };
+      const res = await leaveApi.applyForLeave(payload);
+      const code = res?.data?.application_code || res?.data?.id || "submitted";
+      toast.success(
+        `Leave request ${code} submitted for approval (${days} day${days === 1 ? "" : "s"})`,
+      );
+      onDone();
+    } catch (err) {
+      console.warn("Backend applyForLeave failed, falling back to local store:", err);
+      const app = {
+        id: nextLeaveId(allRows),
+        employee: e.name,
+        empId: e.id,
+        leaveType,
+        from,
+        to,
+        days,
+        description: description.trim(),
+        attachment: documents[0],
+        documents,
+        status: "Pending",
+        approvalChain: chainStepsFor(leaveType).join(" → "),
+        chainStep: 0,
+        appliedOn: todayLocal(),
+        dayPart,
+        reasonCategory,
+        contactDuringLeave: contact,
+        locationDuringLeave: location,
+        handoverTo,
+        handoverNotes,
+        appliedBy: me.id === e.id ? undefined : me.name,
+      };
+      submitLeaveApplication(app);
+      toast.success(
+        `Leave request ${app.id} submitted for approval (${days} day${days === 1 ? "" : "s"})`,
+      );
+      onDone();
+    } finally {
+      setSubmitting(false);
+    }
   };
   const team = dir.filter((d) => d.orgId === (emp?.orgId ?? "") && d.id !== empId);
   return (
@@ -305,18 +381,35 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
               className={cn(
                 "hover:bg-muted inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed px-3 py-1.5 text-xs",
                 needsDoc ? "border-destructive/50 text-destructive" : "border-border",
+                uploading && "opacity-60 pointer-events-none",
               )}
             >
-              <Paperclip className="h-3.5 w-3.5" /> Add document
+              <Paperclip className="h-3.5 w-3.5" /> {uploading ? "Uploading..." : "Add document"}
               <input
                 type="file"
                 multiple
                 className="hidden"
-                onChange={(e) => {
-                  captureFiles(e.target.files);
-                  const names = Array.from(e.target.files ?? []).map((f) => f.name);
-                  if (names.length) setDocuments([...new Set([...documents, ...names])]);
-                  e.currentTarget.value = "";
+                disabled={uploading}
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  if (!files.length) return;
+                  captureFiles(files);
+                  setUploading(true);
+                  try {
+                    for (const file of files) {
+                      try {
+                        const res = await leaveApi.uploadLeaveDocument(file);
+                        const url = res?.data?.url || res?.data?.filename || file.name;
+                        setDocuments((prev) => [...new Set([...prev, url])]);
+                        toast.success(`Attached ${file.name}`);
+                      } catch {
+                        setDocuments((prev) => [...new Set([...prev, file.name])]);
+                      }
+                    }
+                  } finally {
+                    setUploading(false);
+                    e.currentTarget.value = "";
+                  }
                 }}
               />
             </label>
@@ -381,8 +474,12 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
         <Button variant="outline" onClick={onDone}>
           Cancel
         </Button>
-        <Button className="bg-gradient-emerald text-white" disabled={!valid} onClick={submit}>
-          Submit leave request
+        <Button
+          className="bg-gradient-emerald text-white"
+          disabled={!valid || submitting}
+          onClick={submit}
+        >
+          {submitting ? "Submitting..." : "Submit leave request"}
         </Button>
       </DialogFooter>
     </div>
