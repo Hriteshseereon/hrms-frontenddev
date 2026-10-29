@@ -11,8 +11,14 @@ import {
 import awardMasterApi from "@/api/awardApi";
 import { createOnboardingDocumentApi } from "@/features/recruitment/data/onboarding_document_adapter";
 import {
+  createTerminationTypeApi,
+  createWarningTypeApi,
+  createComplaintTypeApi,
+} from "@/features/exit/data/terminationTypeAdapter";
+import {
   createPolicyCircularApi,
   loadPolicyCategories,
+  createWorkdayConfigApi,
 } from "@/features/recruitment/data/recruitmentMasterAdapters";
 import { useSharedList } from "@/lib/shared-list";
 
@@ -1237,6 +1243,9 @@ function PayrollConfigTab() {
   );
 }
 
+// Created once (module level) so the saved configuration is not reloaded on every render.
+const workdayConfigApi = createWorkdayConfigApi();
+
 function WorkdayConfigTab() {
   const [saved, setSaved] = useSharedList("workday-config", [
     "Monday",
@@ -1248,14 +1257,77 @@ function WorkdayConfigTab() {
 
   const [days, setDays] = useState(saved);
 
+  const [configId, setConfigId] = useState(null);
+
+  const [savingConfig, setSavingConfig] = useState(false);
+
+  // true once the GET has finished successfully (even if nothing is saved yet)
+  const [configLoaded, setConfigLoaded] = useState(false);
+
   useEffect(() => {
     setDays(saved);
   }, [saved]);
+
+  // GET /attendance/workday-configurations: load the saved configuration.
+  useEffect(() => {
+    let active = true;
+
+    workdayConfigApi
+      .load()
+      .then((config) => {
+        if (!active) return;
+        setConfigLoaded(true);
+        if (!config) return;
+        setConfigId(config.id);
+        setSaved(config.days);
+      })
+      .catch((error) => {
+        if (active) {
+          toast.error(
+            getErrorMessage(error, "Unable to load workday configuration"),
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+    // Load once when the tab opens. setSaved changes identity on every render, so
+    // listing it here would re-run this effect (and the GET) in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggle = (d) =>
     setDays((p) => (p.includes(d) ? p.filter((x) => x !== d) : [...p, d]));
 
   const dirty = WEEKDAYS.some((d) => days.includes(d) !== saved.includes(d));
+
+  // Nothing exists on the server yet: the default week can be saved as-is (first POST).
+  const needsFirstSave = configLoaded && configId == null;
+
+  // POST when nothing is saved yet, otherwise PATCH only the days that changed.
+  async function saveConfig() {
+    setSavingConfig(true);
+
+    try {
+      const result = await workdayConfigApi.save({
+        id: configId,
+        days,
+        savedDays: saved,
+      });
+
+      if (result?.id != null) setConfigId(result.id);
+
+      setSaved(days);
+      toast.success(`${days.length}-day work week saved`);
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, "Unable to save workday configuration"),
+      );
+    } finally {
+      setSavingConfig(false);
+    }
+  }
 
   return (
     <Card className="shadow-card">
@@ -1268,11 +1340,10 @@ function WorkdayConfigTab() {
           <Button
             size="sm"
             className="bg-gradient-emerald text-white"
-            disabled={!dirty || days.length === 0}
-            onClick={() => {
-              setSaved(days);
-              toast.success(`${days.length}-day work week saved`);
-            }}
+            disabled={
+              (!dirty && !needsFirstSave) || days.length === 0 || savingConfig
+            }
+            onClick={saveConfig}
           >
             Save Configuration
           </Button>
@@ -1707,6 +1778,12 @@ const readHash = () =>
 const onboardingDocumentApi = createOnboardingDocumentApi();
 // Created once (module level) so CrudSection's useEffect doesn't reload on every render.
 const policyCircularApi = createPolicyCircularApi();
+// Created once (module level) so MasterTable's useEffect doesn't reload on every render.
+const terminationTypeApi = createTerminationTypeApi();
+// Created once (module level) so MasterTable's useEffect doesn't reload on every render.
+const warningTypeApi = createWarningTypeApi();
+// Created once (module level) so MasterTable's useEffect doesn't reload on every render.
+const complaintTypeApi = createComplaintTypeApi();
 
 function Masters() {
   const me = useCurrentUser();
@@ -2117,10 +2194,11 @@ function Masters() {
               prefix="TTY"
               seed={TERMINATION_TYPE_MASTER}
               addLabel="Add Termination Type"
+              api={terminationTypeApi}
             />
           )}
 
-          {tab === "warning" && (
+                   {tab === "warning" && (
             <MasterTable
               icon={AlertTriangle}
               title="Warning Types"
@@ -2128,6 +2206,7 @@ function Masters() {
               prefix="WTY"
               seed={WARNING_TYPE_MASTER}
               addLabel="Add Warning Type"
+              api={warningTypeApi}
             />
           )}
 
@@ -2139,6 +2218,7 @@ function Masters() {
               prefix="CTY"
               seed={COMPLAINT_TYPE_MASTER}
               addLabel="Add Complaint Type"
+              api={complaintTypeApi}
             />
           )}
 

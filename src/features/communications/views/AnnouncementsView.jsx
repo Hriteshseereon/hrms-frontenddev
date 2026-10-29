@@ -152,7 +152,7 @@ function Announcements() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+<div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
             <Megaphone className="text-primary h-6 w-6" /> Announcements
@@ -164,9 +164,29 @@ function Announcements() {
         {canPublish && (
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
-                <Plus className="h-4 w-4" /> New Announcement
-              </Button>
+
+<Button
+  size="sm"
+  className="bg-gradient-emerald shadow-premium text-white
+             w-fit min-w-max shrink-0 gap-2 px-4"
+>
+  <Plus className="h-4 w-4 shrink-0" />
+  <span className="whitespace-nowrap">
+    {filter === "all"
+      ? "New Announcement"
+      : `Add ${
+          filter === "Announcements"
+            ? "Announcement"
+            : filter === "Notices"
+              ? "Notice"
+              : filter === "Events"
+                ? "Event"
+                : filter === "Circulars"
+                  ? "Circular"
+                  : filter
+        }`}
+  </span>
+</Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-lg">
               <DialogHeader>

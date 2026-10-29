@@ -8,6 +8,7 @@ import SuperAdmin_evaluationParameter from "@/api/evaluation_parameter";
 import SuperAdmin_holidayCalendar from "@/api/holiday_calendar";
 import SuperAdmin_policyCircular from "@/api/policy_circular";
 import SuperAdmin_shift from "@/api/shift";
+import SuperAdmin_workdayConfiguration from "@/api/workday_configuration";
 
 const clean = (v) => String(v ?? "").trim();
 
@@ -539,5 +540,83 @@ export function createShiftApi(organizationId) {
     },
 
     remove: (id) => service.remove(id, scope),
+  };
+}
+
+/* ---------- workday configuration ----------
+   UI days ["Monday", "Friday"]  <->  API { monday: true, ..., sunday: false }
+   At least one day must be enabled. Scope IDs are query params only.
+   POST creates the configuration; PATCH updates only the days that changed. */
+const WORKDAY_LIST_PAGE_SIZE = 100;
+
+// UI day name <-> API boolean field
+const WORKDAY_DAYS = [
+  ["Monday", "monday"],
+  ["Tuesday", "tuesday"],
+  ["Wednesday", "wednesday"],
+  ["Thursday", "thursday"],
+  ["Friday", "friday"],
+  ["Saturday", "saturday"],
+  ["Sunday", "sunday"],
+];
+
+export function createWorkdayConfigApi(organizationId) {
+  const service = SuperAdmin_workdayConfiguration;
+  const scope = organizationId ? { organization_id: organizationId } : undefined;
+
+  const fromApi = (r) => ({
+    id: r.id,
+    days: WORKDAY_DAYS.filter(([, key]) => r[key] === true).map(([label]) => label),
+  });
+
+  // All seven days, as booleans
+  const toBody = (days) =>
+    Object.fromEntries(WORKDAY_DAYS.map(([label, key]) => [key, days.includes(label)]));
+
+  // Only the days whose on/off state changed
+  const toPatchBody = (days, savedDays) => {
+    const patch = {};
+    WORKDAY_DAYS.forEach(([label, key]) => {
+      const next = days.includes(label);
+      if (next !== savedDays.includes(label)) patch[key] = next;
+    });
+    return patch;
+  };
+
+  const readItems = (res) => {
+    const data = res?.data;
+    return Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
+  };
+
+  const stamp = (r) => Date.parse(r.updated_at ?? r.created_at ?? "") || 0;
+
+  return {
+    // Returns the most recently updated configuration as { id, days }, or null if none exists.
+    load: async () => {
+      const res = await service.getAll({ ...scope, page: 1, page_size: WORKDAY_LIST_PAGE_SIZE });
+      const items = readItems(res).filter((r) => r && typeof r === "object");
+      if (!items.length) return null;
+      const latest = [...items].sort((a, b) => stamp(b) - stamp(a))[0];
+      return fromApi(latest);
+    },
+
+    getById: (id) => service.getById(id, scope),
+
+    // First save -> POST. Later saves -> PATCH with only the changed days.
+    save: async ({ id, days, savedDays = [] }) => {
+      if (!id) {
+        const res = await service.create(toBody(days), scope);
+        return { id: res?.data?.id ?? null };
+      }
+
+      const patch = toPatchBody(days, savedDays);
+      if (!Object.keys(patch).length) return { id };
+
+      const res = await service.patch(id, patch, scope);
+      return { id: res?.data?.id ?? id };
+    },
+
+    // Full replace (all seven days) via PUT.
+    replace: async (id, days) => service.update(id, toBody(days), scope),
   };
 }
