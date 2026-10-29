@@ -33,6 +33,12 @@ export const PAGES = [
     load: () => import("@/features/exit/views/MyComplaintsView"),
   },
   {
+    path: "/emp/grievances",
+    shell: "emp",
+    title: "Grievances",
+    load: () => import("@/features/exit/views/MyComplaintsView"),
+  },
+  {
     path: "/emp/dashboard",
     shell: "emp",
     title: "My Dashboard",
