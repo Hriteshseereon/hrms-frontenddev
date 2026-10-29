@@ -564,9 +564,14 @@ export const severityTone = (s) =>
     : s === "High"
       ? "border-gold/40 bg-gold/15 text-gold"
       : "border-border";
-export const isOverdue = (g) =>
-  (g.status === "Submitted" && g.ackDue < today()) ||
-  (["Acknowledged", "Under investigation", "Appealed"].includes(g.status) &&
-    g.resolveDue < today());
+export const isOverdue = (g) => {
+  if (!g || !g.status) return false;
+  const ack = g.ackDue || g.ack_due;
+  const res = g.resolveDue || g.resolve_due;
+  const t = today();
+  if (g.status === "Submitted" && ack) return ack < t;
+  if (["Acknowledged", "Under investigation", "Appealed"].includes(g.status) && res) return res < t;
+  return false;
+};
 export const daysToResolve = (g) =>
   g.resolvedOn ? Math.round((+new Date(g.resolvedOn) - +new Date(g.raisedOn)) / 86400000) : null;

@@ -851,6 +851,7 @@ const EMP_COMMON = [
   "/emp/movements",
   "/emp/referrals",
   "/emp/complaints",
+  "/emp/grievances",
   "/emp/resignation",
   "/emp/assets",
   "/emp/tours",
