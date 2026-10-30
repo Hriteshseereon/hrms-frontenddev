@@ -40,7 +40,8 @@ import { AppraisalOutcomeCard } from "@/features/performance/components/SelfAppr
 import { usePunches, punchHours } from "@/features/attendance/data/attendance-self";
 import { useGoals } from "@/features/performance/data/goals-data";
 import { attendanceForPeriod } from "@/features/attendance/data/attendance-pattern";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { attendanceApi } from "@/api/attendanceApi";
 import { leaveBalances, useLeaveApplications } from "@/features/leave/data/leave-engine";
 import {
   announcementsForEmployee,
@@ -105,6 +106,21 @@ function EmpDashboard() {
   const leaveTotal = leaveLines.reduce((s, l) => s + l.entitled, 0);
   const leaveUsed = leaveLines.reduce((s, l) => s + l.used + l.pending, 0);
 
+  const [attendanceSummary, setAttendanceSummary] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    attendanceApi
+      .getMySummary()
+      .then((data) => {
+        if (mounted && data) setAttendanceSummary(data);
+      })
+      .catch((err) => console.warn("Dashboard attendance summary error:", err));
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   return (
     <div className="space-y-6">
       <Card className="shadow-card overflow-hidden">
@@ -137,8 +153,16 @@ function EmpDashboard() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
           label="Present days"
-          value={String(p.attendance.present)}
-          sub={`${p.attendance.absent} absent · ${p.attendance.leave} leave`}
+          value={
+            attendanceSummary
+              ? String(attendanceSummary.present_days ?? 0)
+              : String(p.attendance.present)
+          }
+          sub={
+            attendanceSummary
+              ? `${attendanceSummary.absent_days ?? 0} absent · ${attendanceSummary.leave_days ?? 0} leave`
+              : `${p.attendance.absent} absent · ${p.attendance.leave} leave`
+          }
           icon={CalendarCheck2}
           to="/emp/attendance"
         />

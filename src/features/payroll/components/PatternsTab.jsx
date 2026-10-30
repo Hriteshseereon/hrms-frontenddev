@@ -1,5 +1,17 @@
-import { useMemo, useState } from "react";
-import { CalendarCheck, Lock, Unlock, Plus, Save, Check, X, PiggyBank } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  CalendarCheck,
+  Lock,
+  Unlock,
+  Plus,
+  Save,
+  Check,
+  X,
+  PiggyBank,
+  Eye,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -41,6 +53,13 @@ import { periodLabel, usePayrollRuns } from "@/features/payroll/data/payroll-eng
 import { saveContribution, useContributions } from "@/features/payroll/data/contributions-data";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
+import {
+  apiErrorMessage,
+  createAttendancePatternApi,
+} from "@/features/attendance/data/attendanceMasterAdapters";
+
+// Created once (module level) so the patterns are not reloaded on every render.
+const patternApi = createAttendancePatternApi();
 
 /**
  * @typedef {Object} AssignmentDetail
@@ -53,15 +72,182 @@ import { useScopeMatch } from "@/features/organization/data/tenancy";
 
 export function PatternsTab() {
   const me = useCurrentUser();
-  const patterns = usePatterns();
+  const storePatterns = usePatterns();
   const configs = useWorkConfigs();
   const locks = useAttendanceLocks();
   const inScope = useScopeMatch();
   const runs = usePayrollRuns().filter((r) => inScope(r.orgId));
   const [edit, setEdit] = useState(null);
-  const [period, setPeriod] = useState("2026-07");
-  const [detail, setDetail] = useState(null);
+const [viewPattern, setViewPattern] = useState(null);
+const [deletingPatternId, setDeletingPatternId] = useState(null);
+const [period, setPeriod] = useState("2026-07");
+const [detail, setDetail] = useState(null);
   const editable = can(me.role, "employee.manage");
+
+  // Attendance patterns come from the API (GET /attendance/patterns). They are also written
+  // into the local pattern store so employee assignments and payroll keep resolving them.
+  const [apiIds, setApiIds] = useState(null); // ids of the patterns loaded from the server
+  const [patternsStatus, setPatternsStatus] = useState("loading"); // loading | ready | failed
+  const [savingPattern, setSavingPattern] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    patternApi
+      .list()
+      .then((items) => {
+        if (!active) return;
+        items.forEach((item) => savePattern(item));
+        setApiIds(new Set(items.map((item) => item.id)));
+        setPatternsStatus("ready");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setPatternsStatus("failed");
+        toast.error(apiErrorMessage(error, "Unable to load attendance patterns"));
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Shown in the grid and the assignment dropdown: the server's patterns once loaded,
+  // the previous local list if the server could not be reached.
+  const patterns =
+    patternsStatus === "ready"
+      ? storePatterns.filter((p) => apiIds.has(p.id))
+      : patternsStatus === "failed"
+        ? storePatterns
+        : [];
+
+  // GET /attendance/patterns/{id}: open the pattern with its latest server values.
+  async function openPattern(p) {
+    if (!editable) return;
+
+    if (patternsStatus !== "ready" || !apiIds.has(p.id)) {
+      setEdit(p);
+      return;
+    }
+
+    try {
+      const fresh = await patternApi.getById(p.id);
+      setEdit(fresh ?? p);
+    } catch (error) {
+      toast.error(apiErrorMessage(error, "Unable to load pattern details"));
+      setEdit(p);
+    }
+  }
+  // GET /attendance/patterns/{id}
+// Opens the pattern in read-only mode.
+async function viewPatternDetails(p) {
+  if (patternsStatus !== "ready" || !apiIds.has(p.id)) {
+    setViewPattern(p);
+    return;
+  }
+
+  try {
+    const fresh = await patternApi.getById(p.id);
+    setViewPattern(fresh ?? p);
+  } catch (error) {
+    toast.error(
+      apiErrorMessage(error, "Unable to load pattern details")
+    );
+  }
+}
+
+// DELETE /attendance/patterns/{id}
+async function deletePattern(p) {
+  if (patternsStatus !== "ready" || !apiIds.has(p.id)) {
+    toast.error("Unable to delete: the API pattern is not available.");
+    return;
+  }
+
+  // Prevent deleting a pattern currently assigned to employees.
+  const assignedCount = usageOf(p.id);
+
+  if (assignedCount > 0) {
+    toast.error(
+      `Cannot delete this pattern. ${assignedCount} employee(s) are assigned to it. Reassign them first.`
+    );
+    return;
+  }
+
+  const confirmed = window.confirm(
+    `Are you sure you want to delete "${p.name}"? This action cannot be undone.`
+  );
+
+  if (!confirmed) return;
+
+  setDeletingPatternId(p.id);
+
+  try {
+    await patternApi.remove(p.id);
+
+    // Remove the deleted API record from the displayed pattern list.
+    setApiIds((previous) => {
+      const next = new Set(previous ?? []);
+      next.delete(p.id);
+      return next;
+    });
+
+    if (viewPattern?.id === p.id) {
+      setViewPattern(null);
+    }
+
+    if (edit?.id === p.id) {
+      setEdit(null);
+    }
+
+    toast.success("Attendance pattern deleted successfully.");
+  } catch (error) {
+    toast.error(
+      apiErrorMessage(error, "Unable to delete attendance pattern")
+    );
+  } finally {
+    setDeletingPatternId(null);
+  }
+}
+
+  // POST for a new pattern, PATCH (changed fields only) for an existing one.
+  async function submitPattern() {
+    if (!edit) return;
+
+    if (patternsStatus === "loading") {
+      toast.error("Patterns are still loading. Please try again in a moment.");
+      return;
+    }
+
+    // Server unreachable: keep the previous local-only behaviour.
+    if (patternsStatus === "failed") {
+      savePattern(edit);
+      setEdit(null);
+      toast.success("Pattern saved");
+      return;
+    }
+
+    setSavingPattern(true);
+
+    try {
+      const saved = apiIds.has(edit.id)
+        ? await patternApi.patch(
+            edit.id,
+            edit,
+            storePatterns.find((x) => x.id === edit.id),
+          )
+        : await patternApi.create(edit);
+
+      savePattern(saved);
+      setApiIds((previous) => new Set([...(previous ?? []), saved.id]));
+      setEdit(null);
+      toast.success("Pattern saved");
+    } catch (error) {
+      toast.error(apiErrorMessage(error, "Unable to save attendance pattern"));
+    } finally {
+      setSavingPattern(false);
+    }
+  }
+
   const canLock = can(me.role, "attendance.lock");
   // Live directory (the static EMPLOYEES seed missed new hires and transfers).
   const directory = useDirectory();
@@ -105,44 +291,106 @@ export function PatternsTab() {
                 </Button>
               )}
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              {patterns.map((p) => (
-                <div
-                  key={p.id}
-                  className="border-border hover:bg-muted/20 cursor-pointer rounded-xl border p-4"
-                  onClick={() => editable && setEdit(p)}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm font-semibold">{p.name}</div>
-                    <Badge
-                      variant="outline"
-                      className={
-                        p.lopEnabled
-                          ? "border-destructive/30 bg-destructive/10 text-destructive"
-                          : "border-primary/30 bg-primary/10 text-primary"
-                      }
-                    >
-                      {p.lopEnabled ? "LOP applies" : "No LOP"}
-                    </Badge>
-                  </div>
-                  <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">Working days</div>
-                      <div className="font-semibold">{p.workingDays}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Paid absences</div>
-                      <div className="font-semibold">{p.paidLeaveDays}</div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Assigned</div>
-                      <div className="font-semibold">{usageOf(p.id)} emp.</div>
-                    </div>
-                  </div>
-                  <div className="text-muted-foreground mt-2 text-xs">{p.description}</div>
-                </div>
-              ))}
-            </div>
+
+<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+  {patterns.map((p) => (
+    <div
+      key={p.id}
+      className="border-border hover:bg-muted/20 cursor-pointer rounded-xl border p-4"
+      onClick={() => viewPatternDetails(p)}
+    >
+      {/* Keep the existing card dimensions and compact header */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold">
+            {p.name}
+          </div>
+          <Badge
+            variant="outline"
+            className={
+              p.lopEnabled
+                ? "mt-1 border-destructive/30 bg-destructive/10 text-destructive"
+                : "mt-1 border-primary/30 bg-primary/10 text-primary"
+            }
+          >
+            {p.lopEnabled ? "LOP applies" : "No LOP"}
+          </Badge>
+        </div>
+
+        {/* View, Edit and Delete icons on the right */}
+        <div
+          className="flex shrink-0 items-center gap-1"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            title="View attendance pattern"
+            aria-label={`View ${p.name}`}
+            onClick={() => viewPatternDetails(p)}
+          >
+            <Eye className="h-4 w-4" />
+          </Button>
+
+          {editable && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              title="Edit attendance pattern"
+              aria-label={`Edit ${p.name}`}
+              onClick={() => openPattern(p)}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+          )}
+
+          {editable && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-red-600 hover:bg-red-50 hover:text-red-700"
+              title="Delete attendance pattern"
+              aria-label={`Delete ${p.name}`}
+              disabled={deletingPatternId === p.id}
+              onClick={() => deletePattern(p)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Existing metrics: unchanged */}
+      <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <div className="text-muted-foreground">Working days</div>
+          <div className="font-semibold">{p.workingDays}</div>
+        </div>
+
+        <div>
+          <div className="text-muted-foreground">Paid absences</div>
+          <div className="font-semibold">{p.paidLeaveDays}</div>
+        </div>
+
+        <div>
+          <div className="text-muted-foreground">Assigned</div>
+          <div className="font-semibold">{usageOf(p.id)} emp.</div>
+        </div>
+      </div>
+
+      {/* Existing description: unchanged */}
+      <div className="text-muted-foreground mt-2 text-xs">
+        {p.description}
+      </div>
+    </div>
+  ))}
+</div>
+
           </CardContent>
         </Card>
 
@@ -248,7 +496,7 @@ export function PatternsTab() {
               <tbody className="divide-border divide-y">
                 {employees.map((e) => {
                   const c = configs.find((x) => x.empId === e.id) ?? workConfigOf(e.id);
-                  const p = patterns.find((x) => x.id === c.patternId) ?? patterns[0];
+                  const p = storePatterns.find((x) => x.id === c.patternId) ?? storePatterns[0];
                   const a = attendanceForPeriod(e.id, period);
                   const lop = p.lopEnabled
                     ? Math.max(a.absent + a.paidLeave - p.paidLeaveDays, 0)
@@ -277,14 +525,17 @@ export function PatternsTab() {
                               workday: c.workday,
                               updatedBy: me.name,
                             });
-                            toast.success(`${e.name} → ${patterns.find((x) => x.id === v)?.name}`);
+                            toast.success(`${e.name} → ${storePatterns.find((x) => x.id === v)?.name}`);
                           }}
                         >
                           <SelectTrigger className="h-8 w-full sm:w-[240px]">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {patterns.map((x) => (
+                            {(patterns.some((x) => x.id === c.patternId)
+                              ? patterns
+                              : [...patterns, ...storePatterns.filter((x) => x.id === c.patternId)]
+                            ).map((x) => (
                               <SelectItem key={x.id} value={x.id}>
                                 {x.name}
                               </SelectItem>
@@ -331,6 +582,106 @@ export function PatternsTab() {
       </Card>
 
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
+        
+<Dialog
+  open={!!viewPattern}
+  onOpenChange={(open) => !open && setViewPattern(null)}
+>
+  <DialogContent className="sm:max-w-lg">
+    <DialogHeader>
+      <DialogTitle>View attendance pattern</DialogTitle>
+      <DialogDescription>
+        Attendance pattern details. Use Edit to make changes.
+      </DialogDescription>
+    </DialogHeader>
+
+    {viewPattern && (
+      <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label className="text-muted-foreground text-xs">Name</Label>
+          <Input value={viewPattern.name ?? ""} readOnly />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-muted-foreground text-xs">
+            Working days / month
+          </Label>
+          <Input
+            type="number"
+            value={viewPattern.workingDays ?? 0}
+            readOnly
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-muted-foreground text-xs">
+            Paid absences / month
+          </Label>
+          <Input
+            type="number"
+            value={viewPattern.paidLeaveDays ?? 0}
+            readOnly
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-muted-foreground text-xs">
+            Weekly offs / month
+          </Label>
+          <Input
+            type="number"
+            value={viewPattern.weeklyOffs ?? 0}
+            readOnly
+          />
+        </div>
+
+        <div className="border-border flex items-center justify-between rounded-lg border p-3">
+          <div>
+            <div className="text-sm font-medium">
+              Deduct beyond paid days
+            </div>
+            <div className="text-muted-foreground text-xs">
+              Loss of Pay
+            </div>
+          </div>
+
+          <Switch checked={!!viewPattern.lopEnabled} disabled />
+        </div>
+
+        <div className="space-y-1.5 sm:col-span-2">
+          <Label className="text-muted-foreground text-xs">
+            Description
+          </Label>
+          <Input value={viewPattern.description ?? ""} readOnly />
+        </div>
+      </div>
+    )}
+
+    <DialogFooter>
+      <Button
+        variant="outline"
+        onClick={() => setViewPattern(null)}
+      >
+        Close
+      </Button>
+
+      {editable && viewPattern && (
+        <Button
+          className="bg-gradient-emerald text-white"
+          onClick={() => {
+            const selected = viewPattern;
+            setViewPattern(null);
+            openPattern(selected);
+          }}
+        >
+          <Pencil className="h-4 w-4" />
+          Edit
+        </Button>
+      )}
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
+
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>
@@ -407,13 +758,10 @@ export function PatternsTab() {
                 edit.paidLeaveDays < 0 ||
                 edit.weeklyOffs < 0 ||
                 edit.paidLeaveDays > edit.workingDays ||
-                edit.workingDays + edit.weeklyOffs > 31
+                edit.workingDays + edit.weeklyOffs > 31 ||
+                savingPattern
               }
-              onClick={() => {
-                savePattern(edit);
-                setEdit(null);
-                toast.success("Pattern saved");
-              }}
+              onClick={submitPattern}
             >
               <Save className="h-4 w-4" /> Save
             </Button>

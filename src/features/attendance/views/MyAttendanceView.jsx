@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Clock,
   TrendingUp,
@@ -10,8 +10,11 @@ import {
   MapPin,
   Download,
   Trash2,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { attendanceApi } from "@/api/attendanceApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -115,23 +118,49 @@ const verdictTone = (v) =>
         ? "border-gold/40 bg-gold/15 text-gold"
         : "border-destructive/30 bg-destructive/10 text-destructive";
 
-function MarkAttendanceCard() {
+function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunches }) {
   const me = useCurrentEmployee();
   const rows = usePunches();
   const mine = punchesOf(rows, me.id);
   const open = openPunch(rows, me.id);
-  // Punches from earlier days never closed — they no longer block today's punch-in; HR regularises them.
   const missed = missedPunchOuts(mine);
-  const totals = punchTotals(mine);
+  const fallbackTotals = punchTotals(mine);
   const workOrder = useWorkOrderOfEmployee(me.id);
-  // Fall back to the shift on the employee's job record when no work order applies (was "Not assigned" for everyone
-  // without a work order, so every punch showed "No Shift Assigned").
-  const shift = resolveShiftForEmployee(me.id, getEmployeeProfile(me.id).job.shift);
+  const fallbackShift = resolveShiftForEmployee(me.id, getEmployeeProfile(me.id).job.shift);
+
+  const [todayStatus, setTodayStatus] = useState(null);
+  const [loadingToday, setLoadingToday] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const fetchToday = useCallback(async () => {
+    setLoadingToday(true);
+    try {
+      const data = await attendanceApi.getTodayStatus();
+      if (data) setTodayStatus(data);
+    } catch (err) {
+      console.warn("Could not fetch today's status:", err);
+    } finally {
+      setLoadingToday(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchToday();
+  }, [fetchToday]);
+
+  const shift = todayStatus?.shift || fallbackShift;
+  const isPunchedIn = todayStatus !== null ? Boolean(todayStatus.is_punched_in) : Boolean(open);
+  const activePunch = todayStatus?.active_punch;
+  const activeInTime =
+    activePunch?.in_time ||
+    (activePunch?.punch_in ? activePunch.punch_in.slice(11, 16) : null) ||
+    open?.inAt;
+  const activePunchDate = activePunch?.date || open?.date;
+
   const [fences] = useSharedList("geofence-rules", GEOFENCE_RULES);
   const activeFences = fences.filter((f) => f.active);
   const [fenceId, setFenceId] = useState("");
   const fence = activeFences.find((f) => f.id === fenceId) ?? activeFences[0];
-  const [busy, setBusy] = useState(false);
   const today = todayIso();
   const orgId = orgOfEmployee(me.id);
 
@@ -150,12 +179,10 @@ function MarkAttendanceCard() {
           : "Geofence"
         : dev.location;
 
-  /**
-   * Geofenced check-in enforces the fence configured in Master Data → Geofencing: the browser position must be within
-   * the radius; outside it (or with location unavailable) the punch is blocked, or — when the fence allows an override —
-   * accepted only with a reason, flagged for HR review. It used to accept any punch as "Geofence" without a check.
-   */
   const punchIn = async () => {
+    if (isPunchedIn) {
+      return toast.error("You already have an active punch in progress");
+    }
     const blocked = punchBlockReason(me.id);
     if (blocked) return toast.error(blocked);
     let flagged = note.trim();
@@ -189,22 +216,125 @@ function MarkAttendanceCard() {
         }
       }
     }
-    const rec = markIn({ empId: me.id, employee: me.name, source, location, note: flagged });
-    toast[rec ? "success" : "error"](
-      rec ? `Punched in at ${rec.inAt} · ${rec.source}` : "You already have an open punch",
-    );
-    setNote("");
+
+    setBusy(true);
+    try {
+      let apiSource = "MANUAL";
+      if (source === "Biometric") apiSource = "BIOMETRIC";
+      else if (source === "Geofence") apiSource = "GEOFENCE";
+
+      const rec = await attendanceApi.punchIn({
+        source: apiSource,
+        device_id: source === "Biometric" ? device : null,
+        location_name: location,
+        note: flagged || undefined,
+      });
+
+      try {
+        markIn({ empId: me.id, employee: me.name, source, location, note: flagged });
+      } catch (_) {}
+
+      toast.success(
+        rec
+          ? `Punched in at ${rec.in_time || "now"} · ${rec.source || source}`
+          : "Punched in successfully",
+      );
+      setNote("");
+      await fetchToday();
+      onRefresh?.();
+    } catch (err) {
+      const msg =
+        err?.response?.data?.detail ??
+        err?.response?.data?.message ??
+        err?.message ??
+        "Failed to punch in";
+      toast.error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const punchRows = mine.map((p) => [
+  const punchOut = async () => {
+    if (!isPunchedIn) {
+      return toast.error("Nothing to punch out of");
+    }
+    setBusy(true);
+    try {
+      const rec = await attendanceApi.punchOut({
+        note: note.trim() || undefined,
+      });
+
+      try {
+        markOut(me.id);
+      } catch (_) {}
+
+      toast.success(
+        rec
+          ? `Punched out at ${rec.out_time || "now"} · ${rec.hours != null ? `${Number(rec.hours).toFixed(2)} h` : ""} · ${rec.verdict || "Completed"}`
+          : "Punched out successfully",
+      );
+      setNote("");
+      await fetchToday();
+      onRefresh?.();
+    } catch (err) {
+      const msg =
+        err?.response?.data?.detail ??
+        err?.response?.data?.message ??
+        err?.message ??
+        "Failed to punch out";
+      toast.error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeletePunch = async (punchId) => {
+    try {
+      await attendanceApi.deleteTodayPunch(punchId);
+      try {
+        deletePunch(punchId);
+      } catch (_) {}
+      toast.success("Punch removed successfully");
+      await fetchToday();
+      onRefresh?.();
+    } catch (err) {
+      const msg =
+        err?.response?.data?.detail ??
+        err?.response?.data?.message ??
+        err?.message ??
+        "Failed to remove punch";
+      toast.error(typeof msg === "string" ? msg : JSON.stringify(msg));
+    }
+  };
+
+  const displayPunches = useMemo(() => {
+    if (Array.isArray(livePunches) && livePunches.length > 0) {
+      return livePunches;
+    }
+    return mine;
+  }, [livePunches, mine]);
+
+  const totals = useMemo(() => {
+    if (liveSummary) {
+      return {
+        days: liveSummary.present_days ?? fallbackTotals.days,
+        worked: liveSummary.total_work_hours ?? fallbackTotals.worked,
+        overtime: liveSummary.overtime_hours ?? fallbackTotals.overtime,
+        short: liveSummary.short_hours ?? fallbackTotals.short,
+      };
+    }
+    return fallbackTotals;
+  }, [liveSummary, fallbackTotals]);
+
+  const punchRows = displayPunches.map((p) => [
     p.date,
-    p.inAt,
-    p.outAt || "—",
-    `${punchHours(p)}`,
-    p.source,
-    p.location,
-    punchVerdict(p),
-    shiftTimingFlag(p, shift).flag,
+    p.in_time || p.inAt || "—",
+    p.out_time || p.outAt || "—",
+    p.hours != null ? `${Number(p.hours).toFixed(2)}` : (p.outAt ? `${punchHours(p)}` : "—"),
+    p.source || "Manual",
+    p.location || p.location_name || "—",
+    p.verdict || punchVerdict(p),
+    p.shift_timing || shiftTimingFlag(p, shift).flag,
     p.note || "—",
   ]);
   const punchCols = [
@@ -229,15 +359,23 @@ function MarkAttendanceCard() {
                 <Fingerprint className="text-primary h-4 w-4" /> Mark attendance
               </h2>
               <p className="text-muted-foreground mt-0.5 text-xs">
-                Punch in manually from the portal, or record a biometric / geofenced device punch.
+                Punch in manually from the portal, or record a biometric device punch.
                 Hours, overtime and short hours are computed the moment you punch out.
               </p>
             </div>
             <Badge
               variant="outline"
-              className={open ? "border-primary/30 bg-primary/10 text-primary" : ""}
+              className={isPunchedIn ? "border-primary/30 bg-primary/10 text-primary" : ""}
             >
-              {open ? `Punched in at ${open.inAt}` : "Not punched in"}
+              {loadingToday ? (
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Checking status…
+                </span>
+              ) : isPunchedIn ? (
+                `Punched in at ${activeInTime || "In progress"}`
+              ) : (
+                "Not punched in"
+              )}
             </Badge>
           </div>
 
@@ -319,14 +457,19 @@ function MarkAttendanceCard() {
             </div>
             <Button
               className="bg-gradient-emerald text-white"
-              disabled={!!open || busy}
+              disabled={isPunchedIn || busy}
               onClick={() => void punchIn()}
             >
-              <LogIn className="h-4 w-4" /> Punch in
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+              ) : (
+                <LogIn className="h-4 w-4 mr-1.5" />
+              )}{" "}
+              Punch in
             </Button>
-            {open && open.date !== today && (
+            {isPunchedIn && activePunchDate && activePunchDate !== today && (
               <span className="text-gold text-xs">
-                Open punch from <span className="whitespace-nowrap">{open.date}</span> (night shift)
+                Open punch from <span className="whitespace-nowrap">{activePunchDate}</span> (night shift)
                 — punch out to close it.
               </span>
             )}
@@ -339,21 +482,15 @@ function MarkAttendanceCard() {
             )}
             <Button
               variant="outline"
-              disabled={!open}
-              onClick={() => {
-                const rec = markOut(me.id);
-                if (!rec)
-                  return toast.error(
-                    open
-                      ? `Attendance for ${open.date.slice(0, 7)} is locked for payroll — ask HR to regularise the punch.`
-                      : "Nothing to punch out of",
-                  );
-                toast.success(
-                  `Punched out at ${rec.outAt} · ${punchHours(rec)} h · ${punchVerdict(rec)}`,
-                );
-              }}
+              disabled={!isPunchedIn || busy}
+              onClick={() => void punchOut()}
             >
-              <LogOut className="h-4 w-4" /> Punch out
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+              ) : (
+                <LogOut className="h-4 w-4 mr-1.5" />
+              )}{" "}
+              Punch out
             </Button>
             <div className="text-muted-foreground ml-auto flex items-center gap-1.5 text-xs">
               <MapPin className="h-3.5 w-3.5" /> {location}
@@ -363,9 +500,9 @@ function MarkAttendanceCard() {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             {[
               ["Days marked", String(totals.days)],
-              ["Hours worked", `${totals.worked} h`],
-              ["Overtime", `${totals.overtime} h`],
-              ["Short hours", `${totals.short} h`],
+              ["Hours worked", `${Number(totals.worked).toFixed(1)} h`],
+              ["Overtime", `${Number(totals.overtime).toFixed(1)} h`],
+              ["Short hours", `${Number(totals.short).toFixed(1)} h`],
             ].map(([l, v]) => (
               <div key={l} className="border-border bg-muted/40 rounded-lg border px-3 py-2">
                 <div className="text-muted-foreground text-[11px] tracking-wider uppercase">
@@ -380,12 +517,15 @@ function MarkAttendanceCard() {
 
       <Card className="shadow-card overflow-hidden">
         <div className="border-border flex flex-wrap items-center gap-2 border-b p-4">
-          <div className="text-sm font-semibold">My marked attendance</div>
+          <div className="text-sm font-semibold flex items-center gap-2">
+            My marked attendance
+            {loadingPunches && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
+          </div>
           <div className="ml-auto flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="outline"
-              disabled={!mine.length}
+              disabled={!displayPunches.length}
               onClick={() => {
                 exportCsv(`${me.id}-marked-attendance`, punchCols, punchRows);
                 toast.success("Punch log exported as CSV");
@@ -396,7 +536,7 @@ function MarkAttendanceCard() {
             <Button
               size="sm"
               variant="outline"
-              disabled={!mine.length}
+              disabled={!displayPunches.length}
               onClick={() => {
                 const ok = exportReportPdf({
                   title: "Self-marked Attendance Log",
@@ -434,69 +574,96 @@ function MarkAttendanceCard() {
               </tr>
             </thead>
             <tbody className="divide-border divide-y">
-              {mine.map((p) => {
-                const timing = shiftTimingFlag(p, shift);
-                return (
-                  <tr key={p.id} className={clickableRow} onClick={() => setDetail(p)}>
-                    <td className="p-3 font-medium">
-                      <span className="whitespace-nowrap">{p.date}</span>
-                    </td>
-                    <td className="p-3">
-                      <span className="whitespace-nowrap">{p.inAt}</span>
-                    </td>
-                    <td className="p-3">
-                      <span className="whitespace-nowrap">
-                        {p.outAt || <span className="text-muted-foreground">—</span>}
-                      </span>
-                    </td>
-                    <td className="p-3 text-right font-semibold">
-                      {p.outAt ? punchHours(p) : "—"}
-                    </td>
-                    <td className="text-muted-foreground p-3">
-                      {p.source}
-                      <div className="text-xs">{p.location}</div>
-                    </td>
-                    <td className="p-3">
-                      <Badge variant="outline" className={verdictTone(punchVerdict(p))}>
-                        {punchVerdict(p)}
-                      </Badge>
-                    </td>
-                    <td className="p-3">
-                      <Badge variant="outline" className={shiftTimingTone[timing.flag]}>
-                        {timing.flag}
-                      </Badge>
-                      {(timing.lateMins > 0 || timing.earlyOutMins > 0) && (
-                        <div className="text-muted-foreground mt-0.5 text-[11px]">
-                          {timing.lateMins > 0 && `${timing.lateMins}m late`}
-                          {timing.lateMins > 0 && timing.earlyOutMins > 0 && " · "}
-                          {timing.earlyOutMins > 0 && `${timing.earlyOutMins}m early`}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                      {/* Only today's punch can be removed (a wrong tap) — past punches are the attendance record payroll
-                           reads, and a locked month is final. Corrections go through HR regularisation. */}
-                      {p.date === today && !isAttendanceLocked(p.date.slice(0, 7), orgId) ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-destructive"
-                          aria-label="Remove today's punch"
-                          onClick={() => {
-                            deletePunch(p.id);
-                            toast.success("Punch removed");
-                          }}
+              {loadingPunches ? (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading attendance logs…
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                displayPunches.map((p) => {
+                  const timing = shiftTimingFlag(p, shift);
+                  const timingLabel = p.shift_timing || timing.flag;
+                  const verdictLabel = p.verdict || punchVerdict(p);
+                  const inStr = p.in_time || p.inAt;
+                  const outStr = p.out_time || p.outAt;
+                  const hoursStr =
+                    p.hours != null
+                      ? typeof p.hours === "number"
+                        ? p.hours.toFixed(2)
+                        : p.hours
+                      : outStr
+                        ? punchHours(p)
+                        : "—";
+                  const lateM = p.late_mins ?? timing.lateMins;
+                  const earlyM = p.early_out_mins ?? timing.earlyOutMins;
+
+                  return (
+                    <tr key={p.id} className={clickableRow} onClick={() => setDetail(p)}>
+                      <td className="p-3 font-medium">
+                        <span className="whitespace-nowrap">{p.date}</span>
+                      </td>
+                      <td className="p-3">
+                        <span className="whitespace-nowrap">{inStr}</span>
+                      </td>
+                      <td className="p-3">
+                        <span className="whitespace-nowrap">
+                          {outStr || <span className="text-muted-foreground">—</span>}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right font-semibold">
+                        {outStr ? hoursStr : "—"}
+                      </td>
+                      <td className="text-muted-foreground p-3">
+                        {p.source || "Manual"}
+                        <div className="text-xs">{p.location || p.location_name || "Self-marked"}</div>
+                      </td>
+                      <td className="p-3">
+                        <Badge variant="outline" className={verdictTone(verdictLabel)}>
+                          {verdictLabel}
+                        </Badge>
+                      </td>
+                      <td className="p-3">
+                        <Badge
+                          variant="outline"
+                          className={
+                            shiftTimingTone[timingLabel] ||
+                            shiftTimingTone[timing.flag] ||
+                            "border-border bg-muted"
+                          }
                         >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-              {mine.length === 0 && (
+                          {timingLabel}
+                        </Badge>
+                        {(lateM > 0 || earlyM > 0) && (
+                          <div className="text-muted-foreground mt-0.5 text-[11px]">
+                            {lateM > 0 && `${lateM}m late`}
+                            {lateM > 0 && earlyM > 0 && " · "}
+                            {earlyM > 0 && `${earlyM}m early`}
+                          </div>
+                        )}
+                      </td>
+                      <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
+                        {p.date === today && !p.is_locked ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                            aria-label="Remove today's punch"
+                            onClick={() => handleDeletePunch(p.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+              {!loadingPunches && displayPunches.length === 0 && (
                 <tr>
                   <td colSpan={8} className="text-muted-foreground p-10 text-center">
                     No punches yet — use "Punch in" above to mark today's attendance.
@@ -511,38 +678,57 @@ function MarkAttendanceCard() {
       {detail &&
         (() => {
           const timing = shiftTimingFlag(detail, shift);
-          const verdict = punchVerdict(detail);
+          const timingLabel = detail.shift_timing || timing.flag;
+          const verdict = detail.verdict || punchVerdict(detail);
+          const inStr = detail.in_time || detail.inAt;
+          const outStr = detail.out_time || detail.outAt || "—";
+          const hoursStr =
+            detail.hours != null
+              ? `${Number(detail.hours).toFixed(2)} h`
+              : detail.outAt
+                ? `${punchHours(detail)} h`
+                : "—";
+          const lateM = detail.late_mins ?? timing.lateMins;
+          const earlyM = detail.early_out_mins ?? timing.earlyOutMins;
+
           return (
             <RecordDetailDialog
               onClose={() => setDetail(null)}
-              title={`${detail.date} · ${detail.inAt} → ${detail.outAt || "in progress"}`}
-              subtitle={`${detail.employee} · ${detail.empId}`}
+              title={`${detail.date} · ${inStr} → ${outStr === "—" ? "in progress" : outStr}`}
+              subtitle={`${detail.employee || me.name} · ${detail.empId || me.id}`}
               badges={
                 <>
                   <Badge variant="outline" className={verdictTone(verdict)}>
                     {verdict}
                   </Badge>
-                  <Badge variant="outline" className={shiftTimingTone[timing.flag]}>
-                    {timing.flag}
+                  <Badge
+                    variant="outline"
+                    className={
+                      shiftTimingTone[timingLabel] ||
+                      shiftTimingTone[timing.flag] ||
+                      "border-border bg-muted"
+                    }
+                  >
+                    {timingLabel}
                   </Badge>
                 </>
               }
               record={{
                 id: detail.id,
                 date: detail.date,
-                inAt: detail.inAt,
-                outAt: detail.outAt || "—",
-                hours: detail.outAt ? `${punchHours(detail)} h` : "—",
+                inAt: inStr,
+                outAt: outStr,
+                hours: hoursStr,
                 verdict,
-                source: detail.source,
-                location: detail.location,
+                source: detail.source || "Manual",
+                location: detail.location || detail.location_name || "Self-marked",
                 note: detail.note || "—",
                 shift: shift
                   ? `${shift.name} · ${shift.start} – ${shift.end}`
                   : "No shift assigned",
-                shiftTiming: timing.flag,
-                lateBy: timing.lateMins > 0 ? `${timing.lateMins} min` : "—",
-                earlyOutBy: timing.earlyOutMins > 0 ? `${timing.earlyOutMins} min` : "—",
+                shiftTiming: timingLabel,
+                lateBy: lateM > 0 ? `${lateM} min` : "—",
+                earlyOutBy: earlyM > 0 ? `${earlyM} min` : "—",
               }}
               labels={{
                 id: "Punch ID",
@@ -581,10 +767,6 @@ function Kpi({ label, value, sub, icon: Icon }) {
 function EmpAttendance() {
   const me = useCurrentEmployee();
   const p = getEmployeeProfile(me.id);
-  // Own row from the live register (seed + punches + approved leave, tenant-scoped). Never fall back to another
-  // employee's register — the previous `?? ATTENDANCE[0]` showed Ananya Sharma's month to everyone not in the seed.
-  // Opens on the current month (the register used to be frozen on the seeded July 2026 data, which is still
-  // available from the month picker).
   const [month, setMonth] = useState(currentMonth);
   const live = useLiveAttendance(month);
   const row = useMemo(
@@ -604,59 +786,152 @@ function EmpAttendance() {
   const [day, setDay] = useState(`${currentMonth()}-01`);
   const [monthDetail, setMonthDetail] = useState(null);
 
+  // Live backend data states
+  const [summary, setSummary] = useState(null);
+  const [calendarData, setCalendarData] = useState(null);
+  const [livePunches, setLivePunches] = useState(null);
+  const [loadingPunches, setLoadingPunches] = useState(false);
+  const [monthlyHistory, setMonthlyHistory] = useState(null);
+  const [refreshCount, setRefreshCount] = useState(0);
+
+  // Extract year and month numbers
+  const [selectedYear, selectedMonth] = useMemo(() => {
+    const parts = (month || currentMonth()).split("-").map(Number);
+    return [parts[0] || new Date().getFullYear(), parts[1] || new Date().getMonth() + 1];
+  }, [month]);
+
+  // Fetch live backend attendance data
+  const loadBackendData = useCallback(async () => {
+    setLoadingPunches(true);
+    try {
+      const [sumRes, calRes, punchRes, histRes] = await Promise.allSettled([
+        attendanceApi.getMySummary(selectedMonth, selectedYear),
+        attendanceApi.getMyCalendar(selectedMonth, selectedYear),
+        attendanceApi.getMyPunches({ month: selectedMonth, year: selectedYear, page: 1, limit: 50 }),
+        attendanceApi.getMyMonthlyHistory(6),
+      ]);
+
+      if (sumRes.status === "fulfilled" && sumRes.value) {
+        setSummary(sumRes.value);
+      }
+      if (calRes.status === "fulfilled" && calRes.value?.days) {
+        setCalendarData(calRes.value);
+      }
+      if (punchRes.status === "fulfilled" && punchRes.value) {
+        const items = punchRes.value.items || (Array.isArray(punchRes.value) ? punchRes.value : []);
+        setLivePunches(items);
+      }
+      if (histRes.status === "fulfilled" && histRes.value) {
+        const items = histRes.value.items || (Array.isArray(histRes.value) ? histRes.value : []);
+        setMonthlyHistory(items);
+      }
+    } catch (err) {
+      console.warn("Error fetching backend attendance data:", err);
+    } finally {
+      setLoadingPunches(false);
+    }
+  }, [selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    loadBackendData();
+  }, [loadBackendData, refreshCount]);
+
   const days = useMemo(() => {
+    if (calendarData?.days && Object.keys(calendarData.days).length > 0) {
+      const all = Object.entries(calendarData.days).sort(([a], [b]) => a.localeCompare(b));
+      if (view === "day") return all.filter(([iso]) => iso === day);
+      if (view === "week") {
+        const i = (Number(week) - 1) * 7;
+        return all.slice(i, i + 7);
+      }
+      return all;
+    }
     const all = Object.entries(row.days).sort(([a], [b]) => a.localeCompare(b));
-    // "Day wise" always showed the 1st of the month — it now shows the chosen date.
     if (view === "day") return all.filter(([iso]) => iso === day);
     if (view === "week") {
       const i = (Number(week) - 1) * 7;
       return all.slice(i, i + 7);
     }
     return all;
-  }, [row, view, week, day]);
+  }, [calendarData, row, view, week, day]);
 
   // Weekly offs are not working days — they are shown as "Week off" and never counted as present / absent / leave.
-  const counts = days.reduce(
-    (acc, [iso, s]) => (isWeekend(iso) ? acc : { ...acc, [s]: acc[s] + 1 }),
+  const fallbackCounts = days.reduce(
+    (acc, [iso, s]) => (isWeekend(iso) || s === "WO" ? acc : { ...acc, [s]: (acc[s] || 0) + 1 }),
     { P: 0, A: 0, L: 0 },
   );
 
+  const displayMonthlyHistory = useMemo(() => {
+    if (Array.isArray(monthlyHistory) && monthlyHistory.length > 0) {
+      return monthlyHistory;
+    }
+    return p.attendance.monthly;
+  }, [monthlyHistory, p.attendance.monthly]);
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-          <Clock className="text-primary h-6 w-6" /> My Attendance
-        </h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Day, week and month view of your attendance along with work hours and overtime.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+            <Clock className="text-primary h-6 w-6" /> My Attendance
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Day, week and month view of your attendance along with work hours and overtime.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setRefreshCount((c) => c + 1)}
+          disabled={loadingPunches}
+          className="flex items-center gap-2 text-xs"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loadingPunches ? "animate-spin" : ""}`} /> Refresh Data
+        </Button>
       </div>
 
-      <MarkAttendanceCard />
+      <MarkAttendanceCard
+        onRefresh={() => setRefreshCount((c) => c + 1)}
+        liveSummary={summary}
+        livePunches={livePunches}
+        loadingPunches={loadingPunches}
+      />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi
           label="Present (period)"
-          value={String(counts.P)}
-          sub={`${counts.A} absent · ${counts.L} leave`}
+          value={summary ? String(summary.present_days ?? 0) : String(fallbackCounts.P)}
+          sub={
+            summary
+              ? `${summary.absent_days ?? 0} absent · ${summary.leave_days ?? 0} leave`
+              : `${fallbackCounts.A} absent · ${fallbackCounts.L} leave`
+          }
           icon={CalendarCheck2}
         />
         <Kpi
           label="Avg. work hours"
-          value={`${p.attendance.avgHours} h`}
-          sub={`${p.attendance.halfDays} half days`}
+          value={summary ? `${summary.avg_work_hours ?? 0} h` : `${p.attendance.avgHours} h`}
+          sub={
+            summary
+              ? `${summary.half_days ?? 0} half days`
+              : `${p.attendance.halfDays} half days`
+          }
           icon={Clock}
         />
         <Kpi
           label="Overtime"
-          value={`${p.attendance.overtimeHours} h`}
+          value={summary ? `${summary.overtime_hours ?? 0} h` : `${p.attendance.overtimeHours} h`}
           sub="Eligible for overtime reward"
           icon={TrendingUp}
         />
         <Kpi
           label="Short hours"
-          value={`${p.attendance.shortHours} h`}
-          sub={`${p.attendance.lateMarks} late marks`}
+          value={summary ? `${summary.short_hours ?? 0} h` : `${p.attendance.shortHours} h`}
+          sub={
+            summary
+              ? `${summary.late_marks ?? 0} late marks`
+              : `${p.attendance.lateMarks} late marks`
+          }
           icon={AlarmClock}
         />
       </div>
@@ -715,6 +990,16 @@ function EmpAttendance() {
               </SelectContent>
             </Select>
           )}
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            onClick={() => setRefreshCount((c) => c + 1)}
+            title="Refresh month attendance"
+            disabled={loadingPunches}
+          >
+            <RefreshCw className={`h-4 w-4 ${loadingPunches ? "animate-spin" : ""}`} />
+          </Button>
           <Badge variant="outline" className="ml-auto">
             Period: {month} · Shift {p.job.shift}
           </Badge>
@@ -724,20 +1009,29 @@ function EmpAttendance() {
       <Card className="shadow-card">
         <CardContent className="p-5">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-2">
-            {days.map(([iso, s]) => (
-              <div
-                key={iso}
-                className={`rounded-lg border p-2.5 text-center ${isWeekend(iso) ? "border-border bg-muted text-muted-foreground" : palTone[s]}`}
-              >
-                <div className="text-xs opacity-70">
-                  {iso.slice(8)}{" "}
-                  {new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { weekday: "short" })}
+            {days.map(([iso, s]) => {
+              const isWOff = s === "WO" || isWeekend(iso);
+              const isHol = s === "H";
+              const toneClass = isWOff
+                ? "border-border bg-muted text-muted-foreground"
+                : isHol
+                  ? "bg-sky-500/15 text-sky-600 border-sky-400/30"
+                  : palTone[s] || "border-border bg-muted/40";
+              const labelText = isWOff ? "Week off" : isHol ? "Holiday" : palLabel[s] || s || "—";
+
+              return (
+                <div
+                  key={iso}
+                  className={`rounded-lg border p-2.5 text-center transition ${toneClass}`}
+                >
+                  <div className="text-xs opacity-70">
+                    {iso.slice(8)}{" "}
+                    {new Date(`${iso}T00:00:00`).toLocaleDateString("en-IN", { weekday: "short" })}
+                  </div>
+                  <div className="mt-0.5 text-sm font-bold">{labelText}</div>
                 </div>
-                <div className="mt-0.5 text-sm font-bold">
-                  {isWeekend(iso) ? "Week off" : palLabel[s]}
-                </div>
-              </div>
-            ))}
+              );
+            })}
             {days.length === 0 && (
               <div className="text-muted-foreground col-span-full text-sm">
                 No attendance recorded for this period.
@@ -763,13 +1057,13 @@ function EmpAttendance() {
               </tr>
             </thead>
             <tbody className="divide-border divide-y">
-              {p.attendance.monthly.map((m) => (
+              {displayMonthlyHistory.map((m) => (
                 <tr key={m.month} className={clickableRow} onClick={() => setMonthDetail(m)}>
                   <td className="p-3 font-medium">{m.month}</td>
                   <td className="p-3">{m.present}</td>
                   <td className="p-3">{m.absent}</td>
                   <td className="p-3">{m.leave}</td>
-                  <td className="p-3">{m.overtime}</td>
+                  <td className="p-3">{m.overtime ?? m.overtime_hours ?? 0}</td>
                 </tr>
               ))}
             </tbody>
@@ -779,16 +1073,29 @@ function EmpAttendance() {
 
       {monthDetail &&
         (() => {
-          const working = monthDetail.present + monthDetail.absent + monthDetail.leave;
-          const pct = working ? Math.round((monthDetail.present / working) * 1000) / 10 : 0;
+          const present = Number(monthDetail.present ?? 0);
+          const absent = Number(monthDetail.absent ?? 0);
+          const leave = Number(monthDetail.leave ?? 0);
+          const overtime = Number(monthDetail.overtime ?? monthDetail.overtime_hours ?? 0);
+          const working = present + absent + leave;
+          const pct = working ? Math.round((present / working) * 1000) / 10 : 0;
           return (
             <RecordDetailDialog
               onClose={() => setMonthDetail(null)}
               title={`${monthDetail.month} · ${me.name}`}
               subtitle={`${me.id} · shift ${p.job.shift}`}
               badges={<Badge variant="outline">{pct} % attendance</Badge>}
-              record={{ ...monthDetail, workingDays: working, attendancePct: `${pct} %` }}
+              record={{
+                month: monthDetail.month,
+                present,
+                absent,
+                leave,
+                overtime,
+                workingDays: working,
+                attendancePct: `${pct} %`,
+              }}
               labels={{
+                month: "Month",
                 present: "Present days",
                 absent: "Absent days",
                 leave: "Leave days",

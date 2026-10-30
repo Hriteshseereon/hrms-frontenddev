@@ -9,7 +9,8 @@
 // Lists are namespaced through the same resolver as the persistent stores (see lib/persist.js): master lists are per
 // company, or per group when the group Super Admin shares that master across companies; the default tenant keeps
 // its original keys.
-import { useSyncExternalStore } from "react";
+// import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { onNamespaceChange, startingValue } from "@/lib/persist";
 
 let resolver = (key) => ({ storageKey: key, initial: "seed" });
@@ -85,22 +86,46 @@ if (typeof window !== "undefined") {
 }
 
 /** Drop-in replacement for `useState<T[]>(seed)` that survives navigation and reloads. */
+// export function useSharedList(key, seed) {
+//   if (!seeds.has(key)) seeds.set(key, seed);
+//   const value = useSyncExternalStore(
+//     (cb) => {
+//       subscribers(key).add(cb);
+//       return () => subscribers(key).delete(cb);
+//     },
+//     () => readList(key, seed),
+//     // Stable server / hydration snapshot: the first seed registered for this key.
+//     () => seeds.get(key),
+//   );
+
+//   const set = (next) => {
+//     const prev = readList(key, seed);
+//     writeList(key, typeof next === "function" ? next(prev) : next);
+//   };
+
+//   return [value, set];
+// }
+
+/** Drop-in replacement for useState that survives navigation and reloads. */
 export function useSharedList(key, seed) {
   if (!seeds.has(key)) seeds.set(key, seed);
+
   const value = useSyncExternalStore(
     (cb) => {
       subscribers(key).add(cb);
       return () => subscribers(key).delete(cb);
     },
     () => readList(key, seed),
-    // Stable server / hydration snapshot: the first seed registered for this key.
     () => seeds.get(key),
   );
 
-  const set = (next) => {
-    const prev = readList(key, seed);
-    writeList(key, typeof next === "function" ? next(prev) : next);
-  };
+  const set = useCallback(
+    (next) => {
+      const prev = readList(key, seed);
+      writeList(key, typeof next === "function" ? next(prev) : next);
+    },
+    [key, seed],
+  );
 
   return [value, set];
 }

@@ -1,6 +1,6 @@
 // Master Data → Assets: asset categories / types with serial rule, useful life, custodian department, the
 // condition checklist verified on issue and return, default accessories and return period.
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Boxes, Plus, Pencil, Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,13 +27,13 @@ import {
 import { clickableRow } from "@/components/common/RecordDetail";
 import { Field, KV } from "@/features/employees/components/CasePieces";
 import { exportReportPdf } from "@/lib/export-utils";
+import { ASSET_KINDS, useAssets } from "@/features/assets/data/asset-data";
+import { useActiveOrgId } from "@/features/organization/data/group-data";
 import {
-  ASSET_KINDS,
-  useAssetMaster,
-  upsertAssetType,
-  deleteAssetType,
-  useAssets,
-} from "@/features/assets/data/asset-data";
+  createAssetTypeApi,
+  loadAssetCategories,
+  apiErrorMessage,
+} from "@/features/assets/data/assetMasterAdapter";
 
 const blank = () => ({
   code: "",
@@ -51,11 +51,80 @@ const blank = () => ({
 });
 
 export function AssetMasterTab() {
-  const rows = useAssetMaster();
+  const orgId = useActiveOrgId();
+  const api = useMemo(() => createAssetTypeApi(orgId), [orgId]);
+  const [rows, setRows] = useState([]);
+  const [kinds, setKinds] = useState(ASSET_KINDS);
   const assets = useAssets();
   const [edit, setEdit] = useState(null);
   const [view, setView] = useState(null);
-  const countOf = (name) => assets.filter((a) => a.type === name).length;
+  // Server count first (in_register); falls back to the local register for rows without it.
+  const countOf = (r) => r.inRegister ?? assets.filter((a) => a.type === r.name).length;
+
+  // GET /assets/asset-types
+  const reload = useCallback(async () => {
+    try {
+      setRows(await api.list());
+    } catch (error) {
+      console.error("Failed to load asset types:", error);
+      toast.error(apiErrorMessage(error, "Unable to load asset types."));
+    }
+  }, [api]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  // GET /assets/asset-types/categories (falls back to the built-in list)
+  useEffect(() => {
+    let alive = true;
+    loadAssetCategories(orgId)
+      .then((list) => {
+        if (alive && list.length) setKinds(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [orgId]);
+
+  // POST (new) or PUT (existing). Returns true on success so the form can close.
+  const handleSave = async (existing, payload) => {
+    try {
+      if (existing) await api.update(existing.id, payload);
+      else await api.create(payload);
+      toast.success(existing ? "Asset type updated" : "Asset type added");
+      await reload();
+      return true;
+    } catch (error) {
+      console.error("Failed to save asset type:", error);
+      toast.error(apiErrorMessage(error, "Unable to save the asset type."));
+      return false;
+    }
+  };
+
+  // PATCH /assets/asset-types/{id}
+  const handleToggle = async (r, v) => {
+    try {
+      await api.setActive(r.id, v);
+      await reload();
+    } catch (error) {
+      console.error("Failed to update status:", error);
+      toast.error(apiErrorMessage(error, "Unable to update the status."));
+    }
+  };
+
+  // DELETE /assets/asset-types/{id}
+  const handleDelete = async (r) => {
+    try {
+      await api.remove(r.id);
+      toast.success("Asset type removed");
+      await reload();
+    } catch (error) {
+      console.error("Failed to delete asset type:", error);
+      toast.error(apiErrorMessage(error, "Unable to delete the asset type."));
+    }
+  };
 
   return (
     <Card className="shadow-card">
@@ -166,12 +235,9 @@ export function AssetMasterTab() {
                   <td className="py-2.5 pr-3 text-xs">{r.custodianDept}</td>
                   <td className="py-2.5 pr-3 text-xs">{r.checklist.length} items</td>
                   <td className="py-2.5 pr-3 text-xs">{r.accessories.join(", ") || "—"}</td>
-                  <td className="py-2.5 pr-3">{countOf(r.name)}</td>
+                  <td className="py-2.5 pr-3">{countOf(r)}</td>
                   <td className="py-2.5 pr-3" onClick={(e) => e.stopPropagation()}>
-                    <Switch
-                      checked={r.active}
-                      onCheckedChange={(v) => upsertAssetType({ ...r, active: v })}
-                    />
+                    <Switch checked={r.active} onCheckedChange={(v) => handleToggle(r, v)} />
                   </td>
                   <td className="py-2.5 pr-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex flex-wrap gap-1">
@@ -187,16 +253,13 @@ export function AssetMasterTab() {
                         size="icon"
                         variant="ghost"
                         className="text-destructive h-8 w-8"
-                        disabled={countOf(r.name) > 0}
+                        disabled={countOf(r) > 0}
                         title={
-                          countOf(r.name) > 0
+                          countOf(r) > 0
                             ? "Assets exist under this type — deactivate instead"
                             : "Delete"
                         }
-                        onClick={() => {
-                          deleteAssetType(r.id);
-                          toast.success("Asset type removed");
-                        }}
+                        onClick={() => handleDelete(r)}
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -212,7 +275,13 @@ export function AssetMasterTab() {
       <Dialog open={!!edit} onOpenChange={(o) => !o && setEdit(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
           {edit && (
-            <TypeForm existing={edit === "new" ? undefined : edit} onDone={() => setEdit(null)} />
+            <TypeForm
+              existing={edit === "new" ? undefined : edit}
+              all={rows}
+              kinds={kinds}
+              onSave={handleSave}
+              onDone={() => setEdit(null)}
+            />
           )}
         </DialogContent>
       </Dialog>
@@ -239,7 +308,7 @@ export function AssetMasterTab() {
                     view.defaultReturnDays ? `${view.defaultReturnDays} days` : "Until separation",
                   ],
                   ["Active", view.active ? "Yes" : "No"],
-                  ["Assets in register", String(countOf(view.name))],
+                  ["Assets in register", String(countOf(view))],
                 ]}
               />
               <div className="space-y-1">
@@ -289,13 +358,15 @@ export function AssetMasterTab() {
   );
 }
 
-function TypeForm({ existing, onDone }) {
-  const all = useAssetMaster();
+function TypeForm({ existing, all, kinds, onSave, onDone }) {
   const assets = useAssets();
   const [f, setF] = useState(existing ? { ...existing } : blank());
   const [checklist, setChecklist] = useState(f.checklist.join("\n"));
   const [accessories, setAccessories] = useState(f.accessories.join(", "));
+  const [saving, setSaving] = useState(false);
   const set = (p) => setF((v) => ({ ...v, ...p }));
+  // Keep the current category selectable even if it is not in the dropdown list.
+  const kindOptions = f.kind && !kinds.includes(f.kind) ? [f.kind, ...kinds] : kinds;
   const clash = all.find(
     (r) =>
       r.id !== existing?.id &&
@@ -304,7 +375,9 @@ function TypeForm({ existing, onDone }) {
   );
   // Assets reference their type by name — renaming a type in use orphaned every asset registered under it.
   const renameBlocked =
-    !!existing && existing.name !== f.name.trim() && assets.some((a) => a.type === existing.name);
+    !!existing &&
+    existing.name !== f.name.trim() &&
+    (assets.some((a) => a.type === existing.name) || (existing.inRegister ?? 0) > 0);
   const valid =
     f.code.trim() &&
     f.name.trim() &&
@@ -342,7 +415,7 @@ function TypeForm({ existing, onDone }) {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ASSET_KINDS.map((k) => (
+              {kindOptions.map((k) => (
                 <SelectItem key={k} value={k}>
                   {k}
                 </SelectItem>
@@ -417,11 +490,11 @@ function TypeForm({ existing, onDone }) {
           Cancel
         </Button>
         <Button
-          disabled={!valid}
+          disabled={!valid || saving}
           className="bg-gradient-emerald text-white"
-          onClick={() => {
-            upsertAssetType({
-              ...(existing ? { id: existing.id } : {}),
+          onClick={async () => {
+            setSaving(true);
+            const ok = await onSave(existing, {
               ...f,
               code: f.code.trim(),
               name: f.name.trim(),
@@ -434,8 +507,8 @@ function TypeForm({ existing, onDone }) {
                 .map((s) => s.trim())
                 .filter(Boolean),
             });
-            toast.success(existing ? "Asset type updated" : "Asset type added");
-            onDone();
+            setSaving(false);
+            if (ok) onDone();
           }}
         >
           {existing ? "Save" : "Add type"}

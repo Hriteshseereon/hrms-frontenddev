@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { companiesOf, useCurrentTenant } from "@/features/organization/data/tenancy";
-import { useOrgs } from "@/features/organization/data/group-data";
+import { useOrgs, useActiveOrgId } from "@/features/organization/data/group-data";
 import { captureFiles } from "@/lib/attachments";
 import Link from "@/lib/router";
 import {
@@ -69,16 +69,14 @@ import {
   processingDateFor,
 } from "@/features/payroll/data/salary-engine";
 import {
-  removeAssessmentParam,
-  saveAssessmentParam,
-  useAssessmentParams,
-} from "@/features/recruitment/data/onboarding-data";
-import { saveEvalParam, useEvalParams } from "@/features/performance/data/performance-config";
+  createAssessmentParamApi,
+  createEvaluationParamApi,
+  createHolidayCalendarApi,
+  apiErrorMessage,
+} from "@/features/recruitment/data/recruitmentMasterAdapters";
 import {
   useLeaveMaster,
   saveLeaveMasterRow,
-  useHolidayCalendars,
-  saveHolidayCalendar,
   useInsurancePlans,
   saveInsurancePlan,
   useLeavePolicy,
@@ -1240,14 +1238,97 @@ export function SalaryConfigTab() {
 
 /* --------------------- Assessment & evaluation parameters --------------------- */
 export function AssessmentParamsTab() {
-  const params = useAssessmentParams();
-  const evals = useEvalParams();
+  const orgId = useActiveOrgId();
+  const api = useMemo(() => createAssessmentParamApi(orgId), [orgId]);
+  const evalApi = useMemo(() => createEvaluationParamApi(orgId), [orgId]);
+  const [params, setParams] = useState([]);
+  const [evals, setEvals] = useState([]);
   const [edit, setEdit] = useState(null);
   const [ev, setEv] = useState(null);
   const totalW = params.filter((p) => p.active).reduce((s, p) => s + p.weight, 0);
   // Next free ids — a count-based id reused an existing one after a parameter was removed, so "Save" overwrote it.
   const nextId = (prefix, rows) =>
-    `${prefix}-${String(rows.reduce((m, r) => Math.max(m, Number(r.id.replace(`${prefix}-`, "")) || 0), 0) + 1).padStart(2, "0")}`;
+    `${prefix}-${String(rows.reduce((m, r) => Math.max(m, Number(String(r.id).replace(`${prefix}-`, "")) || 0), 0) + 1).padStart(2, "0")}`;
+
+  // GET /recruitment/assessment-parameters
+  const reload = useCallback(async () => {
+    try {
+      setParams(await api.list());
+    } catch (error) {
+      console.error("Failed to load assessment parameters:", error);
+      toast.error(apiErrorMessage(error, "Unable to load assessment parameters."));
+    }
+  }, [api]);
+
+  // GET /performance/evaluation-parameters
+  const reloadEvals = useCallback(async () => {
+    try {
+      setEvals(await evalApi.list());
+    } catch (error) {
+      console.error("Failed to load evaluation parameters:", error);
+      toast.error(apiErrorMessage(error, "Unable to load evaluation parameters."));
+    }
+  }, [evalApi]);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  useEffect(() => {
+    reloadEvals();
+  }, [reloadEvals]);
+
+  // POST (new) or PUT (existing — rows loaded from the API carry _apiId)
+  const handleSave = async () => {
+    try {
+      if (edit._apiId) await api.update(edit._apiId, edit);
+      else await api.create(edit);
+      setEdit(null);
+      toast.success("Saved");
+      await reload();
+    } catch (error) {
+      console.error("Failed to save assessment parameter:", error);
+      toast.error(apiErrorMessage(error, "Unable to save the parameter."));
+    }
+  };
+
+  // PATCH /{id}/status
+  const handleToggle = async (p, active) => {
+    try {
+      await api.toggleStatus(p._apiId, active);
+      await reload();
+    } catch (error) {
+      console.error("Failed to update status:", error);
+      toast.error(apiErrorMessage(error, "Unable to update the status."));
+    }
+  };
+
+  // DELETE /{id}
+  const handleRemove = async (p) => {
+    try {
+      await api.remove(p._apiId);
+      toast.success("Removed");
+      await reload();
+    } catch (error) {
+      console.error("Failed to remove assessment parameter:", error);
+      toast.error(apiErrorMessage(error, "Unable to remove the parameter."));
+    }
+  };
+
+  // Evaluation parameter: POST (new) or PUT (existing — rows loaded from the API carry _apiId)
+  const handleSaveEval = async () => {
+    try {
+      if (ev._apiId) await evalApi.update(ev._apiId, ev);
+      else await evalApi.create(ev);
+      setEv(null);
+      toast.success("Saved");
+      await reloadEvals();
+    } catch (error) {
+      console.error("Failed to save evaluation parameter:", error);
+      toast.error(apiErrorMessage(error, "Unable to save the parameter."));
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Card className="shadow-card">
@@ -1317,10 +1398,7 @@ export function AssessmentParamsTab() {
                   </td>
                   <td className="p-2">{p.mandatory ? "Yes" : "—"}</td>
                   <td className="p-2">
-                    <Switch
-                      checked={p.active}
-                      onCheckedChange={(v) => saveAssessmentParam({ ...p, active: v })}
-                    />
+                    <Switch checked={p.active} onCheckedChange={(v) => handleToggle(p, v)} />
                   </td>
                   <td className="p-2">
                     <Button size="sm" variant="ghost" className="h-7" onClick={() => setEdit(p)}>
@@ -1330,10 +1408,7 @@ export function AssessmentParamsTab() {
                       size="sm"
                       variant="ghost"
                       className="text-destructive h-7"
-                      onClick={() => {
-                        removeAssessmentParam(p.id);
-                        toast.success("Removed");
-                      }}
+                      onClick={() => handleRemove(p)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
@@ -1499,11 +1574,7 @@ export function AssessmentParamsTab() {
               className="bg-gradient-emerald text-white"
               disabled={!edit?.name.trim() || !(edit.weight > 0 && edit.weight <= 100)}
               title="Weight must be between 1 and 100"
-              onClick={() => {
-                saveAssessmentParam(edit);
-                setEdit(null);
-                toast.success("Saved");
-              }}
+              onClick={handleSave}
             >
               Save
             </Button>
@@ -1565,11 +1636,7 @@ export function AssessmentParamsTab() {
             <Button
               className="bg-gradient-emerald text-white"
               disabled={!ev?.name.trim() || !(ev.weight >= 0 && ev.weight <= 100)}
-              onClick={() => {
-                saveEvalParam(ev);
-                setEv(null);
-                toast.success("Saved");
-              }}
+              onClick={handleSaveEval}
             >
               Save
             </Button>
@@ -1713,16 +1780,60 @@ function calendarError(c) {
     return `All dates must fall in ${c.year}.`;
   if (new Set(c.holidays.map((h) => h.date)).size !== c.holidays.length)
     return "The same date is listed twice.";
+    if (c.type === "Optional / Restricted" && !c.appliesTo.trim())
+    return "Assign at least one branch for an Optional / Restricted calendar.";
   return null;
 }
 
 export function LeaveMasterTab({ section = "both" }) {
   const rows = useLeaveMaster();
-  const cals = useHolidayCalendars();
+  const orgId = useActiveOrgId();
+  const calApi = useMemo(() => createHolidayCalendarApi(orgId), [orgId]);
+  const [cals, setCals] = useState([]);
   const [edit, setEdit] = useState(null);
   const [cal, setCal] = useState(null);
   const showLeave = section !== "holidays";
   const showHol = section !== "leave";
+
+  // GET /attendance/holiday-calendars
+  const reloadCals = useCallback(async () => {
+    try {
+      setCals(await calApi.list());
+    } catch (error) {
+      console.error("Failed to load holiday calendars:", error);
+      toast.error(apiErrorMessage(error, "Unable to load holiday calendars."));
+    }
+  }, [calApi]);
+
+  useEffect(() => {
+    if (showHol) reloadCals();
+  }, [showHol, reloadCals]);
+
+  // POST (new) or PUT (existing — rows loaded from the API carry _apiId)
+  const handleSaveCalendar = async () => {
+    try {
+      if (cal._apiId) await calApi.update(cal._apiId, cal);
+      else await calApi.create(cal);
+      setCal(null);
+      toast.success("Calendar saved — visible on Holidays for the assigned branches");
+      await reloadCals();
+    } catch (error) {
+      console.error("Failed to save holiday calendar:", error);
+      toast.error(apiErrorMessage(error, "Unable to save the holiday calendar."));
+    }
+  };
+  // DELETE /attendance/holiday-calendars/{id}
+  const handleDeleteCalendar = async (c) => {
+    if (!window.confirm(`Delete holiday calendar "${c.name}"?`)) return;
+    try {
+      await calApi.remove(c._apiId);
+      toast.success(`${c.name} deleted`);
+      await reloadCals();
+    } catch (error) {
+      console.error("Failed to delete holiday calendar:", error);
+      toast.error(apiErrorMessage(error, "Unable to delete the holiday calendar."));
+    }
+  };
   return (
     <div className="space-y-4">
       {showLeave && <LeavePolicyCard />}
@@ -1866,23 +1977,32 @@ export function LeaveMasterTab({ section = "both" }) {
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
               {cals.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setCal(c)}
-                  className="border-border hover:bg-muted/30 rounded-xl border p-4 text-left"
-                >
-                  <Badge variant="outline" className="mb-2">
-                    {c.type}
-                  </Badge>
-                  <div className="text-sm font-semibold">{c.name}</div>
-                  <div className="text-muted-foreground text-xs">
-                    {c.year} · {c.holidays.length} holidays · {c.appliesTo || "all branches"}
-                  </div>
-                  <div className="text-muted-foreground mt-1 text-[11px]">
-                    {c.uploadedFile ? `Uploaded: ${c.uploadedFile}` : "Not uploaded"}
-                  </div>
-                </button>
+                <div key={c.id} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setCal(c)}
+                    className="border-border hover:bg-muted/30 w-full rounded-xl border p-4 text-left"
+                  >
+                    <Badge variant="outline" className="mb-2">
+                      {c.type}
+                    </Badge>
+                    <div className="text-sm font-semibold">{c.name}</div>
+                    <div className="text-muted-foreground text-xs">
+                      {c.year} · {c.holidays.length} holidays · {c.appliesTo || "all branches"}
+                    </div>
+                    <div className="text-muted-foreground mt-1 text-[11px]">
+                      {c.uploadedFile ? `Uploaded: ${c.uploadedFile}` : "Not uploaded"}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Delete holiday calendar ${c.name}`}
+                    className="text-destructive hover:text-destructive/80 absolute top-3 right-3 rounded p-1"
+                    onClick={() => handleDeleteCalendar(c)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               ))}
             </div>
           </CardContent>
@@ -2217,11 +2337,7 @@ export function LeaveMasterTab({ section = "both" }) {
             <Button
               className="bg-gradient-emerald text-white"
               disabled={!cal?.name.trim() || !!(cal && calendarError(cal))}
-              onClick={() => {
-                saveHolidayCalendar(cal);
-                setCal(null);
-                toast.success("Calendar saved — visible on Holidays for the assigned branches");
-              }}
+              onClick={handleSaveCalendar}
             >
               Save
             </Button>

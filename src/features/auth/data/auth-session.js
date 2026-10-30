@@ -1210,6 +1210,20 @@ export const ROLE_SUMMARY = {
 /* ------------------------------------------------------------------ */
 
 const KEY = "seereon.session.user";
+const API_USER_KEY = "seereon.session.api-user";
+let apiUser = null;
+if (typeof window !== "undefined") {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(API_USER_KEY) ?? "null");
+    const hasToken =
+      window.localStorage.getItem("super_admin_access_token") ||
+      window.localStorage.getItem("access_token");
+    if (stored?.id && hasToken) apiUser = stored;
+  } catch {
+    // Ignore an invalid saved profile and require a fresh sign-in.
+  }
+}
+registerExtraUsers(() => apiUser ? [apiUser] : []);
 const DEFAULT_ID = "SRN-0004";
 /** Server-render / signed-out identity (Varen Mishra, HR) — the same person DEFAULT_ID points at. */
 const DEFAULT_USER = SEEREON_USERS.find((u) => u.id === DEFAULT_ID) ?? SEEREON_USERS[0];
@@ -1389,8 +1403,57 @@ export function signInAs(id) {
   return match;
 }
 
+/** Bridge the backend identity into the session used by portal guards and permissions. */
+export function signInFromBackend(user) {
+  if (!user?.id || !user.email) {
+    throw new Error("Login response did not contain a valid user identity.");
+  }
+
+  const roleMap = {
+    SUPER_ADMIN: "SuperAdmin",
+    COMPANY_ADMIN: "Admin",
+    BRANCH_ADMIN: "BranchAdmin",
+    EMPLOYEE: "Employee",
+  };
+
+  const appRole = roleMap[user.role] || user.role || "Admin";
+
+  apiUser = {
+    id: user.id, // users-table ID
+    email: user.email,
+    name: user.full_name || user.name || user.email,
+    role: appRole,
+    backendRole: user.role,
+    orgId: user.organization_id || ORGANIZATION.id,
+    companyId: user.company_id || null,
+    branchId: user.branch_id || null,
+    portal: appRole === "Employee" ? "emp" : "org",
+    designation: user.role ? String(user.role).replace(/_/g, " ") : "Administrator",
+    dept: "",
+    branch: "",
+    phone: "",
+    managerId: null,
+    doj: "",
+  };
+
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(API_USER_KEY, JSON.stringify(apiUser));
+  }
+  return signInAs(apiUser.id);
+}
+
+export function signInSuperAdmin(user) {
+  return signInFromBackend(user);
+}
+
 export function signOut() {
-  if (typeof window !== "undefined") window.localStorage.removeItem(KEY);
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(KEY);
+    window.localStorage.removeItem(API_USER_KEY);
+    window.localStorage.removeItem("super_admin_access_token");
+    window.localStorage.removeItem("super_admin_refresh_token");
+  }
+  apiUser = null;
   currentId = DEFAULT_ID;
   signedIn = false;
   emit();
