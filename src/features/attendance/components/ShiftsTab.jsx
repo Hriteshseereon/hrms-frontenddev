@@ -203,73 +203,80 @@ export function ShiftsTab() {
         {rows.map((s) => (
          
 <Card key={s._apiId ?? s.id} className="shadow-card">
-  <CardContent className="space-y-3 p-5">
-    <div className="flex items-start justify-between gap-2">
-      <div className="min-w-0 flex-1">
-        <div className="font-semibold">{s.name}</div>
-        <div className="text-muted-foreground text-xs">
-          {s.id} · {s.office}
-        </div>
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          title="View shift"
-          onClick={() => handleView(s)}
-        >
-          <Eye className="h-4 w-4" />
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          title="Edit shift"
-          onClick={() => handleEdit(s)}
-        >
-          <Pencil className="h-4 w-4" />
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700"
-          title="Delete shift"
-          disabled={deletingId === s._apiId}
-          onClick={() => handleDelete(s)}
-        >
-          <Trash2 className="h-4 w-4" />
-        </Button>
-      </div>
+  
+<CardContent className="flex flex-wrap items-center justify-between gap-3 p-3">
+  {/* Shift name and office */}
+  <div className="min-w-[150px] flex-1">
+    <div className="font-semibold text-sm">{s.name}</div>
+    <div className="text-muted-foreground text-xs">
+      {s.id} · {s.office}
     </div>
+  </div>
 
-    <Badge
-      variant="outline"
-      className="border-primary/30 bg-primary/10 text-primary"
-    >
-      {s.employees} staff
-    </Badge>
+  {/* Staff count */}
+  <Badge
+    variant="outline"
+    className="border-primary/30 bg-primary/10 text-primary"
+  >
+    {s.employees} staff
+  </Badge>
 
-    <div className="flex items-center gap-2 text-sm">
-      <Clock className="text-primary h-4 w-4" />
-      <span className="font-medium">
-        {s.start} — {s.end}
-      </span>
-    </div>
+  {/* Shift timing */}
+  <div className="flex items-center gap-2 text-sm">
+    <Clock className="text-primary h-4 w-4 shrink-0" />
+    <span className="font-medium whitespace-nowrap">
+      {s.start} — {s.end}
+    </span>
+  </div>
 
-    <div className="text-muted-foreground flex items-center gap-2 text-sm">
-      <Coffee className="h-4 w-4" />
+  {/* Break timing */}
+  <div className="text-muted-foreground flex items-center gap-2 text-sm">
+    <Coffee className="h-4 w-4 shrink-0" />
+    <span>
       {s.breakEnabled
         ? `Break ${s.breakStart} — ${s.breakEnd}`
         : "No scheduled break"}
-    </div>
-  </CardContent>
+    </span>
+  </div>
+
+  {/* View, Edit and Delete buttons */}
+  <div className="flex shrink-0 items-center gap-1">
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8"
+      title="View shift"
+      onClick={() => handleView(s)}
+    >
+      <Eye className="h-4 w-4" />
+    </Button>
+
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8"
+      title="Edit shift"
+      onClick={() => handleEdit(s)}
+    >
+      <Pencil className="h-4 w-4" />
+    </Button>
+
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8 text-red-600 hover:bg-red-50 hover:text-red-700"
+      title="Delete shift"
+      disabled={deletingId === s._apiId}
+      onClick={() => handleDelete(s)}
+    >
+      <Trash2 className="h-4 w-4" />
+    </Button>
+  </div>
+</CardContent>
+
 </Card>
 
         ))}
