@@ -67,7 +67,7 @@ import {
 import { leaveOrgOf, useLeaveApplications } from "@/features/leave/data/leave-engine";
 import { usePayrollRuns } from "@/features/payroll/data/payroll-engine";
 import { useScope, useScopeMatch, workspaceLoginPath } from "@/features/organization/data/tenancy";
-import { ScopeSwitcher } from "@/components/layout/ScopeSwitcher";
+// import { ScopeSwitcher } from "@/components/layout/ScopeSwitcher";
 
 export const ORG_NAV_GROUPS = [
   {
@@ -327,7 +327,12 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
             >
               <ChevronRight className="h-4 w-4" />
             </button>
-            <ScopeSwitcher inSidebar compact />
+              {/*
+      TEMPORARILY DISABLED: Company/branch scope dropdown.
+      Uncomment this line when the dropdown is needed again.
+
+      <ScopeSwitcher inSidebar compact />
+    */}
           </div>
         )}
 
@@ -354,9 +359,16 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
                 </div>
               </div>
               {/* The working scope (company › branch) is chosen here — the header stays clean. */}
-              <div className="mt-2 [&>div]:flex [&>span]:flex">
-                <ScopeSwitcher inSidebar />
-              </div>
+              
+{/*
+  TEMPORARILY DISABLED: Company/branch scope dropdown.
+  Uncomment the JSX below when the dropdown is needed again.
+
+  <div className="mt-2 [&>div]:flex [&>span]:flex">
+    <ScopeSwitcher inSidebar />
+  </div>
+*/}
+
             </div>
           )}
           {!collapsed && collective && (

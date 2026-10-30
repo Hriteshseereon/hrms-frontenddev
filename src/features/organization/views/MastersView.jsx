@@ -9,6 +9,17 @@ import {
 } from "@/api/payGradeApi";
 
 import awardMasterApi from "@/api/awardApi";
+import { createOnboardingDocumentApi } from "@/features/recruitment/data/onboarding_document_adapter";
+import {
+  createTerminationTypeApi,
+  createWarningTypeApi,
+  createComplaintTypeApi,
+} from "@/features/exit/data/terminationTypeAdapter";
+import {
+  createPolicyCircularApi,
+  loadPolicyCategories,
+  createWorkdayConfigApi,
+} from "@/features/recruitment/data/recruitmentMasterAdapters";
 import { useSharedList } from "@/lib/shared-list";
 
 import { useEffect, useState } from "react";
@@ -226,13 +237,31 @@ function unwrapRecord(response) {
 
 function unwrapList(response) {
   if (Array.isArray(response)) return response;
-
-  if (Array.isArray(response?.items)) return response.items;
-  if (Array.isArray(response?.results)) return response.results;
-  if (Array.isArray(response?.awards)) return response.awards;
   if (Array.isArray(response?.data)) return response.data;
 
+  // Handles both a plain body and a full axios response ({ data: { items: [...] } })
+  const body =
+    response?.data && typeof response.data === "object"
+      ? response.data
+      : response;
+
+  const keys = ["items", "results", "awards", "documents", "data"];
+  for (const key of keys) {
+    if (Array.isArray(body?.[key])) return body[key];
+  }
+
   return [];
+}
+
+// Maps API fields to the fields the table uses (API is_mandatory -> UI required).
+function normalizeRecord(record) {
+  return {
+    ...record,
+    id: record.id ?? record.award_id,
+    name: record.name ?? "",
+    description: record.description ?? "",
+    required: record.is_mandatory ?? record.required ?? false,
+  };
 }
 
 // Display-only code such as AWD-01. The real API id (UUID) is never changed.
@@ -274,7 +303,7 @@ function MasterTable({
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // GET /awards: load API records when this master has an API.
+  // GET list: load API records when this master has an API.
   useEffect(() => {
     if (!api?.list) return undefined;
 
@@ -291,16 +320,15 @@ function MasterTable({
           setRows(
             list
               .filter((record) => record && typeof record === "object")
-              .map((record) => ({
-                ...record,
-                id: record.id ?? record.award_id,
-                name: record.name ?? "",
-                description: record.description ?? "",
-              }))
+              .map(normalizeRecord)
               .filter((record) => record.id != null)
               .map((record, index) => ({
                 ...record,
-                code: makeCode(prefix, index + 1),
+                // Onboarding documents use the server code (DOC-001).
+                code:
+                  api.useServerCode && record.code
+                    ? record.code
+                    : makeCode(prefix, index + 1),
               })),
           );
         }
@@ -356,43 +384,48 @@ function MasterTable({
         const payload = {
           name: name.trim(),
           description: description.trim(),
+          ...(withRequired ? { required } : {}),
         };
 
         if (api?.update && api?.patch) {
-          const nameChanged = payload.name !== (original?.name ?? "");
-          const descriptionChanged =
-            payload.description !== (original?.description ?? "");
+          // Work out which fields actually changed.
+          const changed = [];
+
+          if (payload.name !== (original?.name ?? "")) changed.push("name");
+          if (payload.description !== (original?.description ?? "")) {
+            changed.push("description");
+          }
+          if (withRequired && payload.required !== Boolean(original?.required)) {
+            changed.push("required");
+          }
 
           let response;
 
-          // Use PATCH when only one field changed.
-          if (nameChanged && !descriptionChanged) {
-            response = await api.patch(editingId, {
-              name: payload.name,
-            });
-          } else if (!nameChanged && descriptionChanged) {
-            response = await api.patch(editingId, {
-              description: payload.description,
-            });
+          // PATCH when exactly one field changed, otherwise PUT.
+          if (changed.length === 1) {
+            const field = changed[0];
+            response = await api.patch(editingId, { [field]: payload[field] });
           } else {
-            // Use PUT when both fields changed or no field changed.
             response = await api.update(editingId, payload);
           }
 
-          const updated = unwrapRecord(response) ?? {
-            ...original,
-            ...payload,
-          };
+          const updatedRaw = unwrapRecord(response);
+          const merged =
+            updatedRaw && typeof updatedRaw === "object"
+              ? normalizeRecord({ ...payload, ...updatedRaw })
+              : payload;
 
           setRows((previous) =>
             previous.map((row) =>
               String(row.id) === String(editingId)
                 ? {
                     ...row,
-                    ...updated,
-                    id: updated.id ?? row.id,
-                    name: updated.name ?? payload.name,
-                    description: updated.description ?? payload.description,
+                    ...merged,
+                    id: merged.id ?? row.id,
+                    code:
+                      api.useServerCode && merged.code
+                        ? merged.code
+                        : row.code,
                   }
                 : row,
             ),
@@ -424,6 +457,7 @@ function MasterTable({
         const response = await api.create({
           name: name.trim(),
           description: description.trim(),
+          ...(withRequired ? { required } : {}),
         });
 
         const created = unwrapRecord(response);
@@ -432,15 +466,15 @@ function MasterTable({
           throw new Error("The server did not return the created record.");
         }
 
-        const newRow = {
+        const newRow = normalizeRecord({
           ...created,
-          id: created.id ?? created.award_id,
           name: created.name ?? name.trim(),
           description: created.description ?? description.trim(),
-        };
+          required: created.is_mandatory ?? created.required ?? required,
+        });
 
         if (newRow.id == null) {
-          throw new Error("The created award response did not include an ID.");
+          throw new Error("The created record response did not include an ID.");
         }
 
         setRows((previous) => {
@@ -451,8 +485,13 @@ function MasterTable({
               return Math.max(max, n);
             }, 0) + 1;
 
+          const code =
+            api.useServerCode && newRow.code
+              ? newRow.code
+              : makeCode(prefix, next);
+
           return [
-            { ...newRow, code: makeCode(prefix, next) },
+            { ...newRow, code },
             ...previous.filter((row) => String(row.id) !== String(newRow.id)),
           ];
         });
@@ -506,7 +545,7 @@ function MasterTable({
     setOpen(true);
   }
 
-  // GET /awards/{award_id}: fetch the full record when View is clicked.
+  // GET by id: fetch the full record when View is clicked.
   async function viewRecord(record) {
     if (!api?.getById) {
       setViewRow(record);
@@ -517,26 +556,30 @@ function MasterTable({
       setSaving(true);
 
       const response = await api.getById(record.id);
-      const detail = unwrapRecord(response);
+      const detailRaw = unwrapRecord(response);
 
-      if (!detail || typeof detail !== "object") {
-        throw new Error("The server did not return the award details.");
+      if (!detailRaw || typeof detailRaw !== "object") {
+        throw new Error("The server did not return the record details.");
       }
+
+      const detail = normalizeRecord(detailRaw);
 
       setViewRow({
         ...record,
         ...detail,
-        id: detail.id ?? detail.award_id ?? record.id,
-        code: record.code,
+        id: detail.id ?? record.id,
+        code: api.useServerCode && detail.code ? detail.code : record.code,
       });
     } catch (error) {
-      toast.error(getErrorMessage(error, "Unable to load award details"));
+      toast.error(
+        getErrorMessage(error, `Unable to load ${title.toLowerCase()} details`),
+      );
     } finally {
       setSaving(false);
     }
   }
 
-  // DELETE /awards/{award_id}: delete the backend record first.
+  // DELETE by id: delete the backend record first.
   async function confirmDelete() {
     if (!deleteRow) return;
 
@@ -1200,6 +1243,9 @@ function PayrollConfigTab() {
   );
 }
 
+// Created once (module level) so the saved configuration is not reloaded on every render.
+const workdayConfigApi = createWorkdayConfigApi();
+
 function WorkdayConfigTab() {
   const [saved, setSaved] = useSharedList("workday-config", [
     "Monday",
@@ -1211,14 +1257,77 @@ function WorkdayConfigTab() {
 
   const [days, setDays] = useState(saved);
 
+  const [configId, setConfigId] = useState(null);
+
+  const [savingConfig, setSavingConfig] = useState(false);
+
+  // true once the GET has finished successfully (even if nothing is saved yet)
+  const [configLoaded, setConfigLoaded] = useState(false);
+
   useEffect(() => {
     setDays(saved);
   }, [saved]);
+
+  // GET /attendance/workday-configurations: load the saved configuration.
+  useEffect(() => {
+    let active = true;
+
+    workdayConfigApi
+      .load()
+      .then((config) => {
+        if (!active) return;
+        setConfigLoaded(true);
+        if (!config) return;
+        setConfigId(config.id);
+        setSaved(config.days);
+      })
+      .catch((error) => {
+        if (active) {
+          toast.error(
+            getErrorMessage(error, "Unable to load workday configuration"),
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+    // Load once when the tab opens. setSaved changes identity on every render, so
+    // listing it here would re-run this effect (and the GET) in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggle = (d) =>
     setDays((p) => (p.includes(d) ? p.filter((x) => x !== d) : [...p, d]));
 
   const dirty = WEEKDAYS.some((d) => days.includes(d) !== saved.includes(d));
+
+  // Nothing exists on the server yet: the default week can be saved as-is (first POST).
+  const needsFirstSave = configLoaded && configId == null;
+
+  // POST when nothing is saved yet, otherwise PATCH only the days that changed.
+  async function saveConfig() {
+    setSavingConfig(true);
+
+    try {
+      const result = await workdayConfigApi.save({
+        id: configId,
+        days,
+        savedDays: saved,
+      });
+
+      if (result?.id != null) setConfigId(result.id);
+
+      setSaved(days);
+      toast.success(`${days.length}-day work week saved`);
+    } catch (error) {
+      toast.error(
+        getErrorMessage(error, "Unable to save workday configuration"),
+      );
+    } finally {
+      setSavingConfig(false);
+    }
+  }
 
   return (
     <Card className="shadow-card">
@@ -1231,11 +1340,10 @@ function WorkdayConfigTab() {
           <Button
             size="sm"
             className="bg-gradient-emerald text-white"
-            disabled={!dirty || days.length === 0}
-            onClick={() => {
-              setSaved(days);
-              toast.success(`${days.length}-day work week saved`);
-            }}
+            disabled={
+              (!dirty && !needsFirstSave) || days.length === 0 || savingConfig
+            }
+            onClick={saveConfig}
           >
             Save Configuration
           </Button>
@@ -1666,12 +1774,37 @@ const ALL_ITEMS = GROUPS.flatMap((g) => g.items);
 const readHash = () =>
   typeof window !== "undefined" ? window.location.hash.replace("#", "") : "";
 
+// Created once (module level) so MasterTable's useEffect doesn't reload on every render.
+const onboardingDocumentApi = createOnboardingDocumentApi();
+// Created once (module level) so CrudSection's useEffect doesn't reload on every render.
+const policyCircularApi = createPolicyCircularApi();
+// Created once (module level) so MasterTable's useEffect doesn't reload on every render.
+const terminationTypeApi = createTerminationTypeApi();
+// Created once (module level) so MasterTable's useEffect doesn't reload on every render.
+const warningTypeApi = createWarningTypeApi();
+// Created once (module level) so MasterTable's useEffect doesn't reload on every render.
+const complaintTypeApi = createComplaintTypeApi();
+
 function Masters() {
   const me = useCurrentUser();
 
   const [tab, setTab] = useState("infrastructure");
 
   const [q, setQ] = useState("");
+
+  // Categories for the Policies & Circulars dropdown (falls back to the built-in list)
+  const [policyCategories, setPolicyCategories] = useState(POLICY_CATEGORIES);
+  useEffect(() => {
+    let alive = true;
+    loadPolicyCategories()
+      .then((list) => {
+        if (alive && list.length) setPolicyCategories(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     const on = () => {
@@ -1790,7 +1923,7 @@ function Masters() {
 
           {tab === "branding" && <OrgSettings />}
 
-                   {tab === "paygrade" && (
+          {tab === "paygrade" && (
             <CrudSection
               icon={Layers}
               title="Pay Grade Definitions"
@@ -1933,6 +2066,7 @@ function Masters() {
               seed={DOCUMENT_MASTER}
               withRequired
               addLabel="Add Document"
+              api={onboardingDocumentApi}
             />
           )}
 
@@ -1950,7 +2084,7 @@ function Masters() {
                   key: "category",
                   label: "Category",
                   type: "select",
-                  options: POLICY_CATEGORIES,
+                  options: policyCategories,
                   required: true,
                   badge: true,
                 },
@@ -1962,6 +2096,7 @@ function Masters() {
                   type: "textarea",
                 },
               ]}
+              api={policyCircularApi}
             />
           )}
 
@@ -2059,10 +2194,11 @@ function Masters() {
               prefix="TTY"
               seed={TERMINATION_TYPE_MASTER}
               addLabel="Add Termination Type"
+              api={terminationTypeApi}
             />
           )}
 
-          {tab === "warning" && (
+                   {tab === "warning" && (
             <MasterTable
               icon={AlertTriangle}
               title="Warning Types"
@@ -2070,6 +2206,7 @@ function Masters() {
               prefix="WTY"
               seed={WARNING_TYPE_MASTER}
               addLabel="Add Warning Type"
+              api={warningTypeApi}
             />
           )}
 
@@ -2081,6 +2218,7 @@ function Masters() {
               prefix="CTY"
               seed={COMPLAINT_TYPE_MASTER}
               addLabel="Add Complaint Type"
+              api={complaintTypeApi}
             />
           )}
 
