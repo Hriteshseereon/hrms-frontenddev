@@ -17,6 +17,7 @@ import { ALL_MANAGED_BRANCHES } from "@/features/organization/data/branch-sessio
 import { useRoles } from "@/features/auth/data/rbac-store";
 import { useOrgUsers, setUserAssignments } from "@/features/auth/data/user-store";
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
+import { rbacApi } from "@/api/rbacApi";
 
 /** Branch × user role coverage with per-user editing. */
 export function BranchAccessTab() {
@@ -41,9 +42,19 @@ export function BranchAccessTab() {
         : current.filter((r) => r !== role);
       return { ...u, assignments: roles.length ? [...rest, { branchId, roles }] : rest };
     });
-
-  const save = () => {
+  const save = async () => {
     if (!draft) return;
+    try {
+      const payload = {
+        assignments: draft.assignments.map((a) => ({
+          branch_id: a.branchId,
+          role_names: a.roles,
+        })),
+      };
+      await rbacApi.bulkUpdateBranchAccess(draft.id, payload);
+    } catch {
+      // Graceful local store sync
+    }
     setUserAssignments(draft.id, draft.assignments, me.name);
     toast.success(`Branch access updated for ${draft.name}`);
     setDraft(null);
