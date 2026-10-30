@@ -1,4 +1,5 @@
 // Performance masters (indicators, indicator categories, goal types, review cycles) — configured from Master Data.
+import { useMemo } from "react";
 import { Target, Layers, Flag, RefreshCw } from "lucide-react";
 import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollTabsList } from "@/components/common/ScrollTabs";
@@ -13,8 +14,13 @@ import {
   REVIEW_CYCLE_ROWS,
   FREQUENCIES,
 } from "@/features/performance/data/performance-data";
+import { createPerformanceIndicatorApi } from "@/features/performance/data/performanceIndicatorAdapter";
 
 export function PerformanceMastersTab() {
+  // useMemo is required: CrudSection reloads whenever the `api` object changes,
+  // so a new object on every render would refetch the list endlessly.
+  const indicatorApi = useMemo(() => createPerformanceIndicatorApi(), []);
+
   return (
     <Tabs defaultValue="indicators">
       <ScrollTabsList>
@@ -39,6 +45,7 @@ export function PerformanceMastersTab() {
           addLabel="Add Indicator"
           idPrefix="PI"
           seed={PERF_INDICATORS}
+          api={indicatorApi}
           fields={[
             { key: "name", label: "Name", required: true, placeholder: "e.g. Sprint Velocity" },
             {
