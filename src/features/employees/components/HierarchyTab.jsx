@@ -14,6 +14,7 @@ import { findEmployee, initials } from "@/features/employees/data/employee-direc
 import { useCurrentUser, userById, allUsers } from "@/features/auth/data/auth-session";
 import { useHrPartnerMap } from "@/features/organization/data/hr-partner";
 import { hodOfDepartment, useDepartments } from "@/features/organization/data/dept-data";
+import { ReportingHierarchyCard } from "@/features/employees/components/ReportingHierarchyCard";
 
 function NodeCard({ node, highlight, onPath, showContact }) {
   return (
@@ -340,8 +341,13 @@ export function HierarchyTab({ employee }) {
   const fullChart =
     ["SuperAdmin", "Admin", "CEO", "COO", "CFO", "CTO", "CHRO", "HR"].includes(me.role) &&
     me.id !== employee.id;
-  if (!fullChart) return <MyReportingLine employee={employee} />;
-  return <FullOrgChart employee={employee} />;
+
+  return (
+    <div className="space-y-6">
+      <ReportingHierarchyCard employee={employee} />
+      {!fullChart ? <MyReportingLine employee={employee} /> : <FullOrgChart employee={employee} />}
+    </div>
+  );
 }
 
 function FullOrgChart({ employee }) {

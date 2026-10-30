@@ -1520,3 +1520,5 @@ export function canOpenPath(role, pathname) {
 
 /** Session change listeners (tenancy layer re-resolves the data namespace when the signed-in user changes). */
 export const onSessionChange = (fn) => subscribe(fn);
+
+export { usePermission, Can } from "@/features/auth/hooks/usePermission";
