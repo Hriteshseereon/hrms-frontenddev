@@ -7,6 +7,8 @@ import {
   patchEmployeeForm,
   resolveApiUrl,
 } from "@/api/employeeApi";
+import { organizationApi } from "@/api/organizationApi";
+import { generateWorkEmail, isDuplicateWorkEmail } from "@/features/employees/data/workEmail";
 import { DocPreviewDialog } from "@/features/employees/components/DocPreviewDialog";
 import { useSearch } from "@/lib/navigation";
 import { captureFiles } from "@/lib/attachments";
@@ -1174,6 +1176,29 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
   const [docFiles, setDocFiles] = useState({});
   const [existingDocs, setExistingDocs] = useState({});
   const [formErrors, setFormErrors] = useState({});
+  // Work email is generated from the organisation + employee name (locked); a duplicate bumps `emailAttempt`.
+  const localOrgName = useOrgs().find((o) => o.id === orgId)?.name;
+  const [apiOrgName, setApiOrgName] = useState("");
+  const [firstNameVal, setFirstNameVal] = useState(init.firstName ?? "");
+  const [lastNameVal, setLastNameVal] = useState(init.lastName ?? "");
+  const [emailAttempt, setEmailAttempt] = useState(0);
+  useEffect(() => {
+    if (isEdit) return undefined;
+    let alive = true;
+    organizationApi
+      .getOrganization()
+      .then((o) => alive && setApiOrgName(o?.name || o?.organisation_name || o?.organization_name || o?.legal_name || ""))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [isEdit]);
+  const generatedWorkEmail = generateWorkEmail({
+    first: firstNameVal,
+    last: lastNameVal,
+    org: apiOrgName || localOrgName,
+    attempt: emailAttempt,
+  });
   const [payComponents, setPayComponents] = useState([]);
   useEffect(() => {
     let alive = true;
@@ -1391,7 +1416,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       return fail("The re-entered account number does not match", "bank");
     if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return fail("IFSC must look like HDFC0001234", "bank");
 
-    const workEmail = v.workEmail?.trim() || v.personalEmail.trim();
+    let workEmail = v.workEmail?.trim() || v.personalEmail.trim();
     if (!workEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(workEmail)) {
       return fail("Enter a valid work email address", "personal");
     }
@@ -1659,9 +1684,33 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
     setFormErrors({});
 
     try {
-      const apiEmployee = isEdit
-        ? await patchEmployeeForm(employee.id, formData)
-        : await createEmployeeApi(formData);
+      let apiEmployee;
+      if (isEdit) {
+        apiEmployee = await patchEmployeeForm(employee.id, formData);
+      } else {
+        // If the generated work email is already registered, regenerate a slightly different one and post again.
+        let attempt = emailAttempt;
+        for (;;) {
+          try {
+            apiEmployee = await createEmployeeApi(formData);
+            break;
+          } catch (err) {
+            if (!isDuplicateWorkEmail(err) || attempt >= 5) throw err;
+            attempt += 1;
+            const taken = workEmail;
+            workEmail = generateWorkEmail({
+              first: v.firstName,
+              last: v.lastName,
+              org: apiOrgName || localOrgName,
+              attempt,
+            });
+            formData.set("work_email", workEmail);
+            setEmailAttempt(attempt);
+            toast.info(`${taken} is already taken — trying ${workEmail}`);
+          }
+        }
+        workEmail = apiEmployee?.work_email || workEmail;
+      }
 
       // Store in Zustand session store distinct from logged-in user scope
       if (!isEdit) useSessionStore.getState().setLastCreatedEmployee(apiEmployee);
@@ -1891,10 +1940,26 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
 
               <FieldRow>
                 <Field label="First Name" required>
-                  <Input name="firstName" defaultValue={init.firstName} placeholder="Ananya" />
+                  <Input
+                    name="firstName"
+                    defaultValue={init.firstName}
+                    placeholder="Ananya"
+                    onChange={(e) => {
+                      setFirstNameVal(e.target.value);
+                      setEmailAttempt(0);
+                    }}
+                  />
                 </Field>
                 <Field label="Last Name" required>
-                  <Input name="lastName" defaultValue={init.lastName} placeholder="Sharma" />
+                  <Input
+                    name="lastName"
+                    defaultValue={init.lastName}
+                    placeholder="Sharma"
+                    onChange={(e) => {
+                      setLastNameVal(e.target.value);
+                      setEmailAttempt(0);
+                    }}
+                  />
                 </Field>
               </FieldRow>
               <FieldRow>
@@ -1959,13 +2024,24 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                 <Field label="Personal Email" required>
                   <Input name="personalEmail" defaultValue={init.personalEmail} type="email" placeholder="ananya@gmail.com" />
                 </Field>
-                <Field label="Work Email">
-                  <Input
-                    name="workEmail" defaultValue={init.workEmail}
-                    disabled={isEdit}
-                    type="email"
-                    placeholder="auto-generated from name if left blank"
-                  />
+                <Field label="Work Email" field="work_email">
+                  {isEdit ? (
+                    <Input name="workEmail" defaultValue={init.workEmail} disabled type="email" />
+                  ) : (
+                    <>
+                      <Input
+                        name="workEmail"
+                        value={generatedWorkEmail}
+                        readOnly
+                        type="email"
+                        placeholder="Generated from the employee name"
+                      />
+                      <p className="text-muted-foreground mt-1 text-[11px]">
+                        Auto-generated — create this Gmail account for the employee. If it is already
+                        taken, a similar address is chosen on save.
+                      </p>
+                    </>
+                  )}
                 </Field>
               </FieldRow>
               <FieldRow>

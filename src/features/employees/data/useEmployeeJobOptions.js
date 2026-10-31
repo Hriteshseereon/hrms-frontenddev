@@ -46,7 +46,7 @@ export function useEmployeeJobOptions({ deptId, companyId, orgId }) {
       });
     (async () => {
       const [dRes, rRes, sRes] = await Promise.all([
-        safe(() => departmentApi.getDepartments({ page_size: 200 })),
+        safe(() => departmentApi.getDepartments()),
         safe(() => rbacApi.getRoles()),
         safe(() =>
           SuperAdmin_shift.getAll({
@@ -82,18 +82,20 @@ export function useEmployeeJobOptions({ deptId, companyId, orgId }) {
     };
   }, [orgId]);
 
+  // Same call the Designation master screen makes (no query params — a page_size above the backend cap made the
+  // list come back empty); the department filter is applied here.
+  const [allDesignations, setAllDesignations] = useState([]);
   useEffect(() => {
     let alive = true;
-    setDesignations([]);
-    if (!deptId) return undefined;
     designationApi
-      .getDesignations({ department_id: deptId, page_size: 200 })
+      .getDesignations()
       .then((res) => {
         if (!alive) return;
-        setDesignations(
-          listOf(res, ["items", "designations", "data"]).map((d) => ({
+        setAllDesignations(
+          listOf(res, ["items", "results", "designations", "data"]).map((d) => ({
             id: d.id,
             name: d.designation_name ?? d.name ?? "",
+            departmentId: d.department_id ?? "",
           })),
         );
       })
@@ -101,7 +103,12 @@ export function useEmployeeJobOptions({ deptId, companyId, orgId }) {
     return () => {
       alive = false;
     };
-  }, [deptId]);
+  }, []);
+  useEffect(() => {
+    setDesignations(
+      deptId ? allDesignations.filter((d) => String(d.departmentId) === String(deptId)) : [],
+    );
+  }, [deptId, allDesignations]);
 
   useEffect(() => {
     let alive = true;
