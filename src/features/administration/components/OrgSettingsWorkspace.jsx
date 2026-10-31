@@ -1,4 +1,3 @@
-OrgSettingsWorkspace.jsx
 import { useEffect, useRef, useState } from "react";
 import {
   Settings,
@@ -79,7 +78,10 @@ const useToggles = (orgId) => ({ ...DEFAULT_TOGGLES, ...(togglesStore.use()[orgI
 const setToggle = (orgId, patch) =>
   togglesStore.set((p) => ({ ...p, [orgId]: { ...(p[orgId] ?? {}), ...patch } }));
 
-
+/**
+ * Settings row. `stack` puts the label/hint on top and the control on its own full-width line
+ * (used for long text fields so they never get clipped or overflow the card).
+ */
 function Row({ label, hint, children, stack = false }) {
   return (
     <div
