@@ -19,7 +19,7 @@ import {
   Users,
   MessagesSquare,
   ListChecks,
-  Palette,
+  // Palette,
   Building,
   FileSignature,
 } from "lucide-react";
@@ -124,9 +124,9 @@ export function RecruitmentMasters() {
           <TabsTrigger value="checklists">
             <ListChecks className="h-4 w-4" /> Onboarding Checklists
           </TabsTrigger>
-          <TabsTrigger value="brand">
+          {/* <TabsTrigger value="brand">
             <Palette className="h-4 w-4" /> Brand Settings
-          </TabsTrigger>
+          </TabsTrigger> */}
           <TabsTrigger value="about">
             <Building className="h-4 w-4" /> About Company
           </TabsTrigger>
@@ -226,9 +226,9 @@ export function RecruitmentMasters() {
           />
         </TabsContent>
 
-        <TabsContent value="brand" className="mt-6">
+        {/* <TabsContent value="brand" className="mt-6">
           <BrandSettings />
-        </TabsContent>
+        </TabsContent> */}
         <TabsContent value="about" className="mt-6">
           <AboutCompany />
         </TabsContent>
@@ -240,51 +240,51 @@ export function RecruitmentMasters() {
   );
 }
 
-function BrandSettings() {
-  const orgId = useActiveOrgId();
-  const saved = useCareerSettings(orgId);
-  const [title, setTitle] = useState(saved.title);
-  const [footer, setFooter] = useState(saved.footer);
-  useEffect(() => {
-    setTitle(saved.title);
-    setFooter(saved.footer);
-  }, [saved.title, saved.footer]);
-  return (
-    <Card className="shadow-card">
-      <CardContent className="space-y-4 p-6">
-        <div className="font-semibold">Career Portal Brand Settings</div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-xs">Logo</Label>
-            <Input type="file" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-xs">Favicon</Label>
-            <Input type="file" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-xs">Title</Label>
-            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-xs">Footer Text</Label>
-            <Input value={footer} onChange={(e) => setFooter(e.target.value)} />
-          </div>
-        </div>
-        <Button
-          className="bg-gradient-emerald text-white"
-          disabled={!title.trim()}
-          onClick={() => {
-            saveCareerSettings(orgId, { title: title.trim(), footer: footer.trim() });
-            toast.success("Brand settings saved");
-          }}
-        >
-          Save brand settings
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
+// function BrandSettings() {
+//   const orgId = useActiveOrgId();
+//   const saved = useCareerSettings(orgId);
+//   const [title, setTitle] = useState(saved.title);
+//   const [footer, setFooter] = useState(saved.footer);
+//   useEffect(() => {
+//     setTitle(saved.title);
+//     setFooter(saved.footer);
+//   }, [saved.title, saved.footer]);
+//   return (
+//     <Card className="shadow-card">
+//       <CardContent className="space-y-4 p-6">
+//         <div className="font-semibold">Career Portal Brand Settings</div>
+//         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+//           <div className="space-y-1.5">
+//             <Label className="text-muted-foreground text-xs">Logo</Label>
+//             <Input type="file" />
+//           </div>
+//           <div className="space-y-1.5">
+//             <Label className="text-muted-foreground text-xs">Favicon</Label>
+//             <Input type="file" />
+//           </div>
+//           <div className="space-y-1.5">
+//             <Label className="text-muted-foreground text-xs">Title</Label>
+//             <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+//           </div>
+//           <div className="space-y-1.5">
+//             <Label className="text-muted-foreground text-xs">Footer Text</Label>
+//             <Input value={footer} onChange={(e) => setFooter(e.target.value)} />
+//           </div>
+//         </div>
+//         <Button
+//           className="bg-gradient-emerald text-white"
+//           disabled={!title.trim()}
+//           onClick={() => {
+//             saveCareerSettings(orgId, { title: title.trim(), footer: footer.trim() });
+//             toast.success("Brand settings saved");
+//           }}
+//         >
+//           Save brand settings
+//         </Button>
+//       </CardContent>
+//     </Card>
+//   );
+// }
 
 function AboutCompany() {
   const orgId = useActiveOrgId();

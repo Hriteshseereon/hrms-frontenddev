@@ -1,4 +1,5 @@
 // Performance masters (indicators, indicator categories, goal types, review cycles) — configured from Master Data.
+import { useMemo } from "react";
 import { Target, Layers, Flag, RefreshCw } from "lucide-react";
 import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollTabsList } from "@/components/common/ScrollTabs";
@@ -13,8 +14,20 @@ import {
   REVIEW_CYCLE_ROWS,
   FREQUENCIES,
 } from "@/features/performance/data/performance-data";
-
+import {
+  createPerformanceIndicatorApi,
+  createIndicatorCategoryApi,
+  createGoalTypeApi,
+  createReviewCycleApi,
+} from "@/features/performance/data/performanceIndicatorAdapter";
 export function PerformanceMastersTab() {
+  // useMemo is required: CrudSection reloads whenever the `api` object changes,
+  // so a new object on every render would refetch the list endlessly.
+  const indicatorApi = useMemo(() => createPerformanceIndicatorApi(), []);
+    const categoryApi = useMemo(() => createIndicatorCategoryApi(), []);
+      const goalTypeApi = useMemo(() => createGoalTypeApi(), []);
+        const reviewCycleApi = useMemo(() => createReviewCycleApi(), []);
+
   return (
     <Tabs defaultValue="indicators">
       <ScrollTabsList>
@@ -39,6 +52,7 @@ export function PerformanceMastersTab() {
           addLabel="Add Indicator"
           idPrefix="PI"
           seed={PERF_INDICATORS}
+          api={indicatorApi}
           fields={[
             { key: "name", label: "Name", required: true, placeholder: "e.g. Sprint Velocity" },
             {
@@ -76,6 +90,7 @@ export function PerformanceMastersTab() {
           addLabel="Add Category"
           idPrefix="IC"
           seed={INDICATOR_CATEGORY_ROWS}
+          api={categoryApi}
           fields={[
             { key: "name", label: "Name", required: true },
             {
@@ -98,6 +113,7 @@ export function PerformanceMastersTab() {
           addLabel="Add Goal Type"
           idPrefix="GT"
           seed={GOAL_TYPE_ROWS}
+          api={goalTypeApi}
           fields={[
             { key: "name", label: "Name", required: true },
             {
@@ -120,6 +136,7 @@ export function PerformanceMastersTab() {
           addLabel="Add Cycle"
           idPrefix="RC"
           seed={REVIEW_CYCLE_ROWS}
+          api={reviewCycleApi}
           fields={[
             { key: "name", label: "Name", required: true },
             {
