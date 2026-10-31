@@ -102,7 +102,7 @@ import { RoundsWorkspace } from "@/features/recruitment/components/RoundsWorkspa
 
 import { LocationsWorkspace } from "@/features/recruitment/components/LocationsWorkspace";
 
-import { DeskSettings } from "@/features/helpdesk/components/DeskSettingsWorkspace";
+// import { DeskSettings } from "@/features/helpdesk/components/DeskSettingsWorkspace";
 
 import { ApprovalsWorkspace } from "@/features/administration/components/ApprovalsWorkspace";
 
@@ -1735,26 +1735,26 @@ const GROUPS = [
       },
     ],
   },
-  {
-    group: "Helpdesk & workflows",
-    items: [
-      {
-        key: "helpdesk",
-        label: "Helpdesk desks, categories, SLA",
-        icon: LifeBuoy,
-      },
-      {
-        key: "approvals",
-        label: "Approval engine (workflows per module)",
-        icon: GitBranch,
-      },
-      {
-        key: "hrpolicy",
-        label: "HR policy & notification rules",
-        icon: BellRing,
-      },
-    ],
-  },
+  // {
+  //   group: "Helpdesk & workflows",
+  //   items: [
+  //     {
+  //       key: "helpdesk",
+  //       label: "Helpdesk desks, categories, SLA",
+  //       icon: LifeBuoy,
+  //     },
+  //     {
+  //       key: "approvals",
+  //       label: "Approval engine (workflows per module)",
+  //       icon: GitBranch,
+  //     },
+  //     {
+  //       key: "hrpolicy",
+  //       label: "HR policy & notification rules",
+  //       icon: BellRing,
+  //     },
+  //   ],
+  // },
   // {
   //   group: "Access & security",
   //   items: [
@@ -2225,7 +2225,7 @@ function Masters() {
             />
           )}
 
-          {tab === "helpdesk" && <DeskSettings />}
+          {/* {tab === "helpdesk" && <DeskSettings />} */}
 
           {tab === "approvals" && <ApprovalsWorkspace />}
 
