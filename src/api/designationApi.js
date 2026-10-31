@@ -2,8 +2,8 @@
 import SuperAdmin_axios from "./SuperAdmin_axios";
 
 const designationApi = {
-  getDesignations() {
-    return SuperAdmin_axios.get("/super-admin/designations");
+  getDesignations(params) {
+    return SuperAdmin_axios.get("/super-admin/designations", { params });
   },
 
   getDesignationById(designationId) {
