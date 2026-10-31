@@ -2,8 +2,8 @@
 import SuperAdmin_axios from "./SuperAdmin_axios";
 
 const departmentApi = {
-  getDepartments() {
-    return SuperAdmin_axios.get("/super-admin/departments");
+  getDepartments(params) {
+    return SuperAdmin_axios.get("/super-admin/departments", { params });
   },
 
   getDepartmentById(departmentId) {
