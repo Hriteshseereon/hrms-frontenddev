@@ -166,3 +166,172 @@ export function createPerformanceIndicatorApi(organizationId) {
     remove: (id) => call(() => service.remove(id, scope)),
   };
 }
+
+/* ---------- indicator categories ----------
+   UI name / status / description match the API field names, so no renaming is needed.
+   The API has no PATCH, so CrudSection shows only the PUT button.
+   Scope IDs are query params only. */
+export function createIndicatorCategoryApi(organizationId) {
+  const service = SuperAdmin_performanceIndicator;
+  const scope = organizationId ? { organization_id: organizationId } : undefined;
+
+  const toBody = (form) => ({
+    name: clean(form.name),
+    status: clean(form.status),
+    description: clean(form.description),
+  });
+
+  return {
+    // No codePrefix: the Code column shows the server's own `code`.
+
+    // API record -> CrudSection row
+    fromApi: (record) => ({
+      id: record.id,
+      _apiId: record.id,
+      code: record.code || undefined,
+      name: record.name ?? "",
+      status: record.status ?? "",
+      description: record.description ?? "",
+    }),
+
+    // CrudSection form -> API body
+    toPayload: toBody,
+
+    // GET /performance/indicator-categories
+    list: () =>
+      call(() => service.getIndicatorCategories({ ...scope, page: 1, page_size: LIST_PAGE_SIZE })),
+
+    // GET /performance/indicator-categories/{id}
+    getById: (id) => call(() => service.getIndicatorCategoryById(id, scope)),
+
+    // POST /performance/indicator-categories
+    create: (payload) => call(() => service.createIndicatorCategory(payload, scope)),
+
+    // PUT /performance/indicator-categories/{id}
+    update: (id, payload) => call(() => service.updateIndicatorCategory(id, payload, scope)),
+
+    // DELETE /performance/indicator-categories/{id}
+    remove: (id) => call(() => service.removeIndicatorCategory(id, scope)),
+  };
+}
+/* ---------- goal types ----------
+   UI name / status / description match the API field names, so no renaming is needed.
+   The API has PATCH, so CrudSection shows both the PATCH and PUT buttons.
+   Scope IDs are query params only. */
+export function createGoalTypeApi(organizationId) {
+  const service = SuperAdmin_performanceIndicator;
+  const scope = organizationId ? { organization_id: organizationId } : undefined;
+
+  const toBody = (form) => ({
+    name: clean(form.name),
+    status: clean(form.status),
+    description: clean(form.description),
+  });
+
+  return {
+    // No codePrefix: the Code column shows the server's own `code`.
+
+    // API record -> CrudSection row
+    fromApi: (record) => ({
+      id: record.id,
+      _apiId: record.id,
+      code: record.code || undefined,
+      name: record.name ?? "",
+      status: record.status ?? "",
+      description: record.description ?? "",
+    }),
+
+    // CrudSection form -> API body (POST / PUT)
+    toPayload: toBody,
+
+    // Only the fields that changed (PATCH)
+    toPatchPayload: (form, existingRow) => {
+      const next = toBody(form);
+      const patch = {};
+      Object.keys(next).forEach((key) => {
+        if (next[key] !== clean(existingRow?.[key])) patch[key] = next[key];
+      });
+      return patch;
+    },
+
+    // GET /performance/goal-types
+    list: () => call(() => service.getGoalTypes({ ...scope, page: 1, page_size: LIST_PAGE_SIZE })),
+
+    // GET /performance/goal-types/{id}
+    getById: (id) => call(() => service.getGoalTypeById(id, scope)),
+
+    // POST /performance/goal-types
+    create: (payload) => call(() => service.createGoalType(payload, scope)),
+
+    // PUT /performance/goal-types/{id}
+    update: (id, payload) => call(() => service.updateGoalType(id, payload, scope)),
+
+    // PATCH /performance/goal-types/{id}
+    patch: (id, payload) => call(() => service.patchGoalType(id, payload, scope)),
+
+    // DELETE /performance/goal-types/{id}
+    remove: (id) => call(() => service.removeGoalType(id, scope)),
+  };
+}
+/* ---------- review cycles ----------
+   UI name / frequency / status / description match the API field names, so no renaming is needed.
+   The API has PATCH, so CrudSection shows both the PATCH and PUT buttons.
+   Scope IDs are query params only. */
+export function createReviewCycleApi(organizationId) {
+  const service = SuperAdmin_performanceIndicator;
+  const scope = organizationId ? { organization_id: organizationId } : undefined;
+
+  const toBody = (form) => ({
+    name: clean(form.name),
+    frequency: clean(form.frequency),
+    status: clean(form.status),
+    description: clean(form.description),
+  });
+
+  return {
+    // No codePrefix: the Code column shows the server's own `code`.
+
+    // API record -> CrudSection row
+    fromApi: (record) => ({
+      id: record.id,
+      _apiId: record.id,
+      code: record.code || undefined,
+      name: record.name ?? "",
+      frequency: record.frequency ?? "",
+      status: record.status ?? "",
+      description: record.description ?? "",
+    }),
+
+    // CrudSection form -> API body (POST / PUT)
+    toPayload: toBody,
+
+    // Only the fields that changed (PATCH)
+    toPatchPayload: (form, existingRow) => {
+      const next = toBody(form);
+      const patch = {};
+      Object.keys(next).forEach((key) => {
+        if (next[key] !== clean(existingRow?.[key])) patch[key] = next[key];
+      });
+      return patch;
+    },
+
+    // GET /performance/review-cycles
+    list: () =>
+      call(() => service.getReviewCycles({ ...scope, page: 1, page_size: LIST_PAGE_SIZE })),
+
+    // GET /performance/review-cycles/{id}
+    getById: (id) => call(() => service.getReviewCycleById(id, scope)),
+
+    // POST /performance/review-cycles
+    create: (payload) => call(() => service.createReviewCycle(payload, scope)),
+
+    // PUT /performance/review-cycles/{id}
+    update: (id, payload) => call(() => service.updateReviewCycle(id, payload, scope)),
+
+    // PATCH /performance/review-cycles/{id}
+    patch: (id, payload) => call(() => service.patchReviewCycle(id, payload, scope)),
+
+    // DELETE /performance/review-cycles/{id}
+    remove: (id) => call(() => service.removeReviewCycle(id, scope)),
+  };
+}

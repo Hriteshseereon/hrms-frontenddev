@@ -65,20 +65,21 @@ import {
   TimesheetFormatsTab,
 } from "@/features/organization/components/MasterExtras";
 
-import { GeofencingTab } from "@/features/organization/components/GeofencingTab";
+// import { GeofencingTab } from "@/features/organization/components/GeofencingTab";
 
 import { AssetMasterTab } from "@/features/organization/components/AssetMasterTab";
 
 import { HandbookTab } from "@/features/organization/components/HandbookTab";
 
-import {
-  GrievanceRoutingCard,
-  LoanPolicyCard,
-} from "@/features/organization/components/PolicyCards";
+// import {
+//   GrievanceRoutingCard,
+//   LoanPolicyCard,
+// } from "@/features/organization/components/PolicyCards";
+import { LoanPolicyCard } from "@/features/organization/components/PolicyCards";
 
 import { PerformanceMastersTab } from "@/features/performance/components/PerformanceMasters";
 
-import { FnfConfigPanel } from "@/features/exit/components/SeparationPieces";
+// import { FnfConfigPanel } from "@/features/exit/components/SeparationPieces";
 
 import { ShiftsTab } from "@/features/attendance/components/ShiftsTab";
 
@@ -89,7 +90,7 @@ import {
   StatePolicyTab,
   StatutoryConfigTab,
 } from "@/features/payroll/components/PolicyTabs";
-import { Infrastructure } from "@/features/organization/components/InfrastructureWorkspace";
+// import { Infrastructure } from "@/features/organization/components/InfrastructureWorkspace";
 
 import { GroupsWorkspace } from "@/features/organization/components/GroupsWorkspace";
 
@@ -107,7 +108,7 @@ import { ApprovalsWorkspace } from "@/features/administration/components/Approva
 
 import { NotificationCentre } from "@/features/communications/components/NotificationCentreWorkspace";
 
-import { RolesHub } from "@/features/administration/components/RolesHubWorkspace";
+// import { RolesHub } from "@/features/administration/components/RolesHubWorkspace";
 
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
 
@@ -1551,11 +1552,11 @@ const GROUPS = [
   {
     group: "Organisation",
     items: [
-      {
-        key: "infrastructure",
-        label: "Infrastructure — branches, buildings, departments, designations",
-        icon: Building,
-      },
+      // {
+      //   key: "infrastructure",
+      //   label: "Infrastructure — branches, buildings, departments, designations",
+      //   icon: Building,
+      // },
       {
         key: "entities",
         label: "Group, entities & branches",
@@ -1659,43 +1660,43 @@ const GROUPS = [
       },
     ],
   },
-  {
-    group: "Payroll & statutory",
-    items: [
-      {
-        key: "salaryconfig",
-        label: "Salary configuration & payroll policy",
-        icon: Wallet,
-        perm: "payroll.manage",
-      },
-      {
-        key: "payroll",
-        label: "Pay components",
-        icon: Coins,
-        perm: "payroll.manage",
-      },
-      {
-        key: "statutory",
-        label: "Statutory configuration — PF methods, ESI, TDS",
-        icon: ShieldCheck,
-        perm: "statutory.configure",
-      },
-      {
-        key: "states",
-        label: "State policies — PT, LWF, minimum wage",
-        icon: MapPinned,
-        perm: "statutory.configure",
-      },
-      { key: "insurance", label: "Insurance & benefit plans", icon: ShieldPlus },
-      {
-        key: "loanpolicy",
-        label: "Loan & advance policy",
-        icon: Wallet,
-        perm: "finance.manage",
-      },
-      { key: "reimcat", label: "Reimbursement categories", icon: Receipt },
-    ],
-  },
+  // {
+  //   group: "Payroll & statutory",
+  //   items: [
+  //     {
+  //       key: "salaryconfig",
+  //       label: "Salary configuration & payroll policy",
+  //       icon: Wallet,
+  //       perm: "payroll.manage",
+  //     },
+  //     {
+  //       key: "payroll",
+  //       label: "Pay components",
+  //       icon: Coins,
+  //       perm: "payroll.manage",
+  //     },
+  //     {
+  //       key: "statutory",
+  //       label: "Statutory configuration — PF methods, ESI, TDS",
+  //       icon: ShieldCheck,
+  //       perm: "statutory.configure",
+  //     },
+  //     {
+  //       key: "states",
+  //       label: "State policies — PT, LWF, minimum wage",
+  //       icon: MapPinned,
+  //       perm: "statutory.configure",
+  //     },
+  //     { key: "insurance", label: "Insurance & benefit plans", icon: ShieldPlus },
+  //     {
+  //       key: "loanpolicy",
+  //       label: "Loan & advance policy",
+  //       icon: Wallet,
+  //       perm: "finance.manage",
+  //     },
+  //     { key: "reimcat", label: "Reimbursement categories", icon: Receipt },
+  //   ],
+  // },
   {
     group: "Performance",
     items: [
@@ -1719,12 +1720,12 @@ const GROUPS = [
   {
     group: "Exit, cases & grievance",
     items: [
-      { key: "fnf", label: "Exit, gratuity & F&F configuration", icon: UserX },
-      {
-        key: "grievance",
-        label: "Grievance routing & SLA",
-        icon: MessageSquareWarning,
-      },
+      // { key: "fnf", label: "Exit, gratuity & F&F configuration", icon: UserX },
+      // {
+      //   key: "grievance",
+      //   label: "Grievance routing & SLA",
+      //   icon: MessageSquareWarning,
+      // },
       { key: "termination", label: "Termination types", icon: UserX },
       { key: "warning", label: "Warning types", icon: AlertTriangle },
       {
@@ -1754,19 +1755,19 @@ const GROUPS = [
       },
     ],
   },
-  {
-    group: "Access & security",
-    items: [
-      {
-        key: "roles",
-        label: "Roles & permissions",
-        icon: ShieldCheck,
-        perm: "role.manage",
-      },
-      { key: "ip", label: "IP restrictions", icon: ShieldCheck },
-      { key: "geofence", label: "Geofencing", icon: MapPinned },
-    ],
-  },
+  // {
+  //   group: "Access & security",
+  //   items: [
+  //     {
+  //       key: "roles",
+  //       label: "Roles & permissions",
+  //       icon: ShieldCheck,
+  //       perm: "role.manage",
+  //     },
+  //     { key: "ip", label: "IP restrictions", icon: ShieldCheck },
+  //     { key: "geofence", label: "Geofencing", icon: MapPinned },
+  //   ],
+  // },
 ];
 
 const ALL_ITEMS = GROUPS.flatMap((g) => g.items);
@@ -1788,7 +1789,9 @@ const complaintTypeApi = createComplaintTypeApi();
 function Masters() {
   const me = useCurrentUser();
 
-  const [tab, setTab] = useState("infrastructure");
+  // const [tab, setTab] = useState("infrastructure");
+  // const [tab, setTab] = useState("entities");
+  const [tab, setTab] = useState("branding");
 
   const [q, setQ] = useState("");
 
@@ -1917,7 +1920,7 @@ function Masters() {
             <span className="text-foreground font-medium">{active?.label}</span>
           </div>
 
-          {tab === "infrastructure" && <Infrastructure />}
+          {/* {tab === "infrastructure" && <Infrastructure />} */}
 
           {tab === "entities" && <GroupsWorkspace />}
 
@@ -2135,7 +2138,7 @@ function Masters() {
 
           {tab === "salaryconfig" && <SalaryConfigTab />}
 
-          {tab === "payroll" && <PayrollConfigTab />}
+          {/* {tab === "payroll" && <PayrollConfigTab />} */}
 
           {tab === "statutory" && <StatutoryConfigTab />}
 
@@ -2182,9 +2185,9 @@ function Masters() {
 
           {tab === "assetmaster" && <AssetMasterTab />}
 
-          {tab === "fnf" && <FnfConfigPanel />}
+          {/* {tab === "fnf" && <FnfConfigPanel />} */}
 
-          {tab === "grievance" && <GrievanceRoutingCard />}
+          {/* {tab === "grievance" && <GrievanceRoutingCard />} */}
 
           {tab === "termination" && (
             <MasterTable
@@ -2228,11 +2231,11 @@ function Masters() {
 
           {tab === "hrpolicy" && <NotificationCentre />}
 
-          {tab === "roles" && <RolesHub />}
+          {/* {tab === "roles" && <RolesHub />}
 
           {tab === "ip" && <IpRestrictTab />}
 
-          {tab === "geofence" && <GeofencingTab />}
+          {tab === "geofence" && <GeofencingTab />} */}
         </div>
       </div>
     </div>
