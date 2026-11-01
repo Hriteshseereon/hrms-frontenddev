@@ -1,8 +1,9 @@
-// HR punch regularisation: close missed punch-outs and correct / add a punch for an employee. Employees are told to
-// "ask HR to regularise" an open punch — this is where HR does it.
-import { useMemo, useState } from "react";
+// HR direct correction (HR / admin only): close missed punch-outs, correct a punch or add a missed one — all through the API.
+import { useCallback, useEffect, useState } from "react";
 import { Wrench } from "lucide-react";
 import { toast } from "sonner";
+import { attendanceApi } from "@/api/attendanceApi";
+import { getEmployees } from "@/api/employeeApi";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,22 +17,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useCurrentUser } from "@/features/auth/data/auth-session";
-import { useScopedEmployees } from "@/features/employees/components/CasePieces";
-import {
-  addRegularisedPunch,
-  missedPunchOuts,
-  regularisePunch,
-  todayIso,
-  usePunches,
-} from "@/features/attendance/data/attendance-self";
+import { listOf } from "@/features/employees/data/useEmployeeJobOptions";
+import { apiError, itemsOf } from "@/features/attendance/components/RegularisationPieces";
+
+const hhmm = (t) => (t ? String(t).slice(0, 5) : "");
+const todayIso = () => new Date().toLocaleDateString("en-CA");
 
 export function PunchCorrectionsCard() {
-  const me = useCurrentUser();
-  const punches = usePunches();
-  const employees = useScopedEmployees();
-  const ids = useMemo(() => new Set(employees.map((e) => e.id)), [employees]);
-  const missed = missedPunchOuts(punches).filter((p) => ids.has(p.empId));
+  const [missed, setMissed] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [forbidden, setForbidden] = useState(false);
 
   const [outs, setOuts] = useState({});
   const [empId, setEmpId] = useState("");
@@ -40,29 +35,101 @@ export function PunchCorrectionsCard() {
   const [outAt, setOutAt] = useState("18:30");
   const [nextDay, setNextDay] = useState(false);
   const [reason, setReason] = useState("");
+  const [existing, setExisting] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  const existing = punches
-    .filter((p) => p.empId === empId && p.date === date)
-    .sort((a, b) => (a.inAt < b.inAt ? 1 : -1))[0];
+  const loadMissed = useCallback(async () => {
+    try {
+      setMissed(itemsOf(await attendanceApi.listPunches({ missed: true, page: 1, limit: 50 })));
+    } catch (err) {
+      if (err?.response?.status === 403) setForbidden(true);
+    }
+  }, []);
 
-  const closeMissed = (p) => {
+  useEffect(() => {
+    loadMissed();
+    getEmployees({ page: 1, limit: 100 })
+      .then((res) => setEmployees(listOf(res, ["items", "employees", "data"])))
+      .catch(() => {});
+  }, [loadMissed]);
+
+  // A punch already on that day means "correct it"; otherwise the form adds a missed punch.
+  useEffect(() => {
+    setExisting(null);
+    if (!empId || !date) return undefined;
+    let alive = true;
+    attendanceApi
+      .listPunches({ employee_id: empId, from: date, to: date, page: 1, limit: 5 })
+      .then((res) => {
+        if (!alive) return;
+        const p = itemsOf(res)[0] ?? null;
+        setExisting(p);
+        if (p) {
+          setInAt(hhmm(p.in_time) || "09:30");
+          setOutAt(hhmm(p.out_time) || "18:30");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [empId, date]);
+
+  const fail = (err) => {
+    const { fields, general, status } = apiError(err);
+    toast.error(status === 423 ? "Attendance for that month is locked" : fields.reason || general);
+  };
+
+  const closeMissed = async (p) => {
     const o = outs[p.id] ?? {};
-    const r = regularisePunch(
-      p.id,
-      { inAt: p.inAt, outAt: o.outAt ?? "", nextDay: !!o.nextDay, reason: o.reason ?? "" },
-      me,
-    );
-    toast[r.ok ? "success" : "error"](r.message);
+    setSaving(true);
+    try {
+      await attendanceApi.regularisePunch(p.id, {
+        out_time: o.outAt,
+        next_day: !!o.nextDay,
+        reason: (o.reason ?? "").trim(),
+      });
+      toast.success("Punch closed — the employee has been notified");
+      await loadMissed();
+    } catch (err) {
+      fail(err);
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const save = () => {
-    const emp = employees.find((e) => e.id === empId);
-    const r = existing
-      ? regularisePunch(existing.id, { inAt, outAt, nextDay, reason }, me)
-      : addRegularisedPunch({ empId, employee: emp?.name ?? empId, date, inAt, outAt, reason }, me);
-    toast[r.ok ? "success" : "error"](r.message);
-    if (r.ok) setReason("");
+  const save = async () => {
+    setSaving(true);
+    try {
+      if (existing) {
+        await attendanceApi.regularisePunch(existing.id, {
+          out_time: outAt,
+          in_time: inAt,
+          next_day: nextDay,
+          reason: reason.trim(),
+        });
+        toast.success("Punch corrected");
+      } else {
+        await attendanceApi.addPunch({
+          employee_id: empId,
+          date,
+          in_time: inAt,
+          out_time: outAt,
+          next_day: nextDay,
+          reason: reason.trim(),
+        });
+        toast.success("Missed punch added");
+      }
+      setReason("");
+      await loadMissed();
+    } catch (err) {
+      fail(err);
+    } finally {
+      setSaving(false);
+    }
   };
+
+  if (forbidden) return null;
 
   return (
     <Card className="shadow-card">
@@ -82,26 +149,25 @@ export function PunchCorrectionsCard() {
                 className="border-border flex flex-wrap items-end gap-2 rounded-lg border p-2 text-xs"
               >
                 <div className="min-w-[160px]">
-                  <div className="font-semibold">{p.employee}</div>
+                  <div className="font-semibold">{p.employee_name}</div>
                   <div className="text-muted-foreground">
-                    {p.date} · in {p.inAt} · {p.source}
+                    {p.date} · in {hhmm(p.in_time)} · {p.source}
                   </div>
+                  {p.regularisation && (
+                    <div className="text-gold">Employee request: {p.regularisation.status}</div>
+                  )}
                 </div>
                 <Input
                   type="time"
                   className="h-8 w-full sm:w-28"
                   aria-label="Out time"
                   value={outs[p.id]?.outAt ?? ""}
-                  onChange={(e) =>
-                    setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], outAt: e.target.value } }))
-                  }
+                  onChange={(e) => setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], outAt: e.target.value } }))}
                 />
                 <label className="flex items-center gap-1">
                   <Checkbox
                     checked={!!outs[p.id]?.nextDay}
-                    onCheckedChange={(v) =>
-                      setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], nextDay: !!v } }))
-                    }
+                    onCheckedChange={(v) => setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], nextDay: !!v } }))}
                   />
                   next day
                 </label>
@@ -109,11 +175,15 @@ export function PunchCorrectionsCard() {
                   className="h-8 min-w-0 flex-1"
                   placeholder="Reason (required)"
                   value={outs[p.id]?.reason ?? ""}
-                  onChange={(e) =>
-                    setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], reason: e.target.value } }))
-                  }
+                  onChange={(e) => setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], reason: e.target.value } }))}
                 />
-                <Button size="sm" variant="outline" className="h-8" onClick={() => closeMissed(p)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8"
+                  disabled={saving || !outs[p.id]?.outAt || !outs[p.id]?.reason?.trim()}
+                  onClick={() => closeMissed(p)}
+                >
                   Close punch
                 </Button>
               </div>
@@ -130,8 +200,9 @@ export function PunchCorrectionsCard() {
               </SelectTrigger>
               <SelectContent>
                 {employees.map((e) => (
-                  <SelectItem key={e.id} value={e.id}>
-                    {e.name} · {e.id}
+                  <SelectItem key={e.id} value={String(e.id)}>
+                    {[e.first_name, e.last_name].filter(Boolean).join(" ") || e.work_email}
+                    {e.employee_code ? ` · ${e.employee_code}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -139,12 +210,7 @@ export function PunchCorrectionsCard() {
           </div>
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-xs">Date</Label>
-            <Input
-              type="date"
-              max={todayIso()}
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-            />
+            <Input type="date" max={todayIso()} value={date} onChange={(e) => setDate(e.target.value)} />
           </div>
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-xs">In</Label>
@@ -155,11 +221,7 @@ export function PunchCorrectionsCard() {
             <Input type="time" value={outAt} onChange={(e) => setOutAt(e.target.value)} />
           </div>
           <label className="flex items-end gap-2 pb-2 text-xs">
-            <Checkbox
-              checked={nextDay}
-              disabled={!existing}
-              onCheckedChange={(v) => setNextDay(!!v)}
-            />
+            <Checkbox checked={nextDay} onCheckedChange={(v) => setNextDay(!!v)} />
             Out next day
           </label>
           <div className="space-y-1.5 sm:col-span-4">
@@ -173,10 +235,10 @@ export function PunchCorrectionsCard() {
           <div className="flex items-end sm:col-span-2">
             <Button
               className="bg-gradient-emerald w-full text-white"
-              disabled={!empId || !reason.trim()}
+              disabled={!empId || !reason.trim() || saving}
               onClick={save}
             >
-              {existing ? `Correct punch ${existing.id}` : "Add missed punch"}
+              {existing ? "Correct punch" : "Add missed punch"}
             </Button>
           </div>
         </div>

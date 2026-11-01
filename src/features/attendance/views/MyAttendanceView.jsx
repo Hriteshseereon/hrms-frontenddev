@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { getEmployeeProfile } from "@/features/employees/data/employee-directory";
 import { useCurrentEmployee } from "@/features/auth/data/emp-session";
+import { useCurrentUser } from "@/features/auth/data/auth-session";
 import {
   currentMonth,
   daysInMonth,
@@ -38,30 +39,12 @@ import {
   isWeekend,
 } from "@/features/attendance/data/attendance-live";
 import {
-  BIOMETRIC_DEVICES,
-  deletePunch,
-  markIn,
-  markOut,
-  missedPunchOuts,
-  openPunch,
-  punchBlockReason,
-  punchHours,
-  todayIso,
-  punchTotals,
-  punchVerdict as rawVerdict,
-  punchesOf,
-  usePunches,
-} from "@/features/attendance/data/attendance-self";
-import { isAttendanceLocked, orgOfEmployee } from "@/features/attendance/data/attendance-pattern";
-import { useSharedList } from "@/lib/shared-list";
-import { GEOFENCE_RULES } from "@/features/organization/data/master-data";
-import { useWorkOrderOfEmployee } from "@/features/employees/data/work-order-data";
-import {
-  resolveShiftForEmployee,
-  shiftTimingFlag,
-  shiftTimingTone,
-  formatDailyWage,
-} from "@/features/attendance/data/shift-timing";
+  MissedPunchBanner,
+  MyRegularisationRequests,
+  RegularisationApprovals,
+  RegularisationDialog,
+  apiError,
+} from "@/features/attendance/components/RegularisationPieces";
 import { exportReportPdf, exportCsv } from "@/lib/export-utils";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
 
@@ -69,220 +52,135 @@ const palTone = {
   P: "bg-primary/10 text-primary border-primary/30",
   A: "bg-destructive/10 text-destructive border-destructive/30",
   L: "bg-gold/15 text-gold border-gold/40",
+  MP: "bg-destructive/10 text-destructive border-destructive/30 border-dashed",
 };
-const palLabel = { P: "Present", A: "Absent", L: "Leave" };
-
-// The store's verdict union labels < 4 h as "Half Day" and 4–7.5 h as "Short Hours", which is inverted against
-// HALF_DAY_POLICY (≥ 4 h is the minimum for a half day; < 4 h is not counted as present at all). Relabel for display
-// without touching the public union.
-const punchVerdict = (p) => {
-  const v = rawVerdict(p);
-  return v === "Half Day" ? "Below half day" : v === "Short Hours" ? "Half day (short hours)" : v;
-};
-
-/** Great-circle distance in metres between two lat/long points. */
-const distanceM = (lat1, lon1, lat2, lon2) => {
-  const R = 6371000,
-    toRad = (x) => (x * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1),
-    dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-};
-const currentPosition = () =>
-  new Promise((resolve) => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) return resolve(null);
-    // The API's own timeout only starts once permission is granted — an unanswered permission prompt never settles.
-    const timer = setTimeout(() => resolve(null), 8000);
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        clearTimeout(timer);
-        resolve({ lat: p.coords.latitude, lon: p.coords.longitude });
-      },
-      () => {
-        clearTimeout(timer);
-        resolve(null);
-      },
-      { timeout: 8000, maximumAge: 60000 },
-    );
-  });
+const palLabel = { P: "Present", A: "Absent", L: "Leave", MP: "Missed punch-out" };
 
 const verdictTone = (v) =>
   v === "Overtime"
     ? "border-primary/30 bg-primary/10 text-primary"
     : v === "Full Day"
       ? "border-primary/30 bg-primary/10 text-primary"
-      : v === "In progress" || v === "Half day (short hours)"
+      : v === "In progress" || v === "Half day"
         ? "border-gold/40 bg-gold/15 text-gold"
         : "border-destructive/30 bg-destructive/10 text-destructive";
 
+const timingTone = {
+  "On time": "border-primary/30 bg-primary/10 text-primary",
+  Late: "border-gold/40 bg-gold/15 text-gold",
+  "Early out": "border-gold/40 bg-gold/15 text-gold",
+};
+const hhmm = (t) => (t ? String(t).slice(0, 5) : "");
+
+/** Elapsed time of the open punch (it may belong to an earlier date: night shift). Server times are IST. */
+function useElapsed(active) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    const t = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, [active]);
+  if (!active?.date || !active?.in_time) return "";
+  const start = Date.parse(`${active.date}T${String(active.in_time).slice(0, 8)}+05:30`);
+  if (!Number.isFinite(start) || now < start) return "";
+  const mins = Math.floor((now - start) / 60000);
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+}
+
 function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunches }) {
   const me = useCurrentEmployee();
-  const rows = usePunches();
-  const mine = punchesOf(rows, me.id);
-  const open = openPunch(rows, me.id);
-  const missed = missedPunchOuts(mine);
-  const fallbackTotals = punchTotals(mine);
-  const workOrder = useWorkOrderOfEmployee(me.id);
-  const fallbackShift = resolveShiftForEmployee(me.id, getEmployeeProfile(me.id).job.shift);
-
   const [todayStatus, setTodayStatus] = useState(null);
   const [loadingToday, setLoadingToday] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [source, setSource] = useState("Manual");
+  const [devices, setDevices] = useState([]);
+  const [device, setDevice] = useState("");
+  const [note, setNote] = useState("");
+  const [warning, setWarning] = useState("");
+  const [detail, setDetail] = useState(null);
+  const [regTarget, setRegTarget] = useState(null);
 
   const fetchToday = useCallback(async () => {
     setLoadingToday(true);
     try {
-      const data = await attendanceApi.getTodayStatus();
-      if (data) setTodayStatus(data);
+      setTodayStatus(await attendanceApi.getTodayStatus());
     } catch (err) {
       console.warn("Could not fetch today's status:", err);
     } finally {
       setLoadingToday(false);
     }
   }, []);
-
   useEffect(() => {
     fetchToday();
   }, [fetchToday]);
 
-  const shift = todayStatus?.shift || fallbackShift;
-  const isPunchedIn = todayStatus !== null ? Boolean(todayStatus.is_punched_in) : Boolean(open);
-  const activePunch = todayStatus?.active_punch;
-  const activeInTime =
-    activePunch?.in_time ||
-    (activePunch?.punch_in ? activePunch.punch_in.slice(11, 16) : null) ||
-    open?.inAt;
-  const activePunchDate = activePunch?.date || open?.date;
+  // Biometric devices come from the backend (the SDK / push is not built yet — a punch is tagged with the device).
+  useEffect(() => {
+    if (source !== "Biometric" || devices.length) return;
+    attendanceApi
+      .getDevices()
+      .then((res) => {
+        const list = Array.isArray(res) ? res : (res?.items ?? []);
+        setDevices(list);
+        setDevice((d) => d || list.find((x) => x.status !== "INACTIVE")?.id || "");
+      })
+      .catch(() => toast.error("Could not load biometric devices"));
+  }, [source, devices.length]);
 
-  const [fences] = useSharedList("geofence-rules", GEOFENCE_RULES);
-  const activeFences = fences.filter((f) => f.active);
-  const [fenceId, setFenceId] = useState("");
-  const fence = activeFences.find((f) => f.id === fenceId) ?? activeFences[0];
-  const today = todayIso();
-  const orgId = orgOfEmployee(me.id);
+  const refreshAll = async () => {
+    await fetchToday();
+    onRefresh?.();
+  };
 
-  const [source, setSource] = useState("Manual");
-  const [device, setDevice] = useState(BIOMETRIC_DEVICES[0].id);
-  const [note, setNote] = useState("");
-  const [detail, setDetail] = useState(null);
+  const shift = todayStatus?.shift;
+  const locked = Boolean(todayStatus?.locked);
+  const isPunchedIn = Boolean(todayStatus?.is_punched_in);
+  const active = todayStatus?.active_punch;
+  const elapsed = useElapsed(isPunchedIn ? active : null);
+  const missed = todayStatus?.missed_punch_outs ?? [];
+  const dev = devices.find((d) => d.id === device);
+  const location = source === "Manual" ? "Self-marked · Web portal" : (dev?.location ?? "Biometric device");
+  const today = todayStatus?.date;
 
-  const dev = BIOMETRIC_DEVICES.find((d) => d.id === device) ?? BIOMETRIC_DEVICES[0];
-  const location =
-    source === "Manual"
-      ? "Self-marked · Web portal"
-      : source === "Geofence"
-        ? fence
-          ? `${fence.name} (geofence)`
-          : "Geofence"
-        : dev.location;
+  const fail = (err, fallback) => {
+    const { general, status } = apiError(err, fallback);
+    toast.error(status === 423 ? "Attendance for this month is locked" : general);
+  };
 
   const punchIn = async () => {
-    if (isPunchedIn) {
-      return toast.error("You already have an active punch in progress");
-    }
-    const blocked = punchBlockReason(me.id);
-    if (blocked) return toast.error(blocked);
-    let flagged = note.trim();
-    if (source === "Geofence") {
-      if (!fence)
-        return toast.error("No active geofence is configured — use manual or biometric marking.");
-      const lat = Number(fence.latitude),
-        lon = Number(fence.longitude);
-      if (
-        fence.enforced &&
-        Number.isFinite(lat) &&
-        Number.isFinite(lon) &&
-        fence.latitude &&
-        fence.longitude
-      ) {
-        setBusy(true);
-        const pos = await currentPosition();
-        setBusy(false);
-        const dist = pos ? Math.round(distanceM(pos.lat, pos.lon, lat, lon)) : null;
-        if (dist === null || dist > fence.radius) {
-          const why =
-            dist === null
-              ? "your location is unavailable"
-              : `you are ${dist} m from ${fence.name} (allowed ${fence.radius} m)`;
-          if (!fence.allowOverrideWithReason) return toast.error(`Outside the geofence — ${why}.`);
-          if (!flagged)
-            return toast.error(
-              `Outside the geofence — ${why}. Add a reason in the note to punch in for HR review.`,
-            );
-          flagged = `[Outside geofence: ${dist === null ? "location unavailable" : `${dist} m`}] ${flagged}`;
-        }
-      }
-    }
-
+    if (source === "Biometric" && !device) return toast.error("Choose a biometric device");
     setBusy(true);
     try {
-      let apiSource = "MANUAL";
-      if (source === "Biometric") apiSource = "BIOMETRIC";
-      else if (source === "Geofence") apiSource = "GEOFENCE";
-
+      // No client timestamp is sent — the server clock stamps the punch.
       const rec = await attendanceApi.punchIn({
-        source: apiSource,
+        source: source === "Biometric" ? "BIOMETRIC" : "MANUAL",
         device_id: source === "Biometric" ? device : null,
         location_name: location,
-        note: flagged || undefined,
+        note: note.trim() || undefined,
       });
-
-      try {
-        markIn({ empId: me.id, employee: me.name, source, location, note: flagged });
-      } catch (_) {}
-
-      toast.success(
-        rec
-          ? `Punched in at ${rec.in_time || "now"} · ${rec.source || source}`
-          : "Punched in successfully",
-      );
+      setWarning(rec?.warning || "");
+      toast.success(`Punched in at ${hhmm(rec?.in_time) || "now"} · ${rec?.source || source}`);
       setNote("");
-      await fetchToday();
-      onRefresh?.();
+      await refreshAll();
     } catch (err) {
-      const msg =
-        err?.response?.data?.detail ??
-        err?.response?.data?.message ??
-        err?.message ??
-        "Failed to punch in";
-      toast.error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      fail(err, "Failed to punch in");
     } finally {
       setBusy(false);
     }
   };
 
   const punchOut = async () => {
-    if (!isPunchedIn) {
-      return toast.error("Nothing to punch out of");
-    }
     setBusy(true);
     try {
-      const rec = await attendanceApi.punchOut({
-        note: note.trim() || undefined,
-      });
-
-      try {
-        markOut(me.id);
-      } catch (_) {}
-
+      const rec = await attendanceApi.punchOut({ note: note.trim() || undefined });
       toast.success(
-        rec
-          ? `Punched out at ${rec.out_time || "now"} · ${rec.hours != null ? `${Number(rec.hours).toFixed(2)} h` : ""} · ${rec.verdict || "Completed"}`
-          : "Punched out successfully",
+        `Punched out at ${hhmm(rec?.out_time) || "now"}${rec?.hours != null ? ` · ${Number(rec.hours).toFixed(2)} h` : ""}${rec?.verdict ? ` · ${rec.verdict}` : ""}`,
       );
       setNote("");
-      await fetchToday();
-      onRefresh?.();
+      setWarning("");
+      await refreshAll();
     } catch (err) {
-      const msg =
-        err?.response?.data?.detail ??
-        err?.response?.data?.message ??
-        err?.message ??
-        "Failed to punch out";
-      toast.error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      fail(err, "Failed to punch out");
     } finally {
       setBusy(false);
     }
@@ -291,63 +189,37 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
   const handleDeletePunch = async (punchId) => {
     try {
       await attendanceApi.deleteTodayPunch(punchId);
-      try {
-        deletePunch(punchId);
-      } catch (_) {}
       toast.success("Punch removed successfully");
-      await fetchToday();
-      onRefresh?.();
+      await refreshAll();
     } catch (err) {
-      const msg =
-        err?.response?.data?.detail ??
-        err?.response?.data?.message ??
-        err?.message ??
-        "Failed to remove punch";
-      toast.error(typeof msg === "string" ? msg : JSON.stringify(msg));
+      fail(err, "Failed to remove punch");
     }
   };
 
-  const displayPunches = useMemo(() => {
-    if (Array.isArray(livePunches) && livePunches.length > 0) {
-      return livePunches;
-    }
-    return mine;
-  }, [livePunches, mine]);
+  const displayPunches = Array.isArray(livePunches) ? livePunches : [];
+  const totals = {
+    days: liveSummary?.present_days ?? 0,
+    worked: liveSummary?.total_work_hours ?? 0,
+    overtime: liveSummary?.overtime_hours ?? 0,
+    short: liveSummary?.short_hours ?? 0,
+    missed: liveSummary?.missed_punches ?? 0,
+  };
+  const hoursOf = (p) => (p.hours != null ? Number(p.hours).toFixed(2) : "—");
+  const outOf = (p) =>
+    p.out_time ? `${hhmm(p.out_time)}${p.out_date && p.out_date !== p.date ? ` (${p.out_date})` : ""}` : "";
 
-  const totals = useMemo(() => {
-    if (liveSummary) {
-      return {
-        days: liveSummary.present_days ?? fallbackTotals.days,
-        worked: liveSummary.total_work_hours ?? fallbackTotals.worked,
-        overtime: liveSummary.overtime_hours ?? fallbackTotals.overtime,
-        short: liveSummary.short_hours ?? fallbackTotals.short,
-      };
-    }
-    return fallbackTotals;
-  }, [liveSummary, fallbackTotals]);
-
+  const punchCols = ["Date", "In", "Out", "Hours", "Source", "Location", "Verdict", "Shift Timing", "Note"];
   const punchRows = displayPunches.map((p) => [
     p.date,
-    p.in_time || p.inAt || "—",
-    p.out_time || p.outAt || "—",
-    p.hours != null ? `${Number(p.hours).toFixed(2)}` : (p.outAt ? `${punchHours(p)}` : "—"),
+    hhmm(p.in_time) || "—",
+    outOf(p) || "—",
+    hoursOf(p),
     p.source || "Manual",
-    p.location || p.location_name || "—",
-    p.verdict || punchVerdict(p),
-    p.shift_timing || shiftTimingFlag(p, shift).flag,
+    p.location_name || "—",
+    p.verdict || "—",
+    p.shift_timing || "—",
     p.note || "—",
   ]);
-  const punchCols = [
-    "Date",
-    "In",
-    "Out",
-    "Hours",
-    "Source",
-    "Location",
-    "Verdict",
-    "Shift Timing",
-    "Note",
-  ];
 
   return (
     <>
@@ -359,20 +231,20 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
                 <Fingerprint className="text-primary h-4 w-4" /> Mark attendance
               </h2>
               <p className="text-muted-foreground mt-0.5 text-xs">
-                Punch in manually from the portal, or record a biometric device punch.
-                Hours, overtime and short hours are computed the moment you punch out.
+                Punch in manually from the portal, or record a biometric device punch. The time is
+                taken from the server when you punch.
               </p>
             </div>
             <Badge
               variant="outline"
               className={isPunchedIn ? "border-primary/30 bg-primary/10 text-primary" : ""}
             >
-              {loadingToday ? (
+              {loadingToday && !todayStatus ? (
                 <span className="flex items-center gap-1.5">
                   <Loader2 className="h-3 w-3 animate-spin" /> Checking status…
                 </span>
               ) : isPunchedIn ? (
-                `Punched in at ${activeInTime || "In progress"}`
+                `Punched in at ${hhmm(active?.in_time) || "—"}${elapsed ? ` · ${elapsed}` : ""}`
               ) : (
                 "Not punched in"
               )}
@@ -381,22 +253,34 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
 
           <div className="border-border bg-muted/30 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border p-3 text-xs">
             <div>
-              <span className="text-muted-foreground">Work order: </span>
-              <span className="font-medium">
-                {workOrder ? `${workOrder.name} (${workOrder.clientSite})` : "Not assigned"}
-              </span>
-            </div>
-            <div>
               <span className="text-muted-foreground">Shift: </span>
               <span className="font-medium">
-                {shift ? `${shift.name} · ${shift.start}–${shift.end}` : "Not assigned"}
+                {shift ? `${shift.name} · ${hhmm(shift.start)}–${hhmm(shift.end)}` : "Not assigned"}
               </span>
             </div>
-            <div>
-              <span className="text-muted-foreground">Per-day wage: </span>
-              <span className="font-medium">{formatDailyWage(me.id)}</span>
-            </div>
           </div>
+
+          {locked && (
+            <div className="border-destructive/30 bg-destructive/10 text-destructive rounded-lg border p-3 text-xs">
+              Attendance for this month is locked.
+            </div>
+          )}
+          {warning && (
+            <div className="border-gold/40 bg-gold/10 rounded-lg border p-3 text-xs">{warning}</div>
+          )}
+          {isPunchedIn && active?.date && today && active.date !== today && (
+            <div className="text-gold text-xs">
+              Open punch from <span className="whitespace-nowrap">{active.date}</span> (night shift) — punch
+              out to close it.
+            </div>
+          )}
+
+          <MissedPunchBanner
+            missed={missed}
+            locked={locked}
+            onRequest={setRegTarget}
+            onChanged={refreshAll}
+          />
 
           <div className="flex flex-wrap items-end gap-3">
             <div className="w-full min-w-0 space-y-1.5 sm:w-auto">
@@ -408,38 +292,21 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
                 <SelectContent>
                   <SelectItem value="Manual">Manual — timestamp now</SelectItem>
                   <SelectItem value="Biometric">Biometric device</SelectItem>
-                  <SelectItem value="Geofence">Geofenced check-in</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            {source === "Geofence" && (
-              <div className="space-y-1.5">
-                <Label className="text-muted-foreground text-xs">Geofence</Label>
-                <Select value={fence?.id ?? ""} onValueChange={setFenceId}>
-                  <SelectTrigger className="w-full sm:w-[280px]">
-                    <SelectValue placeholder="No active geofence" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {activeFences.map((f) => (
-                      <SelectItem key={f.id} value={f.id}>
-                        {f.name} · {f.radius} m{f.enforced ? "" : " (not enforced)"}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
             {source === "Biometric" && (
               <div className="space-y-1.5">
                 <Label className="text-muted-foreground text-xs">Device / location</Label>
                 <Select value={device} onValueChange={setDevice}>
                   <SelectTrigger className="w-full sm:w-[280px]">
-                    <SelectValue />
+                    <SelectValue placeholder={devices.length ? "Select a device" : "No devices available"} />
                   </SelectTrigger>
                   <SelectContent>
-                    {BIOMETRIC_DEVICES.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
+                    {devices.map((d) => (
+                      <SelectItem key={d.id} value={d.id} disabled={d.status === "INACTIVE"}>
                         {d.name}
+                        {d.status === "INACTIVE" ? " (inactive)" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -457,39 +324,14 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
             </div>
             <Button
               className="bg-gradient-emerald text-white"
-              disabled={isPunchedIn || busy}
+              disabled={isPunchedIn || busy || locked}
               onClick={() => void punchIn()}
             >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-              ) : (
-                <LogIn className="h-4 w-4 mr-1.5" />
-              )}{" "}
+              {busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <LogIn className="mr-1.5 h-4 w-4" />}{" "}
               Punch in
             </Button>
-            {isPunchedIn && activePunchDate && activePunchDate !== today && (
-              <span className="text-gold text-xs">
-                Open punch from <span className="whitespace-nowrap">{activePunchDate}</span> (night shift)
-                — punch out to close it.
-              </span>
-            )}
-            {missed.length > 0 && (
-              <span className="text-gold text-xs">
-                Missed punch-out on{" "}
-                <span className="whitespace-nowrap">{missed.map((m) => m.date).join(", ")}</span> —
-                ask HR to regularise it.
-              </span>
-            )}
-            <Button
-              variant="outline"
-              disabled={!isPunchedIn || busy}
-              onClick={() => void punchOut()}
-            >
-              {busy ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
-              ) : (
-                <LogOut className="h-4 w-4 mr-1.5" />
-              )}{" "}
+            <Button variant="outline" disabled={!isPunchedIn || busy || locked} onClick={() => void punchOut()}>
+              {busy ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <LogOut className="mr-1.5 h-4 w-4" />}{" "}
               Punch out
             </Button>
             <div className="text-muted-foreground ml-auto flex items-center gap-1.5 text-xs">
@@ -497,17 +339,16 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
             {[
               ["Days marked", String(totals.days)],
               ["Hours worked", `${Number(totals.worked).toFixed(1)} h`],
               ["Overtime", `${Number(totals.overtime).toFixed(1)} h`],
               ["Short hours", `${Number(totals.short).toFixed(1)} h`],
+              ["Missed punches", String(totals.missed)],
             ].map(([l, v]) => (
               <div key={l} className="border-border bg-muted/40 rounded-lg border px-3 py-2">
-                <div className="text-muted-foreground text-[11px] tracking-wider uppercase">
-                  {l}
-                </div>
+                <div className="text-muted-foreground text-[11px] tracking-wider uppercase">{l}</div>
                 <div className="text-lg font-bold">{v}</div>
               </div>
             ))}
@@ -517,9 +358,9 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
 
       <Card className="shadow-card overflow-hidden">
         <div className="border-border flex flex-wrap items-center gap-2 border-b p-4">
-          <div className="text-sm font-semibold flex items-center gap-2">
+          <div className="flex items-center gap-2 text-sm font-semibold">
             My marked attendance
-            {loadingPunches && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
+            {loadingPunches && <Loader2 className="text-primary h-3.5 w-3.5 animate-spin" />}
           </div>
           <div className="ml-auto flex flex-wrap gap-2">
             <Button
@@ -550,9 +391,7 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
                   columns: punchCols,
                   rows: punchRows,
                 });
-                toast[ok ? "success" : "error"](
-                  ok ? "Punch log ready — save as PDF" : "Allow pop-ups to download",
-                );
+                toast[ok ? "success" : "error"](ok ? "Punch log ready — save as PDF" : "Allow pop-ups to download");
               }}
             >
               <Download className="h-4 w-4" /> PDF
@@ -574,94 +413,72 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
               </tr>
             </thead>
             <tbody className="divide-border divide-y">
-              {loadingPunches ? (
+              {loadingPunches && !displayPunches.length ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                  <td colSpan={8} className="text-muted-foreground p-8 text-center">
                     <div className="flex items-center justify-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading attendance logs…
+                      <Loader2 className="text-primary h-4 w-4 animate-spin" /> Loading attendance logs…
                     </div>
                   </td>
                 </tr>
               ) : (
-                displayPunches.map((p) => {
-                  const timing = shiftTimingFlag(p, shift);
-                  const timingLabel = p.shift_timing || timing.flag;
-                  const verdictLabel = p.verdict || punchVerdict(p);
-                  const inStr = p.in_time || p.inAt;
-                  const outStr = p.out_time || p.outAt;
-                  const hoursStr =
-                    p.hours != null
-                      ? typeof p.hours === "number"
-                        ? p.hours.toFixed(2)
-                        : p.hours
-                      : outStr
-                        ? punchHours(p)
-                        : "—";
-                  const lateM = p.late_mins ?? timing.lateMins;
-                  const earlyM = p.early_out_mins ?? timing.earlyOutMins;
-
-                  return (
-                    <tr key={p.id} className={clickableRow} onClick={() => setDetail(p)}>
-                      <td className="p-3 font-medium">
-                        <span className="whitespace-nowrap">{p.date}</span>
-                      </td>
-                      <td className="p-3">
-                        <span className="whitespace-nowrap">{inStr}</span>
-                      </td>
-                      <td className="p-3">
-                        <span className="whitespace-nowrap">
-                          {outStr || <span className="text-muted-foreground">—</span>}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right font-semibold">
-                        {outStr ? hoursStr : "—"}
-                      </td>
-                      <td className="text-muted-foreground p-3">
-                        {p.source || "Manual"}
-                        <div className="text-xs">{p.location || p.location_name || "Self-marked"}</div>
-                      </td>
-                      <td className="p-3">
-                        <Badge variant="outline" className={verdictTone(verdictLabel)}>
-                          {verdictLabel}
+                displayPunches.map((p) => (
+                  <tr key={p.id} className={clickableRow} onClick={() => setDetail(p)}>
+                    <td className="p-3 font-medium">
+                      <span className="whitespace-nowrap">{p.date}</span>
+                    </td>
+                    <td className="p-3">
+                      <span className="whitespace-nowrap">{hhmm(p.in_time) || "—"}</span>
+                    </td>
+                    <td className="p-3">
+                      <span className="whitespace-nowrap">
+                        {outOf(p) || <span className="text-muted-foreground">—</span>}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right font-semibold">{hoursOf(p)}</td>
+                    <td className="text-muted-foreground p-3">
+                      {p.source || "Manual"}
+                      <div className="text-xs">{p.location_name || "Self-marked"}</div>
+                    </td>
+                    <td className="p-3">
+                      <Badge variant="outline" className={verdictTone(p.verdict)}>
+                        {p.verdict || "—"}
+                      </Badge>
+                      {p.regularised && (
+                        <Badge variant="outline" className="ml-1 border-border text-[10px]">
+                          Regularised
                         </Badge>
-                      </td>
-                      <td className="p-3">
-                        <Badge
-                          variant="outline"
-                          className={
-                            shiftTimingTone[timingLabel] ||
-                            shiftTimingTone[timing.flag] ||
-                            "border-border bg-muted"
-                          }
+                      )}
+                    </td>
+                    <td className="p-3">
+                      <Badge variant="outline" className={timingTone[p.shift_timing] || "border-border bg-muted"}>
+                        {p.shift_timing || "—"}
+                      </Badge>
+                      {(p.late_mins > 0 || p.early_out_mins > 0) && (
+                        <div className="text-muted-foreground mt-0.5 text-[11px]">
+                          {p.late_mins > 0 && `${p.late_mins}m late`}
+                          {p.late_mins > 0 && p.early_out_mins > 0 && " · "}
+                          {p.early_out_mins > 0 && `${p.early_out_mins}m early`}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
+                      {p.date === today && !p.is_locked ? (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          aria-label="Remove today's punch"
+                          onClick={() => handleDeletePunch(p.id)}
                         >
-                          {timingLabel}
-                        </Badge>
-                        {(lateM > 0 || earlyM > 0) && (
-                          <div className="text-muted-foreground mt-0.5 text-[11px]">
-                            {lateM > 0 && `${lateM}m late`}
-                            {lateM > 0 && earlyM > 0 && " · "}
-                            {earlyM > 0 && `${earlyM}m early`}
-                          </div>
-                        )}
-                      </td>
-                      <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                        {p.date === today && !p.is_locked ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                            aria-label="Remove today's punch"
-                            onClick={() => handleDeletePunch(p.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
               )}
               {!loadingPunches && displayPunches.length === 0 && (
                 <tr>
@@ -675,77 +492,53 @@ function MarkAttendanceCard({ onRefresh, liveSummary, livePunches, loadingPunche
         </div>
       </Card>
 
-      {detail &&
-        (() => {
-          const timing = shiftTimingFlag(detail, shift);
-          const timingLabel = detail.shift_timing || timing.flag;
-          const verdict = detail.verdict || punchVerdict(detail);
-          const inStr = detail.in_time || detail.inAt;
-          const outStr = detail.out_time || detail.outAt || "—";
-          const hoursStr =
-            detail.hours != null
-              ? `${Number(detail.hours).toFixed(2)} h`
-              : detail.outAt
-                ? `${punchHours(detail)} h`
-                : "—";
-          const lateM = detail.late_mins ?? timing.lateMins;
-          const earlyM = detail.early_out_mins ?? timing.earlyOutMins;
+      <MyRegularisationRequests refreshKey={todayStatus} onChanged={refreshAll} />
 
-          return (
-            <RecordDetailDialog
-              onClose={() => setDetail(null)}
-              title={`${detail.date} · ${inStr} → ${outStr === "—" ? "in progress" : outStr}`}
-              subtitle={`${detail.employee || me.name} · ${detail.empId || me.id}`}
-              badges={
-                <>
-                  <Badge variant="outline" className={verdictTone(verdict)}>
-                    {verdict}
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className={
-                      shiftTimingTone[timingLabel] ||
-                      shiftTimingTone[timing.flag] ||
-                      "border-border bg-muted"
-                    }
-                  >
-                    {timingLabel}
-                  </Badge>
-                </>
-              }
-              record={{
-                id: detail.id,
-                date: detail.date,
-                inAt: inStr,
-                outAt: outStr,
-                hours: hoursStr,
-                verdict,
-                source: detail.source || "Manual",
-                location: detail.location || detail.location_name || "Self-marked",
-                note: detail.note || "—",
-                shift: shift
-                  ? `${shift.name} · ${shift.start} – ${shift.end}`
-                  : "No shift assigned",
-                shiftTiming: timingLabel,
-                lateBy: lateM > 0 ? `${lateM} min` : "—",
-                earlyOutBy: earlyM > 0 ? `${earlyM} min` : "—",
-              }}
-              labels={{
-                id: "Punch ID",
-                inAt: "Punch in",
-                outAt: "Punch out",
-                shiftTiming: "Shift timing",
-                lateBy: "Late by",
-                earlyOutBy: "Early out by",
-              }}
-              sections={[
-                { title: "Punch", keys: ["id", "date", "inAt", "outAt", "hours", "verdict"] },
-                { title: "Source", keys: ["source", "location", "note"] },
-                { title: "Shift timing", keys: ["shift", "shiftTiming", "lateBy", "earlyOutBy"] },
-              ]}
-            />
-          );
-        })()}
+      <RegularisationDialog target={regTarget} onClose={() => setRegTarget(null)} onDone={refreshAll} />
+
+      {detail && (
+        <RecordDetailDialog
+          onClose={() => setDetail(null)}
+          title={`${detail.date} · ${hhmm(detail.in_time)} → ${outOf(detail) || "in progress"}`}
+          subtitle={`${me.name}`}
+          badges={
+            <>
+              <Badge variant="outline" className={verdictTone(detail.verdict)}>
+                {detail.verdict || "—"}
+              </Badge>
+              {detail.regularised && <Badge variant="outline">Regularised</Badge>}
+            </>
+          }
+          record={{
+            id: detail.id,
+            date: detail.date,
+            inAt: hhmm(detail.in_time) || "—",
+            outAt: outOf(detail) || "—",
+            hours: detail.hours != null ? `${Number(detail.hours).toFixed(2)} h` : "—",
+            verdict: detail.verdict || "—",
+            source: detail.source || "Manual",
+            location: detail.location_name || "Self-marked",
+            note: detail.note || "—",
+            shift: shift ? `${shift.name} · ${hhmm(shift.start)} – ${hhmm(shift.end)}` : "No shift assigned",
+            shiftTiming: detail.shift_timing || "—",
+            lateBy: detail.late_mins > 0 ? `${detail.late_mins} min` : "—",
+            earlyOutBy: detail.early_out_mins > 0 ? `${detail.early_out_mins} min` : "—",
+          }}
+          labels={{
+            id: "Punch ID",
+            inAt: "Punch in",
+            outAt: "Punch out",
+            shiftTiming: "Shift timing",
+            lateBy: "Late by",
+            earlyOutBy: "Early out by",
+          }}
+          sections={[
+            { title: "Punch", keys: ["id", "date", "inAt", "outAt", "hours", "verdict"] },
+            { title: "Source", keys: ["source", "location", "note"] },
+            { title: "Shift timing", keys: ["shift", "shiftTiming", "lateBy", "earlyOutBy"] },
+          ]}
+        />
+      )}
     </>
   );
 }
@@ -766,6 +559,7 @@ function Kpi({ label, value, sub, icon: Icon }) {
 
 function EmpAttendance() {
   const me = useCurrentEmployee();
+  const user = useCurrentUser();
   const p = getEmployeeProfile(me.id);
   const [month, setMonth] = useState(currentMonth);
   const live = useLiveAttendance(month);
@@ -895,6 +689,11 @@ function EmpAttendance() {
         liveSummary={summary}
         livePunches={livePunches}
         loadingPunches={loadingPunches}
+      />
+
+      <RegularisationApprovals
+        isHr={["HR", "CHRO", "Admin", "SuperAdmin", "BranchAdmin"].includes(user.role)}
+        onChanged={() => setRefreshCount((c) => c + 1)}
       />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
