@@ -63,6 +63,50 @@ export const attendanceApi = {
     return data;
   },
 
+  // 9. Biometric devices for the "Biometric device" marking mode
+  getDevices: async () => {
+    const { data } = await axios.get(`${BASE}/devices`);
+    return data;
+  },
+
+  // 10. Missed punch-out regularisation requests (employee side)
+  createRegularisation: async (body) => {
+    const { data } = await axios.post(`${BASE}/regularisation-requests`, body);
+    return data;
+  },
+  getMyRegularisations: async (params = {}) => {
+    const { data } = await axios.get(`${BASE}/regularisation-requests/mine`, { params });
+    return data;
+  },
+  withdrawRegularisation: async (id) => {
+    const { data } = await axios.delete(`${BASE}/regularisation-requests/${id}`);
+    return data;
+  },
+
+  // 11. Approver queue (reporting managers, HR / admin)
+  getRegularisationQueue: async (params = {}) => {
+    const { data } = await axios.get(`${BASE}/regularisation-requests`, { params });
+    return data;
+  },
+  decideRegularisation: async (id, body) => {
+    const { data } = await axios.post(`${BASE}/regularisation-requests/${id}/decision`, body);
+    return data;
+  },
+
+  // 12. HR direct correction
+  listPunches: async (params = {}) => {
+    const { data } = await axios.get(`${BASE}/punches`, { params });
+    return data;
+  },
+  addPunch: async (body) => {
+    const { data } = await axios.post(`${BASE}/punches`, body);
+    return data;
+  },
+  regularisePunch: async (id, body) => {
+    const { data } = await axios.post(`${BASE}/punches/${id}/regularise`, body);
+    return data;
+  },
+
   // 8. Delete Today's Punch (Mistake correction)
   deleteTodayPunch: async (punchId) => {
     const { data } = await axios.delete(`${BASE}/punches/${punchId}`);
