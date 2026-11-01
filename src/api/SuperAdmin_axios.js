@@ -46,6 +46,16 @@ SuperAdmin_axios.interceptors.response.use(
   (response) => response,
   async (error) => {
     const request = error.config;
+    // Another device signed this session out: drop the tokens and go to login (no refresh attempt).
+    const detail = error.response?.data?.detail;
+    const detailText = typeof detail === "string" ? detail : JSON.stringify(detail ?? "");
+    if (error.response?.status === 401 && /signed out/i.test(detailText)) {
+      import("@/features/auth/data/session-store").then((m) => {
+        m.useSessionStore.getState().clearSession();
+        window.location.assign("/login");
+      });
+      return Promise.reject(error);
+    }
     const isAuthRequest = /\/auth\/(?:super-admins\/login|login|refresh)/.test(
       request?.url ?? "",
     );

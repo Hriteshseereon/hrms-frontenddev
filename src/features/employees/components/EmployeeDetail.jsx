@@ -23,8 +23,10 @@ import {
   Pencil,
   ExternalLink,
   Upload,
+  Eye,
 } from "lucide-react";
-import { getEmployeeById } from "@/api/employeeApi";
+import { getEmployeeById, getEmployeeDocuments, resolveApiUrl } from "@/api/employeeApi";
+import { DocPreviewDialog } from "@/features/employees/components/DocPreviewDialog";
 import { useSessionStore } from "@/features/auth/data/session-store";
 import { toast } from "sonner";
 import {
@@ -168,6 +170,39 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
   const p = getEmployeeProfile(empId || employee?.id);
   const [tab, setTab] = useState("profile");
   const [leaveOpen, setLeaveOpen] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [uploadedTypes, setUploadedTypes] = useState([]);
+
+  useEffect(() => {
+    if (!empId) return undefined;
+    let alive = true;
+    getEmployeeDocuments(empId)
+      .then((res) => alive && setUploadedTypes((res?.documents ?? []).map((d) => d.document_type)))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [empId, apiData]);
+
+  // Signed document URLs expire (~15 min), so a fresh one is fetched every time a preview opens.
+  const openDocPreview = async (type, label) => {
+    try {
+      const res = await getEmployeeDocuments(empId);
+      const d = (res?.documents ?? []).find((x) => x.document_type === type);
+      const src = resolveApiUrl(d?.view_url);
+      if (!src) {
+        toast.error("This document is not available to preview.");
+        return;
+      }
+      setPreview({
+        title: d.file_name || label,
+        src,
+        isPdf: /pdf/i.test(d.content_type ?? "") || /\.pdf$/i.test(d.file_name ?? ""),
+      });
+    } catch {
+      toast.error("Could not load the document.");
+    }
+  };
 
   const fullName =
     [merged.first_name, merged.last_name].filter(Boolean).join(" ") || merged.name || "Employee";
@@ -324,23 +359,36 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 ["Personal Email", merged.personal_email || p.personal.personalEmail || "—"],
                 ["Work Email", workEmail || "—"],
                 ["Phone Number", phone || "—"],
-                ["Blood Group", p.personal.bloodGroup || "—"],
-                ["Nationality", p.personal.nationality || "—"],
-                ["Current Address", p.personal.currentAddress || "—"],
-                ["Permanent Address", p.personal.permanentAddress || "—"],
+                ["Marital Status", merged.marital_status || "—"],
+                ["Blood Group", merged.blood_group || "—"],
+                ["Nationality", merged.nationality || "—"],
+                ["Religion", merged.religion || "—"],
+                ["WhatsApp", merged.whatsapp_number || "—"],
+                [
+                  "Emergency Contact",
+                  [merged.emergency_contact_name, merged.emergency_contact_phone]
+                    .filter(Boolean)
+                    .join(" · ") || "—",
+                ],
+                ["Current Address", merged.current_address || "—"],
+                ["Permanent Address", merged.permanent_address || "—"],
+                ["LinkedIn", merged.linkedin_url || "—"],
+                ["GitHub", merged.github_url || "—"],
+                ["Twitter / X", merged.twitter_url || "—"],
+                ["Website", merged.website_url || "—"],
               ]}
             />
           </Section>
           <Section title="Education" icon={GraduationCap}>
             <DataTable
               head={["Qualification", "Institute", "Year", "Score"]}
-              rows={p.education.map((e) => [e.degree, e.institute, e.year, e.score])}
+              rows={(merged.education ?? []).map((e) => [e.qualification, e.institution, e.year_of_passing, e.score])}
             />
           </Section>
           <Section title="Previous Experience" icon={Briefcase}>
             <DataTable
               head={["Company", "Role", "From", "To"]}
-              rows={p.experience.map((e) => [e.company, e.role, e.from, e.to])}
+              rows={(merged.previous_employments ?? []).map((e) => [e.company_name, e.designation, e.from_month, e.to_month])}
             />
           </Section>
         </TabsContent>
@@ -350,6 +398,7 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
           <Section title="Employment Details" icon={Building2}>
             <KV
               items={[
+                ["Employee Code", merged.employee_code || "—"],
                 ["Employee Profile ID", employeeProfileId],
                 ["Login User Account ID", userAccountId || "—"],
                 ["Company", companyName || "—"],
@@ -360,7 +409,20 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 ["Date of Joining", doj || "—"],
                 ["Confirmation Date", p.job.confirmationDate || "—"],
                 ["Employment Type", merged.employment_type || p.job.employmentType || "—"],
+                ["Role (Access)", merged.role || "—"],
                 ["Reporting Manager", merged.manager_name || p.job.reportingManager || "—"],
+                ["HR", merged.hr_partner_name || "—"],
+                ["Shift", merged.shift_name || "—"],
+                [
+                  "Work Location",
+                  { office: "On-site", remote: "Remote", hybrid: "Hybrid" }[merged.work_mode] ||
+                    merged.work_mode ||
+                    "—",
+                ],
+                [
+                  "Notice Period",
+                  merged.notice_period_days != null ? `${merged.notice_period_days} days` : "—",
+                ],
                 ["Probation", `${probationMonths} months`],
                 ["Salary Grade", grade || "—"],
                 ["Wage Type", wageType || "—"],
@@ -385,9 +447,16 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 ],
                 ["UAN Number", merged.uan_number || p.payroll.statutory.uan || "—"],
                 ["ESIC Number", merged.esic_number || p.payroll.statutory.esiNo || "—"],
+                ["Driving License No.", merged.driving_license_number || "—"],
+                ["Passport No.", merged.passport_number || "—"],
+                ["Account Holder", merged.bank_account_holder_name || "—"],
                 ["Bank Name", merged.bank_name || "—"],
                 ["Account Number", merged.bank_account_number || "—"],
                 ["IFSC Code", merged.ifsc_code || "—"],
+                ["Bank Branch", merged.bank_branch || "—"],
+                ["Account Type", merged.bank_account_type || "—"],
+                ["Payment Mode", merged.payment_mode || "—"],
+                ["Pay Frequency", merged.pay_frequency || "—"],
               ]}
             />
           </Section>
@@ -724,7 +793,7 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
         {/* Documents */}
         <TabsContent value="documents" className="space-y-4 pt-4">
           <Section
-            title="Backend S3 Document Register"
+            title="Document Register"
             icon={FileText}
             action={
               canEdit && (
@@ -736,17 +805,17 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
           >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[
-                { label: "Aadhaar Card", url: merged.aadhaar_card_url },
-                { label: "PAN Card", url: merged.pan_card_url },
-                { label: "Driving License", url: merged.driving_license_url },
-                { label: "Passport", url: merged.passport_url },
-                { label: "Resume / CV", url: merged.resume_url },
-                { label: "Offer Letter", url: merged.offer_letter_url },
-                { label: "Appointment Letter", url: merged.appointment_letter_url },
-                { label: "Educational Certificate", url: merged.educational_certificate_url },
-                { label: "Address Proof", url: merged.address_proof_url },
-                { label: "Cancelled Cheque / Passbook", url: merged.passbook_url },
-              ].map(({ label, url }) => (
+                { type: "aadhaar_card", label: "Aadhaar Card", url: merged.aadhaar_card_url },
+                { type: "pan_card", label: "PAN Card", url: merged.pan_card_url },
+                { type: "driving_license", label: "Driving License", url: merged.driving_license_url },
+                { type: "passport", label: "Passport", url: merged.passport_url },
+                { type: "resume", label: "Resume / CV", url: merged.resume_url },
+                { type: "offer_letter", label: "Offer Letter", url: merged.offer_letter_url },
+                { type: "appointment_letter", label: "Appointment Letter", url: merged.appointment_letter_url },
+                { type: "educational_certificate", label: "Educational Certificate", url: merged.educational_certificate_url },
+                { type: "address_proof", label: "Address Proof", url: merged.address_proof_url },
+                { type: "passbook", label: "Cancelled Cheque / Passbook", url: merged.passbook_url },
+              ].map(({ type, label, url }) => (
                 <div
                   key={label}
                   className="flex items-center justify-between rounded-lg border p-3 text-sm"
@@ -754,18 +823,19 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                   <div>
                     <div className="font-medium">{label}</div>
                     <div className="text-xs text-muted-foreground">
-                      {url ? "Available on S3" : "Not uploaded"}
+                      {url || uploadedTypes.includes(type) ? "Uploaded" : "Not uploaded"}
                     </div>
                   </div>
-                  {url ? (
-                    <a
-                      href={url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition"
+                  {url || uploadedTypes.includes(type) ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      onClick={() => openDocPreview(type, label)}
                     >
-                      <Download className="h-3.5 w-3.5" /> View / Download
-                    </a>
+                      <Eye className="mr-1.5 h-3.5 w-3.5" /> Preview
+                    </Button>
                   ) : (
                     <Badge variant="outline" className="text-muted-foreground text-[10px]">
                       Not Uploaded
@@ -870,6 +940,13 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
           </Section>
         </TabsContent>
       </Tabs>
+      <DocPreviewDialog
+        open={!!preview}
+        onClose={() => setPreview(null)}
+        title={preview?.title}
+        src={preview?.src}
+        isPdf={preview?.isPdf}
+      />
     </div>
   );
 }

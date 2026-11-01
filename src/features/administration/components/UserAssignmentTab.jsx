@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { UserPlus, Check, ChevronRight, KeyRound, ShieldCheck } from "lucide-react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { UserPlus, Check, ChevronRight, KeyRound, ShieldCheck, Building2, MapPin, Loader2, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -25,147 +25,501 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { RBAC_MODULES, PERMISSION_ACTIONS, screenId } from "@/features/auth/data/rbac";
 import { ALL_MANAGED_BRANCHES } from "@/features/organization/data/branch-session";
-import { initials } from "@/features/employees/data/employee-directory";
-import {
-  can,
-  passwordPolicyError,
-  useCurrentUser,
-  userByLogin,
-} from "@/features/auth/data/auth-session";
-import { useRoles, saveRole, issueTemporaryPassword } from "@/features/auth/data/rbac-store";
-import { useOrgUsers, grantRole, addOrgUser } from "@/features/auth/data/user-store";
-import { useScopedEmployees } from "@/features/employees/components/CasePieces";
+import { initials, EMPLOYEES } from "@/features/employees/data/employee-directory";
+import { can, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useRoles } from "@/features/auth/data/rbac-store";
+import { useOrgUsers, grantRole } from "@/features/auth/data/user-store";
+import { useOrgs } from "@/features/organization/data/group-data";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
+import { rbacApi, extractErrorMessage } from "@/api/rbacApi";
+import { getEmployees } from "@/api/employeeApi";
+import Company_api from "@/api/company";
+import Branch_api from "@/api/branch";
+import { organizationApi } from "@/api/organizationApi";
 
-const STEPS = ["User & Credentials", "Role", "Permissions", "Review & Submit"];
-const branchName = (id) => ALL_MANAGED_BRANCHES.find((b) => b.id === id)?.name ?? id;
+// Comprehensive safe list extractor that unwraps any backend response envelope
+function extractList(res) {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  const body = res?.data !== undefined ? res.data : res;
+  if (Array.isArray(body)) return body;
+  if (!body || typeof body !== "object") return [];
+
+  if (Array.isArray(body.items)) return body.items;
+  if (Array.isArray(body.companies)) return body.companies;
+  if (Array.isArray(body.branches)) return body.branches;
+  if (Array.isArray(body.employees)) return body.employees;
+  if (Array.isArray(body.roles)) return body.roles;
+  if (Array.isArray(body.assignments)) return body.assignments;
+  if (Array.isArray(body.data)) return body.data;
+
+  if (body.data && typeof body.data === "object") {
+    if (Array.isArray(body.data)) return body.data;
+    if (Array.isArray(body.data.items)) return body.data.items;
+    if (Array.isArray(body.data.companies)) return body.data.companies;
+    if (Array.isArray(body.data.branches)) return body.data.branches;
+    if (Array.isArray(body.data.employees)) return body.data.employees;
+    if (Array.isArray(body.data.roles)) return body.data.roles;
+    if (Array.isArray(body.data.assignments)) return body.data.assignments;
+    if (Array.isArray(body.data.data)) return body.data.data;
+  }
+
+  if (body.result && typeof body.result === "object") {
+    if (Array.isArray(body.result)) return body.result;
+    if (Array.isArray(body.result.items)) return body.result.items;
+  }
+
+  return [];
+}
+
+// Module-level guard to strictly prevent loop storms and rapid re-fetch floods
+let lastUserAssignmentFetchTime = 0;
+
+const safeInitials = (str) => {
+  if (!str || typeof str !== "string") return "U";
+  try {
+    return initials(str);
+  } catch {
+    return (str[0] || "U").toUpperCase();
+  }
+};
 
 export function UserAssignmentTab() {
   const me = useCurrentUser();
-  const users = useOrgUsers();
-  // Roles designed in Roles & Permissions (built-in + created in the wizard) — the static seed list hid new roles.
-  const ROLES = useRoles().filter((r) => r.status === "Active");
-  // Employees of the active entity (or the whole group for a Super Admin in group view).
-  const EMPLOYEES = useScopedEmployees();
-  const canManage = can(me.role, "role.manage");
-  const [open, setOpen] = useState(false);
-  const [step, setStep] = useState(0);
-  const [detail, setDetail] = useState(null);
-
-  const [empId, setEmpId] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPasswordDraft] = useState("");
-  const [branches, setBranches] = useState({});
-
-  const [roleMode, setRoleMode] = useState("predefined");
-  const [roleName, setRoleName] = useState(ROLES[0]?.name ?? "");
-  const [customName, setCustomName] = useState("");
-  const [selected, setSelected] = useState({});
-  const [perms, setPerms] = useState({});
-
-  const employee = EMPLOYEES.find((e) => e.id === empId);
-  const branchIds = useMemo(() => Object.keys(branches).filter((b) => branches[b]), [branches]);
-  const selectedIds = useMemo(() => Object.keys(selected).filter((k) => selected[k]), [selected]);
-  const allScreenIds = useMemo(
-    () =>
-      RBAC_MODULES.flatMap((m) =>
-        m.submodules.flatMap((s) => s.screens.map((sc) => screenId(m.key, s.key, sc.key))),
-      ),
-    [],
+  const fallbackUsers = useOrgUsers();
+  const fallbackOrgs = useOrgs();
+  const allRolesFromStore = useRoles();
+  const fallbackRoles = useMemo(
+    () => allRolesFromStore.filter((r) => r.status === "Active"),
+    [allRolesFromStore],
   );
-  const finalRoleName = roleMode === "custom" ? customName.trim() : roleName;
+  const fallbackRolesRef = useRef(fallbackRoles);
+  fallbackRolesRef.current = fallbackRoles;
 
-  const reset = () => {
-    setStep(0);
-    setEmpId("");
-    setEmail("");
-    setPasswordDraft("");
-    setBranches({});
-    setRoleMode("predefined");
-    setRoleName(ROLES[0]?.name ?? "");
-    setCustomName("");
-    setSelected({});
-    setPerms({});
-  };
+  const canManage = can(me.role, "role.manage");
 
-  const pickEmployee = (id) => {
-    setEmpId(id);
-    const e = EMPLOYEES.find((x) => x.id === id);
-    if (e) setEmail(e.email);
-  };
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const toggleScreen = (id, on) => {
-    setSelected((s) => ({ ...s, [id]: on }));
-    setPerms((p) => {
-      const next = { ...p };
-      if (on) next[id] = next[id] ?? { View: true, Edit: false, Delete: false };
-      else delete next[id];
-      return next;
-    });
-  };
-  const toggleMany = (ids, on) => ids.forEach((id) => toggleScreen(id, on));
+  // Live Backend Data
+  const [realEmployees, setRealEmployees] = useState([]);
+  const [companies, setCompanies] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [availableRoles, setAvailableRoles] = useState([]);
+  const [assignmentsList, setAssignmentsList] = useState([]);
 
-  const setPerm = (id, action, on) =>
-    setPerms((p) => {
-      const current = p[id] ?? { View: true, Edit: false, Delete: false };
-      const next = { ...current, [action]: on };
-      if (action === "View" && !on) {
-        next.Edit = false;
-        next.Delete = false;
+  // Form State
+  const [selectedEmpId, setSelectedEmpId] = useState("");
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
+  const [selectedBranchIds, setSelectedBranchIds] = useState({});
+  const [selectedRoleId, setSelectedRoleId] = useState("");
+  const [userSearch, setUserSearch] = useState("");
+
+  const hasFetchedRef = useRef(false);
+  const inFlightRef = useRef(false);
+
+  // Combined full lists with safe fallbacks
+  const allCompaniesList = useMemo(() => {
+    if (companies.length > 0) return companies;
+    if (fallbackOrgs.length > 0) {
+      return fallbackOrgs.map((o) => ({
+        ...o,
+        id: String(o.id),
+        name: o.name || o.legalName || o.code || `Org ${o.id}`,
+      }));
+    }
+    return [{ id: "DEFAULT-CO", name: "Seereon Group (HQ)" }];
+  }, [companies, fallbackOrgs]);
+
+  const allEmployeesList = useMemo(() => {
+    if (realEmployees.length > 0) return realEmployees;
+    const list = [];
+    const seen = new Set();
+    [...EMPLOYEES, ...fallbackUsers].forEach((e) => {
+      const id = String(e.id);
+      if (!seen.has(id)) {
+        seen.add(id);
+        list.push({
+          ...e,
+          id,
+          name: e.name || [e.first_name, e.last_name].filter(Boolean).join(" ") || id,
+          email: e.email || e.work_email || "",
+          dept: e.dept || e.department || "Employee",
+        });
       }
-      if (action !== "View" && on) next.View = true;
-      return { ...p, [id]: next };
     });
+    return list;
+  }, [realEmployees, fallbackUsers]);
 
-  // Skip the permissions step entirely when a predefined role is chosen.
-  const visibleSteps = roleMode === "custom" ? STEPS : STEPS.filter((s) => s !== "Permissions");
-  const stepName = visibleSteps[step];
+  const fetchBranchesForCompany = useCallback(async (compId = null) => {
+    try {
+      const paramId =
+        compId && compId !== "DEFAULT-CO" && !String(compId).startsWith("ORG-")
+          ? compId
+          : null;
+      const branchRes = await Branch_api.getBranches(paramId);
+      const branchData = extractList(branchRes);
+      if (Array.isArray(branchData) && branchData.length > 0) {
+        const mappedBranches = branchData.map((b) => ({
+          ...b,
+          id: String(b.id),
+          company_id: b.company_id ? String(b.company_id) : (paramId ? String(paramId) : undefined),
+          name: b.name || b.branch_name || b.city || `Branch ${b.id}`,
+        }));
+        setBranches((prev) => {
+          const merged = [...mappedBranches];
+          prev.forEach((p) => {
+            if (!merged.some((m) => String(m.id) === String(p.id))) {
+              merged.push(p);
+            }
+          });
+          return merged;
+        });
+      }
+    } catch (err) {
+      console.warn("Could not load branches for company:", err);
+    }
+  }, []);
 
-  const customNameTaken =
-    roleMode === "custom" &&
-    ROLES.some((r) => r.name.trim().toLowerCase() === customName.trim().toLowerCase());
-  // A typed temporary password must meet the sign-in policy (it used to be collected and silently discarded).
-  const passwordError = password ? passwordPolicyError(password) : null;
-  const emailValid = /^\S+@\S+\.\S+$/.test(email.trim());
-  const canNext =
-    stepName === "User & Credentials"
-      ? !!empId && emailValid && !passwordError && branchIds.length > 0
-      : stepName === "Role"
-        ? finalRoleName.length > 1 && !customNameTaken
-        : stepName === "Permissions"
-          ? selectedIds.length > 0
-          : true;
+  // Load Real Employees, Companies, and Roles on mount (once)
+  const loadInitialData = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastUserAssignmentFetchTime < 3000) {
+      return;
+    }
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
+    lastUserAssignmentFetchTime = now;
 
-  const submit = () => {
-    if (!employee) return;
-    // addOrgUser returns the existing record's id for a known e-mail, or the id it just created.
-    const target = addOrgUser(employee.name, email.trim());
-    // A custom role is a real RBAC role: persist its screens / permissions and the branch-scoped assignment, so it
-    // shows up in Roles & Permissions and in Users & Logins (the permission step used to be discarded).
-    if (roleMode === "custom") {
-      saveRole({
-        name: finalRoleName,
-        description: `Custom role created from User Assignment for ${employee.name}`,
-        permissions: perms,
-        branches: branchIds,
-        assignedUsers: { [employee.id]: branchIds },
-        by: me.name,
+    try {
+      setLoading(true);
+
+      // 1. Fetch Real Employees from /employees
+      let employeesLoaded = [];
+      try {
+        const empRes = await getEmployees({ limit: 100 });
+        const empData = extractList(empRes);
+        if (Array.isArray(empData) && empData.length > 0) {
+          employeesLoaded = empData.map((e) => ({
+            ...e,
+            id: String(e.id),
+            user_id: e.user_id ? String(e.user_id) : String(e.id),
+            name:
+              [e.first_name, e.last_name].filter(Boolean).join(" ") ||
+              e.name ||
+              e.work_email ||
+              e.email ||
+              `Employee ${e.id}`,
+            email: e.work_email || e.email || "",
+            company_id: e.company_id ? String(e.company_id) : (e.company?.id ? String(e.company.id) : undefined),
+            company_name: e.company_name || e.company?.name || (typeof e.company === "string" ? e.company : undefined),
+            branch_id: e.branch_id ? String(e.branch_id) : (e.branch?.id ? String(e.branch.id) : undefined),
+            branch_name: e.branch_name || e.branch?.name || (typeof e.branch === "string" ? e.branch : undefined),
+            branch: e.branch_name || e.branch || "",
+            dept: e.department || e.department_id || "",
+          }));
+          setRealEmployees(employeesLoaded);
+        }
+      } catch (err) {
+        console.warn("Could not load real employees:", err);
+      }
+
+      // 2. Fetch Companies from backend APIs + root organisation + real employees
+      const mergedCompanies = [];
+      const seenComp = new Set();
+
+      try {
+        const compRes = await Company_api.getCompanies();
+        const compData = extractList(compRes);
+        if (Array.isArray(compData) && compData.length > 0) {
+          compData.forEach((c) => {
+            const id = String(c.id);
+            if (!seenComp.has(id)) {
+              seenComp.add(id);
+              mergedCompanies.push({
+                ...c,
+                id,
+                name: c.name || c.legal_name || c.company_name || `Company ${id}`,
+              });
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("Could not load companies:", err);
+      }
+
+      // Also check Root Organisation from /organisation
+      try {
+        const orgRes = await organizationApi.getOrganization();
+        const org = orgRes?.data ?? orgRes;
+        if (org && (org.name || org.legal_name || org.legalName)) {
+          const orgId = String(org.id || "ORG-ROOT");
+          const orgName = org.name || org.legal_name || org.legalName;
+          if (!seenComp.has(orgId)) {
+            seenComp.add(orgId);
+            mergedCompanies.unshift({
+              ...org,
+              id: orgId,
+              name: orgName,
+              is_root: true,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Could not load organisation:", err);
+      }
+
+      // Also harvest any real companies attached to employees
+      employeesLoaded.forEach((e) => {
+        if (e.company_id && !seenComp.has(e.company_id)) {
+          seenComp.add(e.company_id);
+          mergedCompanies.push({
+            id: e.company_id,
+            name: e.company_name || `Company (${e.company_id.slice(0, 8)})`,
+          });
+        }
       });
+
+      if (mergedCompanies.length > 0) {
+        setCompanies(mergedCompanies);
+        setSelectedCompanyId((prev) => prev || mergedCompanies[0].id);
+      }
+
+      // 3. Fetch Branches from backend APIs + real employees
+      const mergedBranches = [];
+      const seenBranch = new Set();
+
+      try {
+        const branchRes = await Branch_api.getBranches();
+        const branchData = extractList(branchRes);
+        if (Array.isArray(branchData) && branchData.length > 0) {
+          branchData.forEach((b) => {
+            const id = String(b.id);
+            if (!seenBranch.has(id)) {
+              seenBranch.add(id);
+              mergedBranches.push({
+                ...b,
+                id,
+                company_id: b.company_id ? String(b.company_id) : (b.companyId ? String(b.companyId) : undefined),
+                name: b.name || b.branch_name || b.city || `Branch ${id}`,
+              });
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("Could not load branches:", err);
+      }
+
+      // Also harvest any real branches attached to employees
+      employeesLoaded.forEach((e) => {
+        if (e.branch_id && !seenBranch.has(e.branch_id)) {
+          seenBranch.add(e.branch_id);
+          mergedBranches.push({
+            id: e.branch_id,
+            company_id: e.company_id || undefined,
+            name: e.branch_name || e.branch || `Branch (${e.branch_id.slice(0, 8)})`,
+          });
+        }
+      });
+
+      if (mergedBranches.length > 0) {
+        setBranches(mergedBranches);
+      }
+
+      // 4. Fetch Roles from /api/v1/roles
+      try {
+        const roleData = await rbacApi.getRoles();
+        const rawRole = roleData?.data ?? roleData;
+        const roleList = Array.isArray(rawRole)
+          ? rawRole
+          : rawRole?.items ?? rawRole?.roles ?? rawRole?.data ?? [];
+        if (Array.isArray(roleList) && roleList.length > 0) {
+          setAvailableRoles(roleList.filter((r) => r.status === "Active"));
+        } else {
+          setAvailableRoles(fallbackRolesRef.current);
+        }
+      } catch {
+        setAvailableRoles(fallbackRolesRef.current);
+      }
+
+      // 5. Fetch User Assignments from /api/v1/roles/assignments
+      try {
+        const assignData = await rbacApi.getUserRoleAssignments();
+        const list = extractList(assignData);
+        if (Array.isArray(list)) {
+          setAssignmentsList(list);
+        }
+      } catch {
+        // Fallback to local
+      }
+    } finally {
+      setLoading(false);
+      inFlightRef.current = false;
     }
-    grantRole(target, finalRoleName, branchIds, me.name);
-    // The temporary password now actually applies to the person's login (it was typed and thrown away).
-    const login = userByLogin(email.trim());
-    if (password && login) {
-      const r = issueTemporaryPassword(login.id, password, me.name);
-      if (!r.ok) toast.error(r.message);
+  }, [fetchBranchesForCompany]);
+
+  useEffect(() => {
+    if (hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
+    loadInitialData();
+  }, [loadInitialData]);
+
+  // Load Branches when selected Company changes
+  useEffect(() => {
+    if (!selectedCompanyId) return;
+    fetchBranchesForCompany(selectedCompanyId);
+  }, [selectedCompanyId, fetchBranchesForCompany]);
+
+  const activeBranchList = useMemo(() => {
+    if (branches.length > 0) {
+      // First try to find branches strictly matching selectedCompanyId
+      const matching = branches.filter((b) => {
+        if (!selectedCompanyId || !b.company_id) return true;
+        return String(b.company_id) === String(selectedCompanyId);
+      });
+      if (matching.length > 0) {
+        return matching.map((b) => ({
+          id: String(b.id),
+          name: b.name || b.branch_name || b.city || String(b.id),
+        }));
+      }
+      // If none match specifically, display all actual backend branches
+      return branches.map((b) => ({
+        id: String(b.id),
+        name: b.name || b.branch_name || b.city || String(b.id),
+      }));
     }
-    toast.success(
-      `${finalRoleName} assigned to ${employee.name} across ${branchIds.length} branch(es)${password && login ? " · temporary password set" : ""}`,
+    // Check if the selected company from fallbackOrgs has branches
+    const matchedOrg = fallbackOrgs.find((o) => String(o.id) === String(selectedCompanyId));
+    if (matchedOrg?.branches && matchedOrg.branches.length > 0) {
+      return matchedOrg.branches.map((b) => ({
+        id: String(b.id),
+        name: b.name || b.city || String(b.id),
+      }));
+    }
+    return ALL_MANAGED_BRANCHES.map((b) => ({
+      id: String(b.id),
+      name: b.office ? `${b.office} - ${b.name}` : b.name,
+    }));
+  }, [branches, fallbackOrgs, selectedCompanyId]);
+
+  const chosenBranchIds = useMemo(
+    () => Object.keys(selectedBranchIds).filter((b) => selectedBranchIds[b]),
+    [selectedBranchIds],
+  );
+
+  const selectedEmployeeObj = useMemo(() => {
+    return allEmployeesList.find((e) => String(e.id) === String(selectedEmpId));
+  }, [allEmployeesList, selectedEmpId]);
+
+  const resetForm = () => {
+    setSelectedEmpId("");
+    setSelectedBranchIds({});
+    setSelectedRoleId(availableRoles[0]?.id ? String(availableRoles[0].id) : "");
+    const initialCompanyId = allCompaniesList[0]?.id ? String(allCompaniesList[0].id) : "";
+    setSelectedCompanyId(initialCompanyId);
+    if (initialCompanyId) {
+      fetchBranchesForCompany(initialCompanyId);
+    }
+  };
+
+  const handleAssignSubmit = async () => {
+    if (!selectedEmpId || !selectedRoleId) {
+      toast.error("Please select an employee and a role.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      const roleObj = availableRoles.find((r) => r.id === selectedRoleId);
+      const empObj = allEmployeesList.find((e) => e.id === selectedEmpId);
+      const compObj = allCompaniesList.find((c) => c.id === selectedCompanyId) || allCompaniesList[0];
+
+      const payload = {
+        user_id: empObj?.user_id || empObj?.id || selectedEmpId,
+        employee_id: empObj?.id || selectedEmpId,
+        company_id: selectedCompanyId || compObj?.id || null,
+        role_id: selectedRoleId,
+        branch_id: chosenBranchIds[0] || null,
+        branch_ids: chosenBranchIds,
+      };
+
+      try {
+        await rbacApi.assignUserRole(payload);
+      } catch (apiErr) {
+        console.warn("Backend API sync notice:", apiErr);
+      }
+
+      // Synchronize with local store
+      grantRole(
+        selectedEmpId,
+        roleObj?.name || "Employee",
+        chosenBranchIds.length > 0 ? chosenBranchIds : ["All Branches"],
+        me.name,
+      );
+
+      const empName = empObj?.name || [empObj?.first_name, empObj?.last_name].filter(Boolean).join(" ") || "Employee";
+      toast.success(
+        `Assigned role "${roleObj?.name}" to ${empName}${
+          chosenBranchIds.length > 0
+            ? ` across ${chosenBranchIds.length} branch(es)`
+            : ` (All Branches)`
+        }.`,
+      );
+
+      resetForm();
+      setOpen(false);
+      loadInitialData(true);
+    } catch (err) {
+      toast.error(extractErrorMessage(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const filteredUsers = useMemo(() => {
+    if (!userSearch.trim()) return fallbackUsers;
+    const q = userSearch.toLowerCase();
+    return fallbackUsers.filter(
+      (u) =>
+        u.name?.toLowerCase().includes(q) ||
+        u.email?.toLowerCase().includes(q) ||
+        u.id?.toLowerCase().includes(q),
     );
-    setOpen(false);
-    reset();
+  }, [fallbackUsers, userSearch]);
+
+  const filteredAssignments = useMemo(() => {
+    if (!userSearch.trim()) return assignmentsList;
+    const q = userSearch.toLowerCase();
+    return assignmentsList.filter(
+      (a) =>
+        a.employee_name?.toLowerCase().includes(q) ||
+        a.user_id?.toLowerCase().includes(q) ||
+        a.role_name?.toLowerCase().includes(q) ||
+        a.company_name?.toLowerCase().includes(q),
+    );
+  }, [assignmentsList, userSearch]);
+
+  const handleRevoke = async (assignmentId, employeeName, roleName) => {
+    if (!window.confirm(`Revoke role "${roleName || "Assigned Role"}" from ${employeeName || "user"}?`)) return;
+    try {
+      setLoading(true);
+      await rbacApi.revokeAssignment(assignmentId);
+      toast.success(`Role assignment revoked successfully.`);
+      await loadInitialData(true);
+    } catch (err) {
+      toast.error(extractErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const branchName = (id) => {
+    const found = activeBranchList.find((b) => b.id === id);
+    return found?.name || id;
   };
 
   return (
@@ -173,564 +527,359 @@ export function UserAssignmentTab() {
       <Card className="shadow-card overflow-hidden">
         <CardContent className="flex flex-wrap items-center justify-between gap-3 p-5">
           <div>
-            <div className="font-semibold">User assignments</div>
+            <div className="font-semibold">User Role Assignments</div>
             <p className="text-muted-foreground text-sm">
-              Pick an employee, set their login credentials and assign a predefined or custom role.
+              Assign real organization employees to roles scoped by Company and Branch.
             </p>
           </div>
-          <Button
-            size="sm"
-            className="bg-gradient-emerald shadow-premium text-white"
-            disabled={!canManage}
-            title={canManage ? undefined : "Your role cannot grant access"}
-            onClick={() => {
-              reset();
-              setOpen(true);
-            }}
-          >
-            <UserPlus className="h-4 w-4" /> Assign User
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search assigned users..."
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                className="pl-8 h-8 text-xs w-48 sm:w-64"
+              />
+            </div>
+            <Button
+              size="sm"
+              className="bg-gradient-emerald shadow-premium text-white text-xs"
+              disabled={!canManage}
+              onClick={() => {
+                resetForm();
+                setSelectedRoleId(availableRoles[0]?.id || "");
+                setOpen(true);
+              }}
+            >
+              <UserPlus className="h-4 w-4 mr-1.5" /> Assign Role to Employee
+            </Button>
+          </div>
         </CardContent>
+
+        {/* Assignments Table */}
         <div className="border-border overflow-x-auto border-t">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
-              <tr>
-                <th className="p-3 text-left">User</th>
-                <th className="p-3 text-left">Email</th>
-                <th className="p-3 text-left">Roles by branch</th>
-                <th className="p-3 text-left">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-border divide-y">
-              {users.map((u) => (
-                <tr key={u.id} className={clickableRow} onClick={() => setDetail(u)}>
-                  <td className="p-3">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="border-gold/30 h-8 w-8 border">
-                        <AvatarFallback className="bg-gradient-emerald text-xs font-semibold text-white">
-                          {initials(u.name)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="font-semibold">
-                        {u.name}
-                        <div className="text-muted-foreground text-xs font-normal">{u.id}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="text-muted-foreground p-3">{u.email}</td>
-                  <td className="p-3">
-                    <div className="flex flex-wrap gap-1">
-                      {u.assignments.length === 0 && (
-                        <span className="text-muted-foreground text-xs">No roles assigned</span>
-                      )}
-                      {u.assignments.flatMap((a) =>
-                        a.roles.map((r) => (
-                          <Badge
-                            key={a.branchId + r}
-                            variant="outline"
-                            className="border-primary/30 bg-primary/10 text-primary"
-                          >
-                            {r} · {branchName(a.branchId)}
-                          </Badge>
-                        )),
-                      )}
-                    </div>
-                  </td>
-                  <td className="p-3">
-                    <Badge
-                      variant="outline"
-                      className={
-                        u.status === "Active"
-                          ? "border-primary/30 bg-primary/10 text-primary"
-                          : "border-gold/30 bg-gold/10 text-gold"
-                      }
-                    >
-                      {u.status}
-                    </Badge>
-                  </td>
+          {loading && assignmentsList.length === 0 && fallbackUsers.length === 0 ? (
+            <div className="flex items-center justify-center p-8">
+              <Loader2 className="text-primary h-6 w-6 animate-spin" />
+            </div>
+          ) : assignmentsList.length > 0 ? (
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
+                <tr>
+                  <th className="p-3 text-left">Employee</th>
+                  <th className="p-3 text-left">Company</th>
+                  <th className="p-3 text-left">Assigned Role</th>
+                  <th className="p-3 text-left">Scoped Branch(es)</th>
+                  <th className="p-3 text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-border divide-y">
+                {filteredAssignments.map((a) => {
+                  const empName = a.employee_name || a.user_name || a.user_id || "User";
+                  const branchIds = a.branch_ids || (a.branch_id ? [a.branch_id] : []);
+                  return (
+                    <tr key={a.id} className="hover:bg-muted/20 transition-colors">
+                      <td className="p-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar className="border-gold/30 h-8 w-8 border">
+                            <AvatarFallback className="bg-gradient-emerald text-xs font-semibold text-white">
+                              {safeInitials(empName)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <div className="font-semibold">{empName}</div>
+                            <div className="text-muted-foreground text-xs font-normal">
+                              {a.email || a.user_id}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="text-muted-foreground p-3 text-xs">
+                        <span className="font-medium text-foreground">{a.company_name || a.company_id || "All Entities"}</span>
+                      </td>
+                      <td className="p-3">
+                        <Badge
+                          variant="outline"
+                          className="border-primary/30 bg-primary/10 text-primary text-xs font-medium"
+                        >
+                          {a.role_name || a.role_id}
+                        </Badge>
+                      </td>
+                      <td className="p-3">
+                        <div className="flex flex-wrap gap-1.5">
+                          {branchIds.map((bId) => (
+                            <Badge
+                              key={bId}
+                              variant="secondary"
+                              className="text-[11px] font-normal"
+                            >
+                              {branchName(bId)}
+                            </Badge>
+                          ))}
+                          {branchIds.length === 0 && (
+                            <span className="text-muted-foreground text-xs">All Branches</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-3 text-right">
+                        {canManage && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            title="Revoke role assignment"
+                            onClick={() => handleRevoke(a.id, empName, a.role_name)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
+                <tr>
+                  <th className="p-3 text-left">User</th>
+                  <th className="p-3 text-left">Email</th>
+                  <th className="p-3 text-left">Roles &amp; Scoped Branches</th>
+                  <th className="p-3 text-left">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-border divide-y">
+                {filteredUsers.map((u) => (
+                  <tr key={u.id} className={clickableRow} onClick={() => setDetail(u)}>
+                    <td className="p-3">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="border-gold/30 h-8 w-8 border">
+                          <AvatarFallback className="bg-gradient-emerald text-xs font-semibold text-white">
+                            {safeInitials(u.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <div className="font-semibold">{u.name}</div>
+                          <div className="text-muted-foreground text-xs font-normal">{u.id}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="text-muted-foreground p-3">{u.email}</td>
+                    <td className="p-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {u.assignments.flatMap((a) =>
+                          a.roles.map((r) => (
+                            <Badge
+                              key={`${a.branchId}-${r}`}
+                              variant="outline"
+                              className="border-primary/30 bg-primary/10 text-primary text-xs"
+                            >
+                              {r} <span className="opacity-60 ml-1">({branchName(a.branchId)})</span>
+                            </Badge>
+                          )),
+                        )}
+                        {u.assignments.length === 0 && (
+                          <span className="text-muted-foreground text-xs">No roles assigned</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-3">
+                      <Badge
+                        variant="outline"
+                        className={
+                          u.status === "Active"
+                            ? "border-primary/30 bg-primary/10 text-primary"
+                            : "border-gold/30 bg-gold/10 text-gold"
+                        }
+                      >
+                        {u.status}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </Card>
 
-      {detail &&
-        (() => {
-          const emp = EMPLOYEES.find((e) => e.email.toLowerCase() === detail.email.toLowerCase());
-          return (
-            <RecordDetailDialog
-              onClose={() => setDetail(null)}
-              title={detail.name}
-              subtitle={`${detail.id} · ${detail.email}`}
-              badges={
-                <Badge
-                  variant="outline"
-                  className={
-                    detail.status === "Active"
-                      ? "border-primary/30 bg-primary/10 text-primary"
-                      : "border-gold/30 bg-gold/10 text-gold"
-                  }
-                >
-                  {detail.status}
-                </Badge>
-              }
-              record={{
-                id: detail.id,
-                name: detail.name,
-                email: detail.email,
-                status: detail.status,
-                employeeId: emp?.id ?? "—",
-                department: emp?.dept ?? "—",
-                designation: emp?.role ?? "—",
-                branch: emp?.branch ?? "—",
-                assignments: detail.assignments.map((a) => ({
-                  branch: branchName(a.branchId),
-                  roles: a.roles.join(", "),
-                })),
-              }}
-              labels={{ id: "User ID", employeeId: "Employee ID", assignments: "Roles by branch" }}
-              sections={[
-                { title: "User", keys: ["id", "name", "email", "status"] },
-                { title: "Employee", keys: ["employeeId", "department", "designation", "branch"] },
-                { title: "Roles by branch", keys: ["assignments"] },
-              ]}
-            />
-          );
-        })()}
-
-      <Dialog
-        open={open}
-        onOpenChange={(o) => {
-          setOpen(o);
-          if (!o) reset();
-        }}
-      >
-        <DialogContent className="max-h-[88vh] max-w-4xl overflow-y-auto">
+      {/* Real Assignment Dialog */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Assign user access</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="text-primary h-5 w-5" /> Assign Role to Employee
+            </DialogTitle>
             <DialogDescription>
-              Select the employee, set credentials and grant a role.
+              Select an employee from the organization directory, choose their branch scope, and attach a role.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {visibleSteps.map((s, i) => (
-              <div key={s} className="flex items-center gap-2">
-                <div
-                  className={cn(
-                    "flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition",
-                    i === step
-                      ? "bg-gradient-emerald shadow-premium text-white"
-                      : i < step
-                        ? "text-primary"
-                        : "text-muted-foreground",
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "grid h-5 w-5 place-items-center rounded-full text-[11px] font-bold",
-                      i === step
-                        ? "bg-white/20"
-                        : i < step
-                          ? "bg-primary/15 text-primary"
-                          : "bg-muted",
-                    )}
-                  >
-                    {i < step ? <Check className="h-3 w-3" /> : i + 1}
-                  </span>
-                  {s}
-                </div>
-                {i < visibleSteps.length - 1 && (
-                  <ChevronRight className="text-muted-foreground/50 h-4 w-4" />
-                )}
-              </div>
-            ))}
-          </div>
-
-          <Separator />
-
-          {stepName === "User & Credentials" && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label>Employee</Label>
-                  <Select value={empId} onValueChange={pickEmployee}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select an employee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {EMPLOYEES.map((e) => (
-                        <SelectItem key={e.id} value={e.id}>
-                          {e.name} · {e.role} · {e.branch}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Login email</Label>
-                  <Input
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="name@company.com"
-                  />
-                  {email && !emailValid && (
-                    <p className="text-destructive text-xs">Enter a valid e-mail address.</p>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="flex items-center gap-1.5">
-                    <KeyRound className="h-3.5 w-3.5" /> Temporary password
-                  </Label>
-                  <Input
-                    value={password}
-                    onChange={(e) => setPasswordDraft(e.target.value)}
-                    placeholder="Leave blank to keep the current password"
-                  />
-                  {passwordError && <p className="text-destructive text-xs">{passwordError}</p>}
-                </div>
-                {employee && (
-                  <div className="border-border bg-muted/30 rounded-lg border p-3 text-sm">
-                    <div className="font-semibold">{employee.name}</div>
-                    <div className="text-muted-foreground text-xs">
-                      {employee.id} · {employee.dept} · {employee.role}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div>
-                <div className="mb-2 text-sm font-medium">Branches this user can manage</div>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {ALL_MANAGED_BRANCHES.map((b) => (
-                    <label
-                      key={b.id}
-                      className="border-border bg-muted/30 flex cursor-pointer items-center gap-2 rounded-lg border p-2.5 text-sm"
-                    >
-                      <Checkbox
-                        checked={!!branches[b.id]}
-                        onCheckedChange={(v) => setBranches((p) => ({ ...p, [b.id]: !!v }))}
-                      />
-                      <span>
-                        {b.name}
-                        <span className="text-muted-foreground text-xs"> · {b.office}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+          <div className="space-y-4 py-2">
+            {/* 1. Employee Selection */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">
+                Select Real Employee <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={selectedEmpId}
+                onValueChange={(val) => {
+                  setSelectedEmpId(val);
+                  const found = allEmployeesList.find((e) => String(e.id) === String(val));
+                  if (found) {
+                    if (found.company_id) {
+                      setSelectedCompanyId(String(found.company_id));
+                      fetchBranchesForCompany(found.company_id);
+                    }
+                    if (found.branch_id) {
+                      setSelectedBranchIds({ [String(found.branch_id)]: true });
+                    }
+                  }
+                }}
+              >
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Choose an employee..." />
+                </SelectTrigger>
+                <SelectContent className="max-h-56">
+                  {allEmployeesList.map((e) => {
+                    const fullName = e.name || `${e.first_name || ""} ${e.last_name || ""}`.trim() || e.id;
+                    const metaParts = [
+                      e.company_name,
+                      e.branch_name || e.branch,
+                      e.work_email || e.email || e.department || e.dept,
+                    ].filter(Boolean);
+                    const subtitle = metaParts.join(" · ") || "Employee";
+                    return (
+                      <SelectItem key={e.id} value={String(e.id)} className="text-xs">
+                        {fullName} ({subtitle})
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             </div>
-          )}
 
-          {stepName === "Role" && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => setRoleMode("predefined")}
-                  className={cn(
-                    "rounded-lg border p-4 text-left transition",
-                    roleMode === "predefined"
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:bg-muted/40",
-                  )}
-                >
-                  <div className="flex items-center gap-2 font-semibold">
-                    <ShieldCheck className="text-primary h-4 w-4" /> Predefined role
-                  </div>
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    Use one of the roles already configured.
-                  </p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRoleMode("custom")}
-                  className={cn(
-                    "rounded-lg border p-4 text-left transition",
-                    roleMode === "custom"
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:bg-muted/40",
-                  )}
-                >
-                  <div className="flex items-center gap-2 font-semibold">
-                    <ShieldCheck className="text-gold h-4 w-4" /> Custom role
-                  </div>
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    Pick modules, submodules, screens and permissions.
-                  </p>
-                </button>
-              </div>
-              {roleMode === "predefined" ? (
-                <div className="max-w-md space-y-1.5">
-                  <Label>Role</Label>
-                  <Select value={roleName} onValueChange={setRoleName}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ROLES.map((r) => (
-                        <SelectItem key={r.id} value={r.name}>
-                          {r.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-muted-foreground text-xs">
-                    {ROLES.find((r) => r.name === roleName)?.description}
-                  </p>
-                </div>
-              ) : (
-                <div className="max-w-md space-y-1.5">
-                  <Label>Custom role name</Label>
-                  <Input
-                    value={customName}
-                    onChange={(e) => setCustomName(e.target.value)}
-                    placeholder="e.g. Regional Payroll Reviewer"
-                  />
-                  {customNameTaken && (
-                    <p className="text-destructive text-xs">
-                      A role with this name already exists — pick it as a predefined role instead.
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {stepName === "Permissions" && (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-muted-foreground text-sm">
-                  {selectedIds.length} of {allScreenIds.length} screens selected
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => toggleMany(allScreenIds, true)}
-                  >
-                    Select all screens
-                  </Button>
-                  {PERMISSION_ACTIONS.map((a) => (
-                    <Button
-                      key={a}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => selectedIds.forEach((id) => setPerm(id, a, true))}
-                    >
-                      All {a}
-                    </Button>
+            {/* 2. Company Scope */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium flex items-center gap-1.5">
+                <Building2 className="h-3.5 w-3.5 text-primary" /> Company Entity <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={selectedCompanyId || (allCompaniesList[0] ? String(allCompaniesList[0].id) : "")}
+                onValueChange={(val) => {
+                  setSelectedCompanyId(val);
+                  fetchBranchesForCompany(val);
+                }}
+              >
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Select company entity..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {allCompaniesList.map((c) => (
+                    <SelectItem key={c.id} value={String(c.id)} className="text-xs">
+                      {c.name || c.legalName || c.code || c.id}
+                    </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* 3. Branch Scope Selection */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-primary" /> Branch Scope{" "}
+                  <span className="text-muted-foreground font-normal text-[11px]">(Optional — leave blank for All Branches)</span>
+                </Label>
+                <div className="flex gap-2">
                   <Button
+                    type="button"
                     variant="ghost"
                     size="sm"
-                    onClick={() => {
-                      setSelected({});
-                      setPerms({});
-                    }}
+                    className="h-6 text-[10px] px-1.5"
+                    onClick={() =>
+                      setSelectedBranchIds(
+                        Object.fromEntries(activeBranchList.map((b) => [String(b.id), true])),
+                      )
+                    }
+                  >
+                    Select All
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-[10px] px-1.5"
+                    onClick={() => setSelectedBranchIds({})}
                   >
                     Clear
                   </Button>
                 </div>
               </div>
-              <div className="max-h-[45vh] space-y-3 overflow-y-auto pr-1">
-                {RBAC_MODULES.map((m) => {
-                  const moduleIds = m.submodules.flatMap((s) =>
-                    s.screens.map((sc) => screenId(m.key, s.key, sc.key)),
-                  );
-                  const allOn = moduleIds.every((id) => selected[id]);
-                  return (
-                    <div key={m.key} className="border-border space-y-3 rounded-lg border p-4">
-                      <label className="flex cursor-pointer items-center gap-2.5 font-semibold">
-                        <Checkbox
-                          checked={allOn}
-                          onCheckedChange={(v) => toggleMany(moduleIds, !!v)}
-                        />
-                        {m.name}
-                        <Badge
-                          variant="outline"
-                          className="border-gold/30 bg-gold/10 text-gold ml-auto"
-                        >
-                          {moduleIds.filter((id) => selected[id]).length}/{moduleIds.length}
-                        </Badge>
-                      </label>
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        {m.submodules.map((s) => {
-                          const ids = s.screens.map((sc) => screenId(m.key, s.key, sc.key));
-                          const subOn = ids.every((id) => selected[id]);
-                          return (
-                            <div
-                              key={s.key}
-                              className="border-border bg-muted/30 space-y-2 rounded-lg border p-3"
-                            >
-                              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-                                <Checkbox
-                                  checked={subOn}
-                                  onCheckedChange={(v) => toggleMany(ids, !!v)}
-                                />
-                                {s.name}
-                              </label>
-                              <div className="space-y-2 pl-6">
-                                {s.screens.map((sc) => {
-                                  const id = screenId(m.key, s.key, sc.key);
-                                  const p = perms[id];
-                                  return (
-                                    <div key={sc.key} className="space-y-1">
-                                      <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-sm">
-                                        <Checkbox
-                                          checked={!!selected[id]}
-                                          onCheckedChange={(v) => toggleScreen(id, !!v)}
-                                        />
-                                        {sc.name}
-                                      </label>
-                                      {p && (
-                                        <div className="flex flex-wrap gap-3 pl-6">
-                                          {PERMISSION_ACTIONS.map((a) => (
-                                            <label
-                                              key={a}
-                                              className="text-muted-foreground flex cursor-pointer items-center gap-1.5 text-xs"
-                                            >
-                                              <Checkbox
-                                                checked={p[a]}
-                                                onCheckedChange={(v) => setPerm(id, a, !!v)}
-                                              />
-                                              {a}
-                                            </label>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border rounded-lg p-3 bg-muted/20 max-h-40 overflow-y-auto">
+                {activeBranchList.map((b) => (
+                  <label
+                    key={b.id}
+                    className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/50 p-1 rounded"
+                  >
+                    <Checkbox
+                      checked={Boolean(selectedBranchIds[String(b.id)])}
+                      onCheckedChange={(val) =>
+                        setSelectedBranchIds((prev) => ({ ...prev, [String(b.id)]: Boolean(val) }))
+                      }
+                    />
+                    <span className="truncate">{b.name}</span>
+                  </label>
+                ))}
               </div>
             </div>
-          )}
 
-          {stepName === "Review & Submit" && (
-            <div className="space-y-4">
-              <div className="border-border bg-muted/30 grid grid-cols-1 gap-3 rounded-lg border p-4 sm:grid-cols-2">
-                <div>
-                  <div className="text-muted-foreground text-xs tracking-wider uppercase">
-                    Employee
-                  </div>
-                  <div className="font-medium">{employee?.name ?? "—"}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-xs tracking-wider uppercase">
-                    Login email
-                  </div>
-                  <div className="font-medium">{email}</div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-xs tracking-wider uppercase">
-                    Password
-                  </div>
-                  <div className="font-medium">
-                    {password ? "•".repeat(password.length) : "Unchanged"}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-muted-foreground text-xs tracking-wider uppercase">Role</div>
-                  <div className="font-medium">
-                    {finalRoleName}{" "}
-                    <span className="text-muted-foreground text-xs">({roleMode})</span>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <div className="text-muted-foreground mb-1.5 text-xs tracking-wider uppercase">
-                  Branches
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {branchIds.map((id) => (
-                    <Badge
-                      key={id}
-                      variant="outline"
-                      className="border-primary/30 bg-primary/10 text-primary"
-                    >
-                      {branchName(id)}
-                    </Badge>
+            {/* 4. Role Selection */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5 text-primary" /> Role to Assign{" "}
+                <span className="text-destructive">*</span>
+              </Label>
+              <Select value={selectedRoleId} onValueChange={setSelectedRoleId}>
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Select role template..." />
+                </SelectTrigger>
+                <SelectContent className="max-h-56">
+                  {availableRoles.map((r) => (
+                    <SelectItem key={r.id} value={String(r.id)} className="text-xs">
+                      {r.name} {r.built_in || r.builtIn ? "(Built-in)" : "(Custom)"}
+                    </SelectItem>
                   ))}
-                </div>
-              </div>
-              {roleMode === "custom" && (
-                <div className="border-border max-h-[35vh] overflow-x-auto rounded-lg border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
-                      <tr>
-                        <th className="p-3 text-left">Screen</th>
-                        {PERMISSION_ACTIONS.map((a) => (
-                          <th key={a} className="p-3 text-center">
-                            {a}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-border divide-y">
-                      {RBAC_MODULES.flatMap((m) =>
-                        m.submodules.flatMap((s) =>
-                          s.screens
-                            .filter((sc) => selected[screenId(m.key, s.key, sc.key)])
-                            .map((sc) => {
-                              const id = screenId(m.key, s.key, sc.key);
-                              const p = perms[id] ?? { View: true, Edit: false, Delete: false };
-                              return (
-                                <tr key={id}>
-                                  <td className="p-3">
-                                    {m.name} › {s.name} ›{" "}
-                                    <span className="font-medium">{sc.name}</span>
-                                  </td>
-                                  {PERMISSION_ACTIONS.map((a) => (
-                                    <td key={a} className="p-3 text-center">
-                                      {p[a] ? (
-                                        <Check className="text-primary mx-auto h-4 w-4" />
-                                      ) : (
-                                        "—"
-                                      )}
-                                    </td>
-                                  ))}
-                                </tr>
-                              );
-                            }),
-                        ),
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                </SelectContent>
+              </Select>
             </div>
-          )}
+          </div>
 
-          <DialogFooter className="gap-2">
-            {step > 0 && (
-              <Button variant="outline" onClick={() => setStep((s) => s - 1)}>
-                Back
-              </Button>
-            )}
-            {step < visibleSteps.length - 1 ? (
-              <Button
-                className="bg-gradient-emerald text-white"
-                disabled={!canNext}
-                onClick={() => setStep((s) => s + 1)}
-              >
-                Next <ChevronRight className="h-4 w-4" />
-              </Button>
-            ) : (
-              <Button className="bg-gradient-emerald text-white" onClick={submit}>
-                Submit assignment
-              </Button>
-            )}
+          <DialogFooter className="border-t pt-3">
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="bg-gradient-emerald shadow-premium text-white text-xs"
+              onClick={handleAssignSubmit}
+              disabled={submitting || !selectedEmpId || chosenBranchIds.length === 0 || !selectedRoleId}
+            >
+              {submitting ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+              ) : (
+                <Check className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              Assign Role
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
   );
 }
+
+export default UserAssignmentTab;

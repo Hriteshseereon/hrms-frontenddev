@@ -30,6 +30,9 @@ const REDIRECTS = {
   "/org/recruitment/locations": "/org/masters#locations",
   "/org/recruitment/masters": "/org/masters#recmasters",
   "/org/recruitment/rounds": "/org/masters#rounds",
+  "/emp/grievance": "/emp/complaints",
+  "/emp/grievances": "/emp/complaints",
+  "/me/grievances": "/emp/complaints",
 };
 
 /** Sets the browser-tab title for the active screen. */

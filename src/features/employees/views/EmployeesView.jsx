@@ -1,14 +1,38 @@
-import { createEmployee as createEmployeeApi, getEmployees, getEmployeeById } from "@/api/employeeApi";
+import {
+  createEmployee as createEmployeeApi,
+  getEmployees,
+  getEmployeeById,
+  getEmployeeDocuments,
+  getPayComponents,
+  patchEmployeeForm,
+  resolveApiUrl,
+} from "@/api/employeeApi";
+import { organizationApi } from "@/api/organizationApi";
+import { generateWorkEmail, isDuplicateWorkEmail } from "@/features/employees/data/workEmail";
+import { DocPreviewDialog } from "@/features/employees/components/DocPreviewDialog";
 import { useSearch } from "@/lib/navigation";
 import { captureFiles } from "@/lib/attachments";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Children,
+  createContext,
+  isValidElement,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { useSessionStore, canCreateEmployee } from "@/features/auth/data/session-store";
-import { EditEmployeeDialog } from "@/features/employees/components/EditEmployeeDialog";
 import SuperAdmin_auth from "@/api/SuperAdmin_auth";
 import Branch_api from "@/api/branch";
-import departmentApi from "@/api/departmentApi";
-import designationApi from "@/api/designationApi";
+import {
+  isUuid,
+  listOf,
+  staffLabel,
+  useEmployeeJobOptions,
+} from "@/features/employees/data/useEmployeeJobOptions";
 import {
   Users,
   CalendarDays,
@@ -34,6 +58,7 @@ import {
   AlertCircle,
   RefreshCw,
   Pencil,
+  Eye,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,9 +96,6 @@ import { ComplaintsTab } from "@/features/employees/components/ComplaintsTab";
 import { ReferralsTab } from "@/features/employees/components/ReferralsTab";
 import { InsuranceTab } from "@/features/employees/components/InsuranceTab";
 import { RetirementTab } from "@/features/employees/components/RetirementTab";
-import { OFFICES } from "@/features/employees/data/hr-data";
-import { PAY_COMPONENTS } from "@/features/organization/data/master-data";
-import { useSharedList } from "@/lib/shared-list";
 import {
   useDirectory,
   findEmployee,
@@ -81,11 +103,9 @@ import {
   updatePersonalDetails,
   updateStatutoryIds,
 } from "@/features/employees/data/employee-directory";
-import { allUsers, can, hireableRoles, useCurrentUser } from "@/features/auth/data/auth-session";
-import { hrPartnerOptions, setHrPartner } from "@/features/organization/data/hr-partner";
+import { can, hireableRoles, useCurrentUser } from "@/features/auth/data/auth-session";
+import { setHrPartner } from "@/features/organization/data/hr-partner";
 import { hireEmployee, validateHireInput } from "@/features/recruitment/data/hiring-data";
-import { useDepartments } from "@/features/organization/data/dept-data";
-import { useDesignationNames } from "@/features/employees/data/hr-data";
 import { setManager } from "@/features/organization/data/manager-data";
 import { useActiveOrgId, useOrgs } from "@/features/organization/data/group-data";
 import { exportCsv } from "@/lib/export-utils";
@@ -705,20 +725,21 @@ function Employees() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Employee Dialog */}
-      {editingEmployee && (
-        <EditEmployeeDialog
-          open={!!editingEmployee}
-          employee={editingEmployee}
-          onClose={() => setEditingEmployee(null)}
-          onUpdated={(updated) => {
-            fetchBackendEmployees();
-            if (selected?.id === updated?.id) {
-              setSelected((prev) => ({ ...prev, ...updated }));
-            }
-          }}
-        />
-      )}
+      {/* Edit Employee — the onboarding form, pre-filled */}
+      <Dialog open={!!editingEmployee} onOpenChange={(o) => !o && setEditingEmployee(null)}>
+        {editingEmployee && (
+          <EditEmployeeForm
+            employee={editingEmployee}
+            onClose={() => setEditingEmployee(null)}
+            onUpdated={(updated) => {
+              fetchBackendEmployees();
+              if (selected?.id === updated?.id) {
+                setSelected((prev) => ({ ...prev, ...updated }));
+              }
+            }}
+          />
+        )}
+      </Dialog>
     </div>
   );
 }
@@ -727,25 +748,120 @@ function Employees() {
 // Add Employee — multi-tab premium form
 // ============================================================
 
+/** Server validation errors keyed by API field name (see `{detail:[{loc, msg}]}`). */
+const FormErrorsContext = createContext({});
+
+// Form input name -> API field name, so a server error can be shown under the right input.
+const FORM_TO_API = {
+  firstName: "first_name",
+  lastName: "last_name",
+  dob: "date_of_birth",
+  maritalStatus: "marital_status",
+  bloodGroup: "blood_group",
+  personalEmail: "personal_email",
+  workEmail: "work_email",
+  whatsapp: "whatsapp_number",
+  emergencyName: "emergency_contact_name",
+  emergencyPhone: "emergency_contact_phone",
+  currentAddress: "current_address",
+  permanentAddress: "permanent_address",
+  linkedin: "linkedin_url",
+  github: "github_url",
+  twitter: "twitter_url",
+  website: "website_url",
+  yearOfPassing: "year_of_passing",
+  eduScore: "education_score",
+  aadhaar: "aadhaar_number",
+  pan: "pan_number",
+  uan: "uan_number",
+  esiNo: "esic_number",
+  drivingLicence: "driving_license_number",
+  passport: "passport_number",
+  bankHolder: "bank_account_holder_name",
+  bankName: "bank_name",
+  accountNo: "bank_account_number",
+  ifsc: "ifsc_code",
+  bankBranch: "bank_branch",
+  accountType: "bank_account_type",
+  payMode: "payment_mode",
+  doj: "date_of_joining",
+  employmentType: "employment_type",
+  noticeDays: "notice_period_days",
+  workMode: "work_mode",
+  probationMonths: "probation_months",
+  payFrequency: "pay_frequency",
+};
+
+const PERSONAL_KEYS = new Set([
+  "first_name", "last_name", "date_of_birth", "gender", "marital_status", "blood_group", "nationality",
+  "religion", "personal_email", "work_email", "phone", "whatsapp_number", "emergency_contact_name",
+  "emergency_contact_phone", "current_address", "permanent_address", "linkedin_url", "github_url",
+  "twitter_url", "website_url",
+]);
+const LEGAL_KEYS = new Set([
+  "pan_number", "aadhaar_number", "uan_number", "esic_number", "driving_license_number", "passport_number",
+  "aadhaar_card", "pan_card", "driving_license", "passport", "resume", "offer_letter", "appointment_letter",
+  "educational_certificate", "address_proof",
+]);
+const EDUCATION_KEYS = new Set(["qualification", "institution", "year_of_passing", "education_score"]);
+
+/** Which tab of the form holds an API field — used to jump to the first field the server rejected. */
+function tabOfField(key) {
+  if (/^prev\d+_/.test(key) || EDUCATION_KEYS.has(key)) return "previous";
+  if (PERSONAL_KEYS.has(key)) return "personal";
+  if (LEGAL_KEYS.has(key)) return "legal";
+  if (/^bank_|^ifsc_code$|^payment_mode$|^passbook$/.test(key)) return "bank";
+  return "job";
+}
+
 function FieldRow({ children }) {
   return <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{children}</div>;
 }
 
-function Field({ label, children, required }) {
+function Field({ label, children, required, field }) {
+  const errors = useContext(FormErrorsContext);
+  const childName = Children.toArray(children).find((c) => isValidElement(c) && c.props?.name)?.props
+    .name;
+  const key = FORM_TO_API[field ?? childName] ?? field ?? childName;
+  const error = key ? errors[key] : undefined;
   return (
-    <div className="space-y-1.5">
-      <Label className="text-muted-foreground text-xs font-medium">
+    <div
+      className={
+        "space-y-1.5" +
+        (error
+          ? " [&_input]:border-destructive [&_textarea]:border-destructive [&_[role=combobox]]:border-destructive"
+          : "")
+      }
+    >
+      <Label className={"text-xs font-medium " + (error ? "text-destructive" : "text-muted-foreground")}>
         {label} {required && <span className="text-destructive">*</span>}
       </Label>
       {children}
+      {error && <p className="text-destructive text-[11px]">{error}</p>}
     </div>
   );
 }
 
 
 /** `name` is the multipart field name sent to the backend (see POST /employees/form). */
-function FileUpload({ label, hint, name, file, onSelect, onRemove }) {
+function FileUpload({ label, hint, name, file, onSelect, onRemove, existing, onPreviewExisting }) {
   const inputRef = useRef(null);
+  const uploadError = useContext(FormErrorsContext)[name];
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  // Object URL for the chosen file — released when the file changes or the card unmounts.
+  useEffect(() => {
+    if (!(file instanceof File)) {
+      setPreviewUrl(null);
+      return undefined;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  const isPdf = file?.type === "application/pdf" || /\.pdf$/i.test(file?.name ?? "");
   return (
     <div className="space-y-1.5">
       <Label className="text-muted-foreground text-xs font-medium">{label}</Label>
@@ -755,25 +871,55 @@ function FileUpload({ label, hint, name, file, onSelect, onRemove }) {
             <Upload className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{file?.name ?? "Click to upload"}</div>
+            <div className="truncate text-sm font-medium">
+              {file?.name ?? (existing ? existing.file_name || "Uploaded" : "Click to upload")}
+            </div>
             <div className="text-muted-foreground text-[11px]">
               {file
                 ? `${(file.size / (1024 * 1024)).toFixed(2)} MB · Selected`
-                : (hint ?? "PDF, JPG, PNG · max 5 MB")}
+                : existing
+                  ? "Uploaded · click to replace"
+                  : (hint ?? "PDF, JPG, PNG · max 5 MB")}
             </div>
           </div>
         </div>
         {file ? (
+          <div className="flex items-center">
+            <button
+              type="button"
+              title="Preview"
+              onClick={(e) => {
+                e.preventDefault();
+                setPreviewOpen(true);
+              }}
+              className="text-muted-foreground hover:text-primary p-1 transition"
+            >
+              <Eye className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              title="Remove"
+              onClick={(e) => {
+                e.preventDefault();
+                if (inputRef.current) inputRef.current.value = "";
+                if (onRemove) onRemove(name);
+              }}
+              className="text-muted-foreground hover:text-destructive p-1 transition"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        ) : existing ? (
           <button
             type="button"
+            title="Preview current file"
             onClick={(e) => {
               e.preventDefault();
-              if (inputRef.current) inputRef.current.value = "";
-              if (onRemove) onRemove(name);
+              onPreviewExisting?.();
             }}
-            className="text-muted-foreground hover:text-destructive p-1 transition"
+            className="text-muted-foreground hover:text-primary p-1 transition"
           >
-            <Trash2 className="h-4 w-4" />
+            <Eye className="h-4 w-4" />
           </button>
         ) : (
           <Badge variant="outline" className="border-gold/30 bg-gold/10 text-gold">
@@ -795,10 +941,26 @@ function FileUpload({ label, hint, name, file, onSelect, onRemove }) {
                 return;
               }
               if (onSelect) onSelect(name, f);
+              setPreviewOpen(true);
             }
           }}
         />
       </label>
+      {uploadError && <p className="text-destructive text-[11px]">{uploadError}</p>}
+      <Dialog open={previewOpen && !!previewUrl} onOpenChange={setPreviewOpen}>
+        <DialogContent className="flex max-h-[90vh] max-w-3xl flex-col">
+          <DialogHeader>
+            <DialogTitle className="truncate">{file?.name ?? label}</DialogTitle>
+          </DialogHeader>
+          <div className="bg-muted/30 flex min-h-[50vh] flex-1 items-center justify-center overflow-auto rounded-md border">
+            {isPdf ? (
+              <iframe title={file?.name} src={previewUrl} className="h-[70vh] w-full" />
+            ) : (
+              <img src={previewUrl} alt={file?.name} className="max-h-[70vh] object-contain" />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -817,7 +979,7 @@ function SectionTitle({ icon: Icon, title, desc }) {
   );
 }
 
-function PrevEmploymentBlock({ index, onRemove }) {
+function PrevEmploymentBlock({ index, onRemove, init, docFiles, onSelect, onRemoveFile, onPreviewExisting }) {
   return (
     <Card className="shadow-card">
       <CardContent className="space-y-4 p-4">
@@ -836,26 +998,26 @@ function PrevEmploymentBlock({ index, onRemove }) {
         </div>
         <FieldRow>
           <Field label="Company Name" required>
-            <Input name={`prev${index}_company`} placeholder="e.g. Infosys Ltd." />
+            <Input name={`prev${index}_company`} placeholder="e.g. Infosys Ltd." defaultValue={init?.company} />
           </Field>
           <Field label="Designation" required>
-            <Input name={`prev${index}_role`} placeholder="e.g. Senior Engineer" />
+            <Input name={`prev${index}_role`} placeholder="e.g. Senior Engineer" defaultValue={init?.role} />
           </Field>
         </FieldRow>
         <FieldRow>
           <Field label="From">
-            <Input name={`prev${index}_from`} type="month" />
+            <Input name={`prev${index}_from`} type="month" defaultValue={init?.from} />
           </Field>
           <Field label="To">
-            <Input name={`prev${index}_to`} type="month" />
+            <Input name={`prev${index}_to`} type="month" defaultValue={init?.to} />
           </Field>
         </FieldRow>
         <FieldRow>
           <Field label="CTC (Annual)">
-            <Input name={`prev${index}_ctc`} placeholder="₹\u00A012,00,000" />
+            <Input name={`prev${index}_ctc`} placeholder="₹\u00A012,00,000" defaultValue={init?.ctc} />
           </Field>
           <Field label="Reason for Leaving">
-            <Input name={`prev${index}_reason`} placeholder="Career growth" />
+            <Input name={`prev${index}_reason`} placeholder="Career growth" defaultValue={init?.reason} />
           </Field>
         </FieldRow>
         <Separator />
@@ -863,20 +1025,34 @@ function PrevEmploymentBlock({ index, onRemove }) {
           Documents
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <FileUpload label="Relieving Letter" />
-          <FileUpload label="Experience / Service Letter" />
-          <FileUpload label="Payslip — Last Month" />
-          <FileUpload label="Payslip — 2 Months Ago" />
-          <FileUpload label="Payslip — 3 Months Ago" />
-          <FileUpload label="Form 16 (Optional)" />
+          {[
+            ["relieving_letter", "Relieving Letter"],
+            ["experience_letter", "Experience / Service Letter"],
+            ["payslip_1", "Payslip — Last Month"],
+            ["payslip_2", "Payslip — 2 Months Ago"],
+            ["payslip_3", "Payslip — 3 Months Ago"],
+            ["form16", "Form 16 (Optional)"],
+          ].map(([type, label]) => {
+            const name = `prev${index}_${type}`;
+            return (
+              <FileUpload
+                key={type}
+                name={name}
+                label={label}
+                file={docFiles?.[name]}
+                onSelect={onSelect}
+                onRemove={onRemoveFile}
+                existing={init?.documents?.find((d) => d.document_type === type)}
+                onPreviewExisting={() => onPreviewExisting?.(type, label)}
+              />
+            );
+          })}
         </div>
       </CardContent>
     </Card>
   );
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const isUuid = (x) => typeof x === "string" && UUID_RE.test(x);
 
 /** Random temp password containing upper, lower, digit and symbol. */
 function makeTempPassword() {
@@ -892,7 +1068,9 @@ function makeTempPassword() {
   return chars.join("");
 }
 
-function AddEmployeeDialog({ onClose, onCreated }) {
+/** Employee form: onboarding when `employee` is absent, the same form pre-filled with the record when present. */
+function AddEmployeeDialog({ onClose, onCreated, employee }) {
+  const isEdit = !!employee;
   const me = useCurrentUser();
   const session = useSessionStore();
   const {
@@ -909,8 +1087,75 @@ function AddEmployeeDialog({ onClose, onCreated }) {
   const isBranchAdmin = roleUpper === "BRANCH_ADMIN" || roleUpper === "BRANCHADMIN";
   const isEmployee = roleUpper === "EMPLOYEE";
 
+  // Values the uncontrolled inputs start with when editing — the full record from GET /employees/{id}.
+  const [init] = useState(() => {
+    if (!employee) return {};
+    const e = employee;
+    const edu = e.education?.[0] ?? {};
+    return {
+      firstName: e.first_name ?? "",
+      lastName: e.last_name ?? "",
+      dob: e.date_of_birth ?? "",
+      gender: e.gender || undefined,
+      maritalStatus: e.marital_status || undefined,
+      bloodGroup: e.blood_group || undefined,
+      nationality: e.nationality || undefined,
+      religion: e.religion ?? "",
+      personalEmail: e.personal_email ?? "",
+      workEmail: e.work_email ?? "",
+      phone: e.phone && e.phone !== "—" ? e.phone : "",
+      whatsapp: e.whatsapp_number ?? "",
+      emergencyName: e.emergency_contact_name ?? "",
+      emergencyPhone: e.emergency_contact_phone ?? "",
+      currentAddress: e.current_address ?? "",
+      permanentAddress: e.permanent_address ?? "",
+      linkedin: e.linkedin_url ?? "",
+      github: e.github_url ?? "",
+      twitter: e.twitter_url ?? "",
+      website: e.website_url ?? "",
+      qualification: edu.qualification ?? "",
+      institution: edu.institution ?? "",
+      yearOfPassing: edu.year_of_passing != null ? String(edu.year_of_passing) : "",
+      eduScore: edu.score ?? "",
+      aadhaar: e.aadhaar_number ?? "",
+      pan: e.pan_number ?? "",
+      uan: e.uan_number ?? "",
+      esiNo: e.esic_number ?? "",
+      drivingLicence: e.driving_license_number ?? "",
+      passport: e.passport_number ?? "",
+      bankHolder: e.bank_account_holder_name ?? "",
+      bankName: e.bank_name ?? "",
+      accountNo: e.bank_account_number ?? "",
+      accountNo2: e.bank_account_number ?? "",
+      ifsc: e.ifsc_code ?? "",
+      bankBranch: e.bank_branch ?? "",
+      accountType: e.bank_account_type || undefined,
+      payMode: e.payment_mode || undefined,
+      doj: e.date_of_joining ?? "",
+      employmentType: e.employment_type || undefined,
+      noticeDays: e.notice_period_days != null ? String(e.notice_period_days) : undefined,
+      workMode: e.work_mode || undefined,
+      ctc: e.ctc != null ? String(Math.round(Number(e.ctc))) : "",
+      probationMonths: e.probation_months != null ? String(e.probation_months) : undefined,
+      payFrequency: e.pay_frequency || undefined,
+      grade: e.grade || undefined,
+      experience: (e.previous_employments ?? []).map((x) => ({
+        company: x.company_name ?? "",
+        role: x.designation ?? "",
+        from: x.from_month ?? "",
+        to: x.to_month ?? "",
+        ctc: x.ctc != null ? String(x.ctc) : "",
+        reason: x.reason_for_leaving ?? "",
+        documents: x.documents ?? [],
+      })),
+      payComponents: Object.fromEntries((e.pay_components ?? []).map((c) => [c.code, c.value])),
+    };
+  });
+
   const [tab, setTab] = useState("personal");
-  const [prevJobs, setPrevJobs] = useState([1]);
+  const [prevJobs, setPrevJobs] = useState(() =>
+    Array.from({ length: Math.max(1, init.experience?.length ?? 0) }, (_, i) => i + 1),
+  );
   const formRef = useRef(null);
   const submittingRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
@@ -919,12 +1164,110 @@ function AddEmployeeDialog({ onClose, onCreated }) {
   // Scope selection states
   const [backendCompanies, setBackendCompanies] = useState([]);
   const [backendBranches, setBackendBranches] = useState([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState(sessionCompanyId || "");
-  const [selectedBranchId, setSelectedBranchId] = useState(sessionBranchId || "");
+  const [selectedCompanyId, setSelectedCompanyId] = useState(
+    isEdit ? employee.company_id || "" : sessionCompanyId || "",
+  );
+  const [selectedBranchId, setSelectedBranchId] = useState(
+    isEdit ? employee.branch_id || "" : sessionBranchId || "",
+  );
   const [loadingScope, setLoadingScope] = useState(false);
 
   // Document files state
   const [docFiles, setDocFiles] = useState({});
+  const [existingDocs, setExistingDocs] = useState({});
+  const [formErrors, setFormErrors] = useState({});
+  // Work email is generated from the organisation + employee name (locked); a duplicate bumps `emailAttempt`.
+  const localOrgName = useOrgs().find((o) => o.id === orgId)?.name;
+  const [apiOrgName, setApiOrgName] = useState("");
+  const [firstNameVal, setFirstNameVal] = useState(init.firstName ?? "");
+  const [lastNameVal, setLastNameVal] = useState(init.lastName ?? "");
+  const [emailAttempt, setEmailAttempt] = useState(0);
+  useEffect(() => {
+    if (isEdit) return undefined;
+    let alive = true;
+    organizationApi
+      .getOrganization()
+      .then((o) => alive && setApiOrgName(o?.name || o?.organisation_name || o?.organization_name || o?.legal_name || ""))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [isEdit]);
+  const generatedWorkEmail = generateWorkEmail({
+    first: firstNameVal,
+    last: lastNameVal,
+    org: apiOrgName || localOrgName,
+    attempt: emailAttempt,
+  });
+  const [payComponents, setPayComponents] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    getPayComponents()
+      .then((list) => alive && setPayComponents(list))
+      .catch((err) => console.warn("Could not load pay components:", err));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const [docPreview, setDocPreview] = useState(null);
+  useEffect(() => {
+    if (!isEdit) return undefined;
+    let alive = true;
+    getEmployeeDocuments(employee.id)
+      .then((res) => {
+        if (!alive) return;
+        const map = {};
+        (res?.documents ?? []).forEach((d) => {
+          map[d.document_type] = d;
+        });
+        setExistingDocs(map);
+      })
+      .catch((err) => console.warn("Could not load documents:", err));
+    return () => {
+      alive = false;
+    };
+  }, [isEdit, employee?.id]);
+
+  // Signed view URLs expire (~15 min), so a fresh one is fetched each time a preview opens.
+  const previewExistingDoc = async (type, label) => {
+    try {
+      const res = await getEmployeeDocuments(employee.id);
+      const d = (res?.documents ?? []).find((x) => x.document_type === type);
+      const src = resolveApiUrl(d?.view_url);
+      if (!src) {
+        toast.error("This document is not available to preview.");
+        return;
+      }
+      setDocPreview({
+        title: d.file_name || label,
+        src,
+        isPdf: /pdf/i.test(d.content_type ?? "") || /\.pdf$/i.test(d.file_name ?? ""),
+      });
+    } catch {
+      toast.error("Could not load the document.");
+    }
+  };
+  // Previous-employment documents: fetch the record again for a fresh signed link.
+  const previewPrevDoc = async (blockIndex, type, label) => {
+    try {
+      const rec = await getEmployeeById(employee.id);
+      const d = rec?.previous_employments?.[blockIndex - 1]?.documents?.find(
+        (x) => x.document_type === type,
+      );
+      const src = resolveApiUrl(d?.view_url);
+      if (!src) {
+        toast.error("This document is not available to preview.");
+        return;
+      }
+      setDocPreview({
+        title: d.file_name || label,
+        src,
+        isPdf: /pdf/i.test(d.content_type ?? "") || /\.pdf$/i.test(d.file_name ?? ""),
+      });
+    } catch {
+      toast.error("Could not load the document.");
+    }
+  };
   const handleDocSelect = (name, file) => setDocFiles((prev) => ({ ...prev, [name]: file }));
   const handleDocRemove = (name) =>
     setDocFiles((prev) => {
@@ -941,17 +1284,13 @@ function AddEmployeeDialog({ onClose, onCreated }) {
       try {
         if (isSuperAdmin) {
           const res = await SuperAdmin_auth.getCompanies();
-          const data = res?.data ?? res;
-          const list = Array.isArray(data) ? data : data?.items ?? data?.companies ?? [];
-          if (isMounted) setBackendCompanies(list);
+          if (isMounted) setBackendCompanies(listOf(res, ["data", "items", "companies"]));
         }
 
         const compIdForBranches = isSuperAdmin ? selectedCompanyId : sessionCompanyId;
         if (compIdForBranches && isUuid(compIdForBranches)) {
           const bRes = await Branch_api.getBranches(compIdForBranches);
-          const bData = bRes?.data ?? bRes;
-          const bList = Array.isArray(bData) ? bData : bData?.items ?? bData?.branches ?? [];
-          if (isMounted) setBackendBranches(bList);
+          if (isMounted) setBackendBranches(listOf(bRes, ["data", "items", "branches"]));
         } else {
           if (isMounted) setBackendBranches([]);
         }
@@ -967,36 +1306,41 @@ function AddEmployeeDialog({ onClose, onCreated }) {
     };
   }, [isSuperAdmin, selectedCompanyId, sessionCompanyId]);
 
-  const orgBranchList = useOrgs().find((o) => o.id === orgId)?.branches ?? [];
-  const orgBranches = orgBranchList.map((b) => b.name);
-  const branchOptions = orgBranches.length ? orgBranches : OFFICES;
-  const orgDepartments = useDepartments().filter((d) => d.orgId === orgId);
-  const deptOptions = orgDepartments.map((d) => d.name);
-  const designationOptions = useDesignationNames(orgId);
-  const jobDepartmentOptions = deptOptions.length
-    ? deptOptions
-    : ["Human Resources", "Engineering", "Finance", "Operations"];
-  const jobDesignationOptions = designationOptions.length
-    ? designationOptions
-    : ["HR Executive", "Software Engineer", "Accountant", "Operations Manager"];
-  const reportingManagerOptions = allUsers().filter(
-    (u) =>
-      u.orgId === orgId &&
-      u.role !== "BranchAdmin" &&
-      u.role !== "Employee" &&
-      u.role !== "Admin" &&
-      u.role !== "SuperAdmin",
+  // Job & Role options — all of them come from the backend masters.
+  const [placementMode, setPlacementMode] = useState(
+    (isEdit ? employee.company_id : sessionCompanyId) ? "company" : "org",
   );
-  const jobReportingManagerOptions = reportingManagerOptions.length
-    ? reportingManagerOptions
-    : [
-        { id: "demo-manager-1", orgId, role: "Manager", name: "Aarav Sharma", designation: "Engineering Manager" },
-        { id: "demo-manager-2", orgId, role: "Manager", name: "Priya Patel", designation: "HR Manager" },
-        { id: "demo-manager-3", orgId, role: "Manager", name: "Rahul Verma", designation: "Finance Manager" },
-        { id: "demo-manager-4", orgId, role: "Manager", name: "Ananya Rao", designation: "Operations Manager" },
-      ];
+  const [deptId, setDeptId] = useState(employee?.department_id ?? "");
+  const [designationId, setDesignationId] = useState(employee?.designation_id ?? "");
+  const [roleName, setRoleName] = useState(employee?.role || "Employee");
+  const [managerId, setManagerId] = useState(employee?.manager_id ?? "");
+  const [hrId, setHrId] = useState(employee?.hr_partner_id ?? "");
+  const [shiftId, setShiftId] = useState(employee?.shift_id ?? "");
 
-  const [payComponents] = useSharedList("pay-components", PAY_COMPONENTS);
+  const companyScope = isSuperAdmin ? selectedCompanyId : sessionCompanyId;
+  const {
+    departments,
+    designations,
+    roles: apiRoles,
+    shifts,
+    managers: managerOptions,
+    hrs: hrOptions,
+  } = useEmployeeJobOptions({
+    deptId,
+    companyId: isUuid(companyScope) ? companyScope : "",
+    orgId: sessionOrgId,
+  });
+
+  // Default access role: the one whose name starts with "Employee".
+  useEffect(() => {
+    if (isEdit) return;
+    const def = apiRoles.find((r) => /^employee/i.test(r.name));
+    if (def) setRoleName(def.name);
+  }, [apiRoles, isEdit]);
+
+  const deptDesignations = designations;
+  const roleOptions = apiRoles.length ? apiRoles.map((r) => r.name) : ["Employee"];
+
   const [ctcDraft, setCtcDraft] = useState(0);
   const monthlyGross = Math.round(ctcDraft / 12);
   const basic = Math.round(monthlyGross * 0.4);
@@ -1017,6 +1361,13 @@ function AddEmployeeDialog({ onClose, onCreated }) {
       if (el.type === "file") return;
       v[el.name] = el.value;
     });
+    const roleObj = apiRoles.find((r) => r.name === roleName);
+    const shiftObj = shifts.find((x) => String(x.id) === String(shiftId));
+    v.dept = departments.find((d) => String(d.id) === String(deptId))?.name ?? "";
+    v.designation = designations.find((d) => String(d.id) === String(designationId))?.name ?? "";
+    v.role = roleName;
+    v.managerId = managerId;
+    v.hrPartnerId = hrId;
 
     const required = [
       ["firstName", "First name"],
@@ -1030,6 +1381,9 @@ function AddEmployeeDialog({ onClose, onCreated }) {
       ["ctc", "Annual CTC"],
     ];
     const missing = required.filter(([k]) => !v[k]?.trim()).map(([, l]) => l);
+    if (isSuperAdmin && placementMode === "company" && !isUuid(selectedCompanyId)) {
+      missing.push("Company");
+    }
     if (missing.length) {
       toast.error(`Complete the required fields: ${missing.join(", ")}`);
       setTab(
@@ -1053,16 +1407,16 @@ function AddEmployeeDialog({ onClose, onCreated }) {
     const acct = (v.accountNo ?? "").replace(/\s+/g, "");
     const ifsc = (v.ifsc ?? "").trim().toUpperCase();
 
-    if (aadhaar && !/^\d{12}$/.test(aadhaar)) return fail("Aadhaar number must be 12 digits", "legal");
-    if (pan && !/^[A-Z]{5}\d{4}[A-Z]$/.test(pan))
+    if (aadhaar && aadhaar !== employee?.aadhaar_number && !/^\d{12}$/.test(aadhaar)) return fail("Aadhaar number must be 12 digits", "legal");
+    if (pan && pan !== employee?.pan_number && !/^[A-Z]{5}\d{4}[A-Z]$/.test(pan))
       return fail("PAN must be in the format ABCDE1234F", "legal");
-    if (uan && !/^\d{12}$/.test(uan)) return fail("UAN must be 12 digits", "legal");
-    if (acct && !/^\d{9,18}$/.test(acct)) return fail("Account number must be 9–18 digits", "bank");
+    if (uan && uan !== employee?.uan_number && !/^\d{12}$/.test(uan)) return fail("UAN must be 12 digits", "legal");
+    if (acct && acct !== employee?.bank_account_number && !/^\d{9,18}$/.test(acct)) return fail("Account number must be 9–18 digits", "bank");
     if (acct && acct !== (v.accountNo2 ?? "").replace(/\s+/g, ""))
       return fail("The re-entered account number does not match", "bank");
     if (ifsc && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifsc)) return fail("IFSC must look like HDFC0001234", "bank");
 
-    const workEmail = v.workEmail?.trim() || v.personalEmail.trim();
+    let workEmail = v.workEmail?.trim() || v.personalEmail.trim();
     if (!workEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(workEmail)) {
       return fail("Enter a valid work email address", "personal");
     }
@@ -1084,8 +1438,6 @@ function AddEmployeeDialog({ onClose, onCreated }) {
       );
     }
 
-    const tempPassword = makeTempPassword();
-
     // Determine tenant IDs based on caller's role and placement rules
     const effectiveOrgId = isUuid(sessionOrgId) ? sessionOrgId : (isUuid(orgId) ? orgId : undefined);
 
@@ -1106,30 +1458,39 @@ function AddEmployeeDialog({ onClose, onCreated }) {
     }
 
     const branchIdParam = effectiveBranchId;
-    const departmentIdParam = orgDepartments.find((d) => d.name === v.dept)?.id;
+    const departmentIdParam = deptId;
+    const selectedBranchName = backendBranches.find((b) => b.id === effectiveBranchId)?.name ?? "";
+
+    const tempPassword = isEdit ? "" : makeTempPassword();
 
     const apiFields = {
       first_name: v.firstName.trim(),
+      ...(isEdit ? {} : { password: tempPassword }),
       last_name: v.lastName?.trim() || "",
       work_email: workEmail,
-      password: tempPassword,
       personal_email: v.personalEmail?.trim() || "",
       phone: v.phone?.trim() || "",
       date_of_birth: v.dob || "",
       gender: v.gender || "",
       department: v.dept || "",
-      department_id: isUuid(departmentIdParam) ? departmentIdParam : undefined,
+      department_id: departmentIdParam,
       designation: v.designation || "",
+      designation_id: isUuid(designationId) ? designationId : undefined,
       role: v.role || "Employee",
+      role_id: isUuid(roleObj?.id) ? roleObj.id : undefined,
+      hr_partner_id: isUuid(hrId) ? hrId : undefined,
+      shift_id: isUuid(shiftId) ? shiftId : undefined,
       employment_type: v.employmentType || "Full-time",
       manager_id: isUuid(v.managerId) ? v.managerId : undefined,
       date_of_joining: v.doj || "",
       probation_months: v.probationMonths || "3",
-      status: "ACTIVE",
+      ...(isEdit ? {} : { status: "ACTIVE" }),
       ctc: v.ctc ? String(Number(v.ctc)) : "",
       grade: v.grade || "",
       wage_type: v.wageType || "Salaried",
       attendance_pattern_id: v.patternId || undefined,
+      notice_period_days: v.noticeDays || undefined,
+      work_mode: v.workMode || undefined,
       pan_number: pan || undefined,
       aadhaar_number: aadhaar || undefined,
       uan_number: uan || undefined,
@@ -1137,41 +1498,229 @@ function AddEmployeeDialog({ onClose, onCreated }) {
       bank_name: v.bankName?.trim() || undefined,
       bank_account_number: acct || undefined,
       ifsc_code: ifsc || undefined,
+      marital_status: v.maritalStatus || undefined,
+      blood_group: v.bloodGroup || undefined,
+      nationality: v.nationality || undefined,
+      religion: v.religion || undefined,
+      whatsapp_number: v.whatsapp || undefined,
+      emergency_contact_name: v.emergencyName || undefined,
+      emergency_contact_phone: v.emergencyPhone || undefined,
+      current_address: v.currentAddress || undefined,
+      permanent_address: v.permanentAddress || undefined,
+      linkedin_url: v.linkedin || undefined,
+      github_url: v.github || undefined,
+      twitter_url: v.twitter || undefined,
+      website_url: v.website || undefined,
+      qualification: v.qualification || undefined,
+      institution: v.institution || undefined,
+      year_of_passing: v.yearOfPassing || undefined,
+      education_score: v.eduScore || undefined,
+      driving_license_number: v.drivingLicence || undefined,
+      passport_number: (v.passport ?? "").trim().toUpperCase() || undefined,
+      bank_account_holder_name: v.bankHolder || undefined,
+      bank_branch: v.bankBranch || undefined,
+      bank_account_type: v.accountType || undefined,
+      payment_mode: v.payMode || undefined,
+      pay_frequency: v.payFrequency || undefined,
     };
 
-    // Append valid UUIDs only
+    // Masked values (XXXX1234) come back from the server read-only — never send one back.
+    ["pan_number", "aadhaar_number", "bank_account_number", "passport_number", "uan_number"].forEach(
+      (k) => {
+        if (isEdit && /^X{4,}/i.test(apiFields[k] ?? "")) delete apiFields[k];
+      },
+    );
+
+    // Previous employment blocks, renumbered from 1 (blank-company blocks are ignored).
+    const tv = (k) => (v[k] ?? "").trim();
+    const prevBlocks = prevJobs
+      .map((n) => ({
+        n,
+        company: tv(`prev${n}_company`),
+        role: tv(`prev${n}_role`),
+        from: tv(`prev${n}_from`),
+        to: tv(`prev${n}_to`),
+        ctc: tv(`prev${n}_ctc`).replace(/[^\d.]/g, ""),
+        reason: tv(`prev${n}_reason`),
+      }))
+      .filter((b) => b.company);
+    const prevFiles = Object.entries(docFiles).filter(
+      ([k, f]) => /^prev\d+_/.test(k) && f instanceof File && f.size > 0,
+    );
+    const addPrevBlocks = (fd) => {
+      prevBlocks.forEach((b, i) => {
+        const idx = i + 1;
+        const put = (suffix, val) => val && fd.append(`prev${idx}_${suffix}`, val);
+        put("company", b.company);
+        put("role", b.role);
+        put("from", b.from);
+        put("to", b.to);
+        put("ctc", b.ctc);
+        put("reason", b.reason);
+        prevFiles
+          .filter(([k]) => k.startsWith(`prev${b.n}_`))
+          .forEach(([k, f]) => fd.append(`prev${idx}_${k.slice(`prev${b.n}_`.length)}`, f));
+      });
+    };
+
+    // Append valid UUIDs only; a branch is never sent without its company.
     if (effectiveOrgId) apiFields.organization_id = effectiveOrgId;
-    if (effectiveCompanyId) apiFields.company_id = effectiveCompanyId;
-    if (branchIdParam) apiFields.branch_id = branchIdParam;
+    if (effectiveCompanyId) {
+      apiFields.company_id = effectiveCompanyId;
+      if (branchIdParam) apiFields.branch_id = branchIdParam;
+    }
 
     // Build FormData from text fields and File objects
     const formData = new FormData();
-    Object.entries(apiFields).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && String(value).trim() !== "") {
-        formData.append(key, String(value).trim());
+    if (isEdit) {
+      // PATCH carries only what changed. work_email / employee_code / organization_id are not editable.
+      const locked = new Set(["work_email", "organization_id", "company_id", "branch_id"]);
+      // Optional fields the backend lets us clear with the literal string "null".
+      const clearable = new Set([
+        "last_name", "personal_email", "phone", "date_of_birth", "gender", "grade", "pan_number",
+        "aadhaar_number", "uan_number", "esic_number", "bank_name", "bank_account_number", "ifsc_code",
+        "marital_status", "blood_group", "nationality", "religion", "whatsapp_number",
+        "emergency_contact_name", "emergency_contact_phone", "current_address", "permanent_address",
+        "linkedin_url", "github_url", "twitter_url", "website_url", "qualification", "institution",
+        "year_of_passing", "education_score", "driving_license_number", "passport_number",
+        "bank_account_holder_name", "bank_branch", "bank_account_type", "payment_mode",
+      ]);
+      const edu = employee.education?.[0] ?? {};
+      const eduPrev = {
+        qualification: edu.qualification,
+        institution: edu.institution,
+        year_of_passing: edu.year_of_passing,
+        education_score: edu.score,
+      };
+      const prevValue = (key) => (key in eduPrev ? eduPrev[key] : employee[key]);
+
+      Object.keys(apiFields)
+        .concat([...clearable].filter((k) => !(k in apiFields)))
+        .forEach((key) => {
+          if (locked.has(key)) return;
+          const next = String(apiFields[key] ?? "").trim();
+          const prev = String(prevValue(key) ?? "").trim();
+          if (next === prev) return;
+          if (next !== "" && prev !== "" && !isNaN(next) && !isNaN(prev) && Number(next) === Number(prev)) return;
+          if (next === "") {
+            if (clearable.has(key) && prev !== "") formData.append(key, "null");
+            return;
+          }
+          formData.append(key, next);
+        });
+      // Optional ids: the string "null" clears them.
+      [
+        ["manager_id", managerId],
+        ["hr_partner_id", hrId],
+        ["shift_id", shiftId],
+      ].forEach(([key, val]) => {
+        const prev = employee[key] || "";
+        if ((val || "") === prev) return;
+        formData.set(key, isUuid(val) ? val : "null");
+      });
+      // Placement (not for a Branch Admin, who is locked): company cleared -> organisation level,
+      // branch cleared -> company level. A branch is never sent without its company.
+      if (!isBranchAdmin) {
+        const prevCompany = employee.company_id || "";
+        const prevBranch = employee.branch_id || "";
+        const newCompany = effectiveCompanyId || "";
+        const newBranch = newCompany ? branchIdParam || "" : "";
+        if (newCompany !== prevCompany) {
+          formData.set("company_id", newCompany || "null");
+          if (newCompany && newBranch) formData.set("branch_id", newBranch);
+          else if (newCompany && prevBranch) formData.set("branch_id", "null");
+        } else if (newCompany && newBranch !== prevBranch) {
+          formData.set("branch_id", newBranch || "null");
+        }
       }
-    });
+      // Pay components: pc_<CODE>=<number>; "null" removes the override.
+      Object.keys(v)
+        .filter((k) => k.startsWith("pc_"))
+        .forEach((k) => {
+          const code = k.slice(3);
+          const next = tv(k);
+          const prev = init.payComponents?.[code];
+          if (next === "") {
+            if (prev !== undefined) formData.set(k, "null");
+          } else if (prev === undefined || Number(next) !== Number(prev)) {
+            formData.set(k, next);
+          }
+        });
+      // Previous employment: any prevN_* key replaces the whole list, so send it only when it changed.
+      const sig = (x) => JSON.stringify([x.company, x.role, x.from, x.to, x.ctc, x.reason]);
+      const initSig = (init.experience ?? []).filter((x) => x.company).map(sig);
+      const nowSig = prevBlocks.map(sig);
+      if (prevFiles.length || (prevBlocks.length && JSON.stringify(initSig) !== JSON.stringify(nowSig))) {
+        addPrevBlocks(formData);
+      }
+    } else {
+      Object.entries(apiFields).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && String(value).trim() !== "") {
+          formData.append(key, String(value).trim());
+        }
+      });
+      Object.keys(v)
+        .filter((k) => k.startsWith("pc_") && tv(k) !== "")
+        .forEach((k) => formData.append(k, tv(k)));
+      addPrevBlocks(formData);
+    }
 
     Object.entries(docFiles).forEach(([name, file]) => {
+      // previous-employment files were attached (renumbered) with their blocks above
+      if (/^prev\d+_/.test(name)) return;
       if (file instanceof File && file.size > 0) {
         formData.append(name, file);
       }
     });
 
+    if (isEdit && ![...formData.keys()].length) {
+      toast.info("No changes to save.");
+      onClose();
+      return;
+    }
+
     submittingRef.current = true;
     setSubmitting(true);
+    setFormErrors({});
 
     try {
-      const apiEmployee = await createEmployeeApi(formData);
+      let apiEmployee;
+      if (isEdit) {
+        apiEmployee = await patchEmployeeForm(employee.id, formData);
+      } else {
+        // If the generated work email is already registered, regenerate a slightly different one and post again.
+        let attempt = emailAttempt;
+        for (;;) {
+          try {
+            apiEmployee = await createEmployeeApi(formData);
+            break;
+          } catch (err) {
+            if (!isDuplicateWorkEmail(err) || attempt >= 5) throw err;
+            attempt += 1;
+            const taken = workEmail;
+            workEmail = generateWorkEmail({
+              first: v.firstName,
+              last: v.lastName,
+              org: apiOrgName || localOrgName,
+              attempt,
+            });
+            formData.set("work_email", workEmail);
+            setEmailAttempt(attempt);
+            toast.info(`${taken} is already taken — trying ${workEmail}`);
+          }
+        }
+        workEmail = apiEmployee?.work_email || workEmail;
+      }
 
       // Store in Zustand session store distinct from logged-in user scope
-      useSessionStore.getState().setLastCreatedEmployee(apiEmployee);
+      if (!isEdit) useSessionStore.getState().setLastCreatedEmployee(apiEmployee);
 
       const employeeProfileId = apiEmployee?.id || apiEmployee?.employee_id;
-      const userAccountId = apiEmployee?.user_id;
 
       // Keep existing local directory and profile store in sync
-      const row = hireEmployee({
+      const row = isEdit
+        ? { id: employee.id, firstName: v.firstName.trim(), lastName: v.lastName?.trim() ?? "" }
+        : hireEmployee({
         id: employeeProfileId || undefined,
         firstName: v.firstName.trim(),
         lastName: v.lastName.trim(),
@@ -1180,10 +1729,11 @@ function AddEmployeeDialog({ onClose, onCreated }) {
         dob: v.dob || "",
         gender: v.gender || "",
         orgId,
-        branch: v.branch || "",
+        branch: selectedBranchName,
         dept: v.dept,
         designation: v.designation,
-        role: v.role || "Employee",
+        // The local directory only knows the built-in access roles; custom roles live on the backend.
+        role: hireableRoles(me.role).includes(v.role) ? v.role : "Employee",
         employmentType: v.employmentType || "Full-time",
         managerId: v.managerId || null,
         doj: v.doj,
@@ -1236,13 +1786,9 @@ function AddEmployeeDialog({ onClose, onCreated }) {
         job: {
           noticePeriodDays: Number(v.noticeDays) || undefined,
           workMode: { office: "On-site", remote: "Remote", hybrid: "Hybrid" }[t("workMode")] ?? "",
-          shift:
-            {
-              gen: "General (10:00 – 19:00)",
-              morn: "Morning (06:00 – 14:00)",
-              eve: "Evening (14:00 – 22:00)",
-              night: "Night (22:00 – 06:00)",
-            }[t("shift")] ?? "",
+          shift: shiftObj
+            ? `${shiftObj.name}${shiftObj.start ? ` (${shiftObj.start} – ${shiftObj.end})` : ""}`
+            : "",
         },
         education: t("qualification")
           ? [
@@ -1279,28 +1825,50 @@ function AddEmployeeDialog({ onClose, onCreated }) {
         ? `${apiEmployee.first_name} ${apiEmployee.last_name ?? ""}`.trim()
         : `${row.firstName} ${row.lastName}`;
 
-      toast.success(
-        `${employeeName} created successfully (Employee ID: ${employeeProfileId || row.id}, User Account ID: ${userAccountId || "N/A"}) · Login: ${workEmail}`,
+      if (isEdit) {
+        toast.success(`${employeeName} updated successfully`);
+      } else toast.success(
+        `${employeeName} created successfully (Employee ${apiEmployee?.employee_code || employeeProfileId || row.id}) · Login: ${workEmail}`,
         { duration: 8000 },
       );
+      if (isEdit) {
+        // nothing to email on edit
+      } else if (apiEmployee?.credentials_email_queued) {
+        toast.success(`Credentials sent to ${apiEmployee.credentials_email_to || v.personalEmail}`);
+      } else {
+        toast.warning(`Employee created, but the credentials email was not sent. Temporary password: ${tempPassword}`, {
+          duration: 20000,
+        });
+      }
       if (typeof onCreated === "function") {
-        onCreated(apiEmployee);
+        onCreated({ ...employee, ...apiEmployee });
       }
       onClose();
     } catch (error) {
-      console.error("Create employee API failed:", error);
+      console.error(`${isEdit ? "Update" : "Create"} employee API failed:`, error);
       const detail =
         error?.response?.data?.detail ??
         error?.response?.data?.message ??
         error?.message ??
-        "Could not create employee. Please try again.";
-      toast.error(
-        Array.isArray(detail)
-          ? detail
-              .map((d) => `${(d.loc ?? []).filter((p) => p !== "body").join(".")}: ${d.msg}`)
-              .join(", ")
-          : String(detail),
-      );
+        `Could not ${isEdit ? "update" : "create"} employee. Please try again.`;
+      if (Array.isArray(detail)) {
+        // One entry per invalid field: mark them all and jump to the first one's tab.
+        const next = {};
+        detail.forEach((d) => {
+          const field = (d.loc ?? []).filter((x) => x !== "body").pop();
+          if (field && !next[field]) next[field] = d.msg;
+        });
+        setFormErrors(next);
+        const first = Object.keys(next)[0];
+        if (first) setTab(tabOfField(first));
+        toast.error(
+          detail.length === 1
+            ? detail[0].msg
+            : `${detail.length} fields need attention — see the highlighted fields.`,
+        );
+      } else {
+        toast.error(String(detail));
+      }
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -1317,6 +1885,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
 
   return (
     <DialogContent className="flex max-h-[92vh] max-w-5xl flex-col overflow-hidden p-0">
+      <FormErrorsContext.Provider value={formErrors}>
       <form
         ref={formRef}
         className="contents"
@@ -1331,9 +1900,11 @@ function AddEmployeeDialog({ onClose, onCreated }) {
               <Users className="h-5 w-5" />
             </div>
             <div>
-              <DialogTitle className="text-xl">Add New Employee</DialogTitle>
+              <DialogTitle className="text-xl">{isEdit ? "Edit Employee" : "Add New Employee"}</DialogTitle>
               <DialogDescription>
-                Onboard a new team member with complete personal, legal and job details.
+                {isEdit
+                  ? "Update any detail captured at onboarding, and add or replace documents."
+                  : "Onboard a new team member with complete personal, legal and job details."}
               </DialogDescription>
             </div>
           </div>
@@ -1369,18 +1940,34 @@ function AddEmployeeDialog({ onClose, onCreated }) {
 
               <FieldRow>
                 <Field label="First Name" required>
-                  <Input name="firstName" placeholder="Ananya" />
+                  <Input
+                    name="firstName"
+                    defaultValue={init.firstName}
+                    placeholder="Ananya"
+                    onChange={(e) => {
+                      setFirstNameVal(e.target.value);
+                      setEmailAttempt(0);
+                    }}
+                  />
                 </Field>
                 <Field label="Last Name" required>
-                  <Input name="lastName" placeholder="Sharma" />
+                  <Input
+                    name="lastName"
+                    defaultValue={init.lastName}
+                    placeholder="Sharma"
+                    onChange={(e) => {
+                      setLastNameVal(e.target.value);
+                      setEmailAttempt(0);
+                    }}
+                  />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="Date of Birth" required>
-                  <Input name="dob" type="date" />
+                  <Input name="dob" defaultValue={init.dob} type="date" />
                 </Field>
                 <Field label="Gender">
-                  <Select name="gender">
+                  <Select name="gender" defaultValue={init.gender}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select" />
                     </SelectTrigger>
@@ -1395,7 +1982,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
               </FieldRow>
               <FieldRow>
                 <Field label="Marital Status">
-                  <Select name="maritalStatus">
+                  <Select name="maritalStatus" defaultValue={init.maritalStatus}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select" />
                     </SelectTrigger>
@@ -1408,7 +1995,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                   </Select>
                 </Field>
                 <Field label="Blood Group">
-                  <Select name="bloodGroup">
+                  <Select name="bloodGroup" defaultValue={init.bloodGroup}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select" />
                     </SelectTrigger>
@@ -1424,10 +2011,10 @@ function AddEmployeeDialog({ onClose, onCreated }) {
               </FieldRow>
               <FieldRow>
                 <Field label="Nationality">
-                  <Input name="nationality" placeholder="Indian" defaultValue="Indian" />
+                  <Input name="nationality" placeholder="Indian" defaultValue={init.nationality ?? "Indian"} />
                 </Field>
                 <Field label="Religion (Optional)">
-                  <Input name="religion" placeholder="—" />
+                  <Input name="religion" defaultValue={init.religion} placeholder="—" />
                 </Field>
               </FieldRow>
 
@@ -1435,30 +2022,42 @@ function AddEmployeeDialog({ onClose, onCreated }) {
               <SectionTitle icon={Phone} title="Contact" desc="How we reach the employee" />
               <FieldRow>
                 <Field label="Personal Email" required>
-                  <Input name="personalEmail" type="email" placeholder="ananya@gmail.com" />
+                  <Input name="personalEmail" defaultValue={init.personalEmail} type="email" placeholder="ananya@gmail.com" />
                 </Field>
-                <Field label="Work Email">
-                  <Input
-                    name="workEmail"
-                    type="email"
-                    placeholder="auto-generated from name if left blank"
-                  />
+                <Field label="Work Email" field="work_email">
+                  {isEdit ? (
+                    <Input name="workEmail" defaultValue={init.workEmail} disabled type="email" />
+                  ) : (
+                    <>
+                      <Input
+                        name="workEmail"
+                        value={generatedWorkEmail}
+                        readOnly
+                        type="email"
+                        placeholder="Generated from the employee name"
+                      />
+                      <p className="text-muted-foreground mt-1 text-[11px]">
+                        Auto-generated — create this Gmail account for the employee. If it is already
+                        taken, a similar address is chosen on save.
+                      </p>
+                    </>
+                  )}
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="Mobile Number" required>
-                  <Input name="phone" placeholder="+91 98450 12345" />
+                  <Input name="phone" defaultValue={init.phone} placeholder="+91 98450 12345" />
                 </Field>
                 <Field label="WhatsApp Number">
-                  <Input name="whatsapp" placeholder="+91 98450 12345" />
+                  <Input name="whatsapp" defaultValue={init.whatsapp} placeholder="+91 98450 12345" />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="Emergency Contact Name">
-                  <Input name="emergencyName" placeholder="Full name" />
+                  <Input name="emergencyName" defaultValue={init.emergencyName} placeholder="Full name" />
                 </Field>
                 <Field label="Emergency Contact Number">
-                  <Input name="emergencyPhone" placeholder="+91 98450 00000" />
+                  <Input name="emergencyPhone" defaultValue={init.emergencyPhone} placeholder="+91 98450 00000" />
                 </Field>
               </FieldRow>
 
@@ -1470,14 +2069,14 @@ function AddEmployeeDialog({ onClose, onCreated }) {
               />
               <Field label="Current Address">
                 <Textarea
-                  name="currentAddress"
+                  name="currentAddress" defaultValue={init.currentAddress}
                   placeholder="House / street / city / state / PIN"
                   rows={2}
                 />
               </Field>
               <Field label="Permanent Address">
                 <Textarea
-                  name="permanentAddress"
+                  name="permanentAddress" defaultValue={init.permanentAddress}
                   placeholder="Same as current, or provide separately"
                   rows={2}
                 />
@@ -1492,18 +2091,18 @@ function AddEmployeeDialog({ onClose, onCreated }) {
 
               <FieldRow>
                 <Field label="LinkedIn">
-                  <Input name="linkedin" placeholder="linkedin.com/in/…" />
+                  <Input name="linkedin" defaultValue={init.linkedin} placeholder="linkedin.com/in/…" />
                 </Field>
                 <Field label="GitHub">
-                  <Input name="github" placeholder="github.com/…" />
+                  <Input name="github" defaultValue={init.github} placeholder="github.com/…" />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="X / Twitter">
-                  <Input name="twitter" placeholder="x.com/…" />
+                  <Input name="twitter" defaultValue={init.twitter} placeholder="x.com/…" />
                 </Field>
                 <Field label="Personal Website">
-                  <Input name="website" placeholder="https://…" />
+                  <Input name="website" defaultValue={init.website} placeholder="https://…" />
                 </Field>
               </FieldRow>
 
@@ -1540,14 +2139,32 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                   <Plus className="h-4 w-4" /> Add Employer
                 </Button>
               </div>
+              {isEdit && init.experience?.length > 0 && (
+                <p className="text-muted-foreground text-xs">
+                  Saving a change to any employer replaces the whole previous-employment list, so
+                  re-attach the documents you want to keep.
+                </p>
+              )}
               <div className="space-y-4">
                 {prevJobs.map((n) => (
                   <PrevEmploymentBlock
+                    init={init.experience?.[n - 1]}
                     key={n}
                     index={n}
+                    docFiles={docFiles}
+                    onSelect={handleDocSelect}
+                    onRemoveFile={handleDocRemove}
+                    onPreviewExisting={(type, label) => previewPrevDoc(n, type, label)}
                     onRemove={
                       prevJobs.length > 1
-                        ? () => setPrevJobs((p) => p.filter((x) => x !== n))
+                        ? () => {
+                            setPrevJobs((p) => p.filter((x) => x !== n));
+                            setDocFiles((prev) =>
+                              Object.fromEntries(
+                                Object.entries(prev).filter(([k]) => !k.startsWith(`prev${n}_`)),
+                              ),
+                            );
+                          }
                         : undefined
                     }
                   />
@@ -1562,18 +2179,18 @@ function AddEmployeeDialog({ onClose, onCreated }) {
 
               <FieldRow>
                 <Field label="Highest Qualification">
-                  <Input name="qualification" placeholder="B.Tech — Computer Science" />
+                  <Input name="qualification" defaultValue={init.qualification} placeholder="B.Tech — Computer Science" />
                 </Field>
                 <Field label="Institution">
-                  <Input name="institution" placeholder="IIT Bombay" />
+                  <Input name="institution" defaultValue={init.institution} placeholder="IIT Bombay" />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="Year of Passing">
-                  <Input name="yearOfPassing" placeholder="2019" />
+                  <Input name="yearOfPassing" defaultValue={init.yearOfPassing} placeholder="2019" />
                 </Field>
                 <Field label="Grade / CGPA">
-                  <Input name="eduScore" placeholder="8.4" />
+                  <Input name="eduScore" defaultValue={init.eduScore} placeholder="8.4" />
                 </Field>
               </FieldRow>
 
@@ -1605,26 +2222,26 @@ function AddEmployeeDialog({ onClose, onCreated }) {
 
               <FieldRow>
                 <Field label="Aadhar Number" required>
-                  <Input name="aadhaar" inputMode="numeric" placeholder="1234 5678 9012" />
+                  <Input name="aadhaar" defaultValue={init.aadhaar} inputMode="numeric" placeholder="1234 5678 9012" />
                 </Field>
                 <Field label="PAN Number" required>
-                  <Input name="pan" placeholder="ABCDE1234F" className="uppercase" />
+                  <Input name="pan" defaultValue={init.pan} placeholder="ABCDE1234F" className="uppercase" />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="Driving License No.">
-                  <Input name="drivingLicence" placeholder="KA01 20220001234" />
+                  <Input name="drivingLicence" defaultValue={init.drivingLicence} placeholder="KA01 20220001234" />
                 </Field>
                 <Field label="Passport No.">
-                  <Input name="passport" placeholder="M1234567" />
+                  <Input name="passport" defaultValue={init.passport} placeholder="M1234567" />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="UAN (PF)">
-                  <Input name="uan" inputMode="numeric" placeholder="1000 1234 5678" />
+                  <Input name="uan" defaultValue={init.uan} inputMode="numeric" placeholder="1000 1234 5678" />
                 </Field>
                 <Field label="ESI No.">
-                  <Input name="esiNo" placeholder="—" />
+                  <Input name="esiNo" defaultValue={init.esiNo} placeholder="—" />
                 </Field>
               </FieldRow>
 
@@ -1639,6 +2256,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="aadhaar_card"
                   label="Aadhar Card"
+                  existing={existingDocs["aadhaar_card"]}
+                  onPreviewExisting={() => previewExistingDoc("aadhaar_card", "aadhaar_card")}
                   file={docFiles["aadhaar_card"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1646,6 +2265,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="pan_card"
                   label="PAN Card"
+                  existing={existingDocs["pan_card"]}
+                  onPreviewExisting={() => previewExistingDoc("pan_card", "pan_card")}
                   file={docFiles["pan_card"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1653,6 +2274,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="driving_license"
                   label="Driving License"
+                  existing={existingDocs["driving_license"]}
+                  onPreviewExisting={() => previewExistingDoc("driving_license", "driving_license")}
                   file={docFiles["driving_license"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1660,6 +2283,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="passport"
                   label="Passport"
+                  existing={existingDocs["passport"]}
+                  onPreviewExisting={() => previewExistingDoc("passport", "passport")}
                   file={docFiles["passport"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1667,6 +2292,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="resume"
                   label="Resume / CV"
+                  existing={existingDocs["resume"]}
+                  onPreviewExisting={() => previewExistingDoc("resume", "resume")}
                   file={docFiles["resume"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1674,6 +2301,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="offer_letter"
                   label="Offer Letter (Signed)"
+                  existing={existingDocs["offer_letter"]}
+                  onPreviewExisting={() => previewExistingDoc("offer_letter", "offer_letter")}
                   file={docFiles["offer_letter"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1681,6 +2310,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="appointment_letter"
                   label="Appointment Letter"
+                  existing={existingDocs["appointment_letter"]}
+                  onPreviewExisting={() => previewExistingDoc("appointment_letter", "appointment_letter")}
                   file={docFiles["appointment_letter"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1688,6 +2319,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="educational_certificate"
                   label="Educational Certificates"
+                  existing={existingDocs["educational_certificate"]}
+                  onPreviewExisting={() => previewExistingDoc("educational_certificate", "educational_certificate")}
                   file={docFiles["educational_certificate"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1695,6 +2328,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="address_proof"
                   label="Address Proof"
+                  existing={existingDocs["address_proof"]}
+                  onPreviewExisting={() => previewExistingDoc("address_proof", "address_proof")}
                   file={docFiles["address_proof"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1702,6 +2337,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <FileUpload
                   name="passbook"
                   label="Cancelled Cheque / Passbook"
+                  existing={existingDocs["passbook"]}
+                  onPreviewExisting={() => previewExistingDoc("passbook", "passbook")}
                   file={docFiles["passbook"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
@@ -1736,31 +2373,31 @@ function AddEmployeeDialog({ onClose, onCreated }) {
 
               <FieldRow>
                 <Field label="Account Holder Name" required>
-                  <Input name="bankHolder" placeholder="As per bank records" />
+                  <Input name="bankHolder" defaultValue={init.bankHolder} placeholder="As per bank records" />
                 </Field>
                 <Field label="Bank Name" required>
-                  <Input name="bankName" placeholder="HDFC Bank" />
+                  <Input name="bankName" defaultValue={init.bankName} placeholder="HDFC Bank" />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="Account Number" required>
-                  <Input name="accountNo" inputMode="numeric" placeholder="50100XXXXXXXX" />
+                  <Input name="accountNo" defaultValue={init.accountNo} inputMode="numeric" placeholder="50100XXXXXXXX" />
                 </Field>
                 <Field label="Re-enter Account Number" required>
-                  <Input name="accountNo2" inputMode="numeric" placeholder="Confirm" />
+                  <Input name="accountNo2" defaultValue={init.accountNo2} inputMode="numeric" placeholder="Confirm" />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="IFSC Code" required>
-                  <Input name="ifsc" placeholder="HDFC0001234" className="uppercase" />
+                  <Input name="ifsc" defaultValue={init.ifsc} placeholder="HDFC0001234" className="uppercase" />
                 </Field>
                 <Field label="Branch">
-                  <Input name="bankBranch" placeholder="Khandagiri, Bhubaneswar" />
+                  <Input name="bankBranch" defaultValue={init.bankBranch} placeholder="Khandagiri, Bhubaneswar" />
                 </Field>
               </FieldRow>
               <FieldRow>
                 <Field label="Account Type">
-                  <Select name="accountType" defaultValue="savings">
+                  <Select name="accountType" defaultValue={init.accountType ?? "savings"}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -1772,7 +2409,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                   </Select>
                 </Field>
                 <Field label="Payment Mode">
-                  <Select name="payMode" defaultValue="NEFT">
+                  <Select name="payMode" defaultValue={init.payMode ?? "NEFT"}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -1780,6 +2417,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                       <SelectItem value="NEFT">NEFT</SelectItem>
                       <SelectItem value="IMPS">IMPS</SelectItem>
                       <SelectItem value="RTGS">RTGS</SelectItem>
+                      <SelectItem value="UPI">UPI</SelectItem>
+                      <SelectItem value="Cheque">Cheque</SelectItem>
                     </SelectContent>
                   </Select>
                 </Field>
@@ -1794,6 +2433,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
               <FileUpload
                 name="passbook"
                 label="Cancelled Cheque / Passbook First Page"
+                  existing={existingDocs["passbook"]}
+                  onPreviewExisting={() => previewExistingDoc("passbook", "passbook")}
                 file={docFiles["passbook"]}
                 onSelect={handleDocSelect}
                 onRemove={handleDocRemove}
@@ -1825,57 +2466,67 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 desc="Where the employee sits in the organization"
               />
 
-              {/* Tenant Placement Scope Card */}
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 space-y-3 dark:border-emerald-950 dark:bg-emerald-950/20">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
-                    Backend Tenant Placement
-                  </div>
-                  <Badge variant="outline" className="border-emerald-300 bg-white text-emerald-800 text-[11px] font-medium dark:bg-black dark:text-emerald-300">
-                    {isSuperAdmin
-                      ? (selectedCompanyId
-                          ? (selectedBranchId ? "Branch Placement (All 3 IDs)" : "Company Placement (Org + Company)")
-                          : "Organization Placement (Org ID Only)")
-                      : (isCompanyAdmin
-                          ? (selectedBranchId ? "Branch Placement" : "Company Placement")
-                          : (isBranchAdmin ? "Branch Placement (Locked)" : "Restricted"))}
-                  </Badge>
-                </div>
-
+              {/* Placement scope */}
+              <div className="space-y-3 rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 dark:border-emerald-950 dark:bg-emerald-950/20">
                 {isEmployee && (
-                  <p className="text-xs font-medium text-destructive">
+                  <p className="text-destructive text-xs font-medium">
                     Access Restricted: Employees cannot create or onboard other employees.
                   </p>
                 )}
 
                 {isSuperAdmin && (
                   <FieldRow>
-                    <Field label="Company Placement (Optional)">
+                    <Field label="Company Placement">
                       <Select
-                        value={selectedCompanyId || "none"}
+                        value={placementMode}
                         onValueChange={(val) => {
-                          setSelectedCompanyId(val === "none" ? "" : val);
-                          setSelectedBranchId("");
+                          setPlacementMode(val);
+                          if (val === "org") {
+                            setSelectedCompanyId("");
+                            setSelectedBranchId("");
+                          }
                         }}
                       >
                         <SelectTrigger className="bg-white dark:bg-slate-900">
-                          <SelectValue placeholder="Organization Level (No Company)" />
+                          <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">Organization Level (No Company)</SelectItem>
-                          {backendCompanies.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.name} {c.code ? `(${c.code})` : ""}
-                            </SelectItem>
-                          ))}
+                          <SelectItem value="org">Organisation level (No company)</SelectItem>
+                          <SelectItem value="company">With company</SelectItem>
                         </SelectContent>
                       </Select>
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        Leave unselected to place employee at Organization level.
-                      </p>
                     </Field>
 
-                    <Field label="Branch Placement (Optional)">
+                    {placementMode === "company" && (
+                      <Field label="Company" required>
+                        <Select
+                          value={selectedCompanyId}
+                          onValueChange={(val) => {
+                            setSelectedCompanyId(val);
+                            setSelectedBranchId("");
+                          }}
+                        >
+                          <SelectTrigger className="bg-white dark:bg-slate-900">
+                            <SelectValue
+                              placeholder={loadingScope ? "Loading companies…" : "Select company"}
+                            />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {backendCompanies.map((c) => (
+                              <SelectItem key={c.id} value={c.id}>
+                                {c.name} {c.code ? `(${c.code})` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </Field>
+                    )}
+                  </FieldRow>
+                )}
+
+                {isSuperAdmin && placementMode === "company" && (
+                  <FieldRow>
+                    <Field label="Branch (Optional)">
                       <Select
                         disabled={!selectedCompanyId || backendBranches.length === 0}
                         value={selectedBranchId || "none"}
@@ -1887,13 +2538,13 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                               !selectedCompanyId
                                 ? "Select a company first"
                                 : backendBranches.length
-                                  ? "Company Level (No Branch)"
+                                  ? "Company level (No branch)"
                                   : "No branches registered"
                             }
                           />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">Company Level (No Branch)</SelectItem>
+                          <SelectItem value="none">Company level (No branch)</SelectItem>
                           {backendBranches.map((b) => (
                             <SelectItem key={b.id} value={b.id}>
                               {b.name} {b.code ? `(${b.code})` : ""}
@@ -1901,16 +2552,13 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                           ))}
                         </SelectContent>
                       </Select>
-                      <p className="text-[11px] text-muted-foreground mt-1">
-                        Select a branch to place employee at Branch level.
-                      </p>
                     </Field>
                   </FieldRow>
                 )}
 
                 {isCompanyAdmin && (
                   <FieldRow>
-                    <Field label="Company Scope (Locked to your session)">
+                    <Field label="Company (Locked to your session)">
                       <Input
                         value={sessionCompanyId || "Assigned Company"}
                         disabled
@@ -1918,7 +2566,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                       />
                     </Field>
 
-                    <Field label="Branch Placement (Optional)">
+                    <Field label="Branch (Optional)">
                       <Select
                         value={selectedBranchId || "none"}
                         onValueChange={(val) => setSelectedBranchId(val === "none" ? "" : val)}
@@ -1927,13 +2575,13 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                           <SelectValue
                             placeholder={
                               backendBranches.length
-                                ? "Company Level (No Branch)"
+                                ? "Company level (No branch)"
                                 : "No branches registered"
                             }
                           />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">Company Level (No Branch)</SelectItem>
+                          <SelectItem value="none">Company level (No branch)</SelectItem>
                           {backendBranches.map((b) => (
                             <SelectItem key={b.id} value={b.id}>
                               {b.name} {b.code ? `(${b.code})` : ""}
@@ -1947,14 +2595,14 @@ function AddEmployeeDialog({ onClose, onCreated }) {
 
                 {isBranchAdmin && (
                   <FieldRow>
-                    <Field label="Company Scope (Locked)">
+                    <Field label="Company (Locked)">
                       <Input
                         value={sessionCompanyId || "Assigned Company"}
                         disabled
                         className="bg-white font-mono text-xs dark:bg-slate-900"
                       />
                     </Field>
-                    <Field label="Branch Scope (Locked to your branch)">
+                    <Field label="Branch (Locked to your branch)">
                       <Input
                         value={sessionBranchId || "Assigned Branch"}
                         disabled
@@ -1970,33 +2618,51 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                   <Input placeholder="Auto-assigned on create" disabled />
                 </Field>
                 <Field label="Date of Joining" required>
-                  <Input name="doj" type="date" />
+                  <Input name="doj" defaultValue={init.doj} type="date" />
                 </Field>
               </FieldRow>
               <FieldRow>
-                <Field label="Branch" required>
-                  <Select name="branch">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select branch" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {branchOptions.map((o) => (
-                        <SelectItem key={o} value={o}>
-                          {o}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
                 <Field label="Department" required>
-                  <Select name="dept">
+                  <Select
+                    value={deptId}
+                    onValueChange={(val) => {
+                      setDeptId(val);
+                      setDesignationId("");
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select department" />
                     </SelectTrigger>
                     <SelectContent>
-                      {jobDepartmentOptions.map((d) => (
-                        <SelectItem key={d} value={d}>
-                          {d}
+                      {departments.map((d) => (
+                        <SelectItem key={d.id} value={String(d.id)}>
+                          {d.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Designation" required>
+                  <Select
+                    value={designationId}
+                    onValueChange={setDesignationId}
+                    disabled={!deptId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          !deptId
+                            ? "Select a department first"
+                            : deptDesignations.length
+                              ? "Select designation"
+                              : "No designations for this department"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {deptDesignations.map((d) => (
+                        <SelectItem key={d.id} value={String(d.id)}>
+                          {d.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -2004,64 +2670,22 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 </Field>
               </FieldRow>
               <FieldRow>
-                <Field label="Designation" required>
-                  <Select name="designation">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select designation" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {jobDesignationOptions.map((d) => (
-                        <SelectItem key={d} value={d}>
-                          {d}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
                 <Field label="Role (Access)">
-                  <Select name="role" defaultValue="Employee">
+                  <Select value={roleName} onValueChange={setRoleName}>
                     <SelectTrigger>
                       <SelectValue placeholder="Employee" />
                     </SelectTrigger>
                     <SelectContent>
-                      {/* Only access roles the creator could manage (a Branch Admin could issue an HR login). */}
-                      {hireableRoles(me.role)
-                        .filter((r) => ["Employee", "Manager", "HOD", "HR"].includes(r))
-                        .map((r) => (
-                          <SelectItem key={r} value={r}>
-                            {r === "HOD" ? "Head of Department" : r}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              </FieldRow>
-              <FieldRow>
-                <Field label="Reporting Manager" required>
-                  <Select name="managerId">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select reporting manager" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {jobReportingManagerOptions
-                        .filter(
-                          (u) =>
-                            u.orgId === orgId &&
-                            u.role !== "BranchAdmin" &&
-                            u.role !== "Employee" &&
-                            u.role !== "Admin" &&
-                            u.role !== "SuperAdmin",
-                        )
-                        .map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name} — {u.designation}
-                          </SelectItem>
-                        ))}
+                      {roleOptions.map((r) => (
+                        <SelectItem key={r} value={r}>
+                          {r}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </Field>
                 <Field label="Employment Type">
-                  <Select name="employmentType" defaultValue="Full-time">
+                  <Select name="employmentType" defaultValue={init.employmentType ?? "Full-time"}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -2075,28 +2699,49 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 </Field>
               </FieldRow>
               <FieldRow>
-                <Field label="Assign HR Partner" required>
-                  <Select name="hrPartnerId">
+                <Field label="Reporting Manager (Optional)">
+                  <Select
+                    value={managerId || "none"}
+                    onValueChange={(val) => setManagerId(val === "none" ? "" : val)}
+                  >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select HR business partner" />
+                      <SelectValue placeholder="Select reporting manager" />
                     </SelectTrigger>
                     <SelectContent>
-                      {(hrPartnerOptions(orgId).length
-                        ? hrPartnerOptions(orgId)
-                        : hrPartnerOptions()
-                      ).map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name} — {p.designation}
+                      <SelectItem value="none">No reporting manager</SelectItem>
+                      {managerOptions.map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {staffLabel(e)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Assign HR (Optional)">
+                  <Select
+                    value={hrId || "none"}
+                    onValueChange={(val) => setHrId(val === "none" ? "" : val)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select HR" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No HR assigned</SelectItem>
+                      {hrOptions.map((e) => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {staffLabel(e)}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   <p className="text-muted-foreground mt-1 text-xs">
-                    All HR approvals raised by this employee route to their HR partner.
+                    All HR approvals raised by this employee route to their HR.
                   </p>
                 </Field>
+              </FieldRow>
+              <FieldRow>
                 <Field label="Notice Period">
-                  <Select name="noticeDays" defaultValue="60">
+                  <Select name="noticeDays" defaultValue={init.noticeDays ?? "60"}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -2107,10 +2752,8 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                     </SelectContent>
                   </Select>
                 </Field>
-              </FieldRow>
-              <FieldRow>
                 <Field label="Work Location">
-                  <Select name="workMode" defaultValue="office">
+                  <Select name="workMode" defaultValue={init.workMode ?? "office"}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -2121,16 +2764,20 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                     </SelectContent>
                   </Select>
                 </Field>
+              </FieldRow>
+              <FieldRow>
                 <Field label="Shift">
-                  <Select name="shift" defaultValue="gen">
+                  <Select value={shiftId} onValueChange={setShiftId}>
                     <SelectTrigger>
-                      <SelectValue />
+                      <SelectValue placeholder={shifts.length ? "Select shift" : "No shifts configured"} />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="gen">General (10:00 – 19:00)</SelectItem>
-                      <SelectItem value="morn">Morning (06:00 – 14:00)</SelectItem>
-                      <SelectItem value="eve">Evening (14:00 – 22:00)</SelectItem>
-                      <SelectItem value="night">Night (22:00 – 06:00)</SelectItem>
+                      {shifts.map((x) => (
+                        <SelectItem key={x.id} value={String(x.id)}>
+                          {x.name}
+                          {x.start ? ` (${x.start} – ${x.end})` : ""}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </Field>
@@ -2146,7 +2793,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
               <FieldRow>
                 <Field label="Annual CTC (₹)" required>
                   <Input
-                    name="ctc"
+                    name="ctc" defaultValue={init.ctc}
                     type="number"
                     min={1}
                     placeholder="1200000"
@@ -2154,7 +2801,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                   />
                 </Field>
                 <Field label="Probation Period">
-                  <Select name="probationMonths" defaultValue="3">
+                  <Select name="probationMonths" defaultValue={init.probationMonths ?? "3"}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -2168,7 +2815,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
               </FieldRow>
               <FieldRow>
                 <Field label="Pay Frequency">
-                  <Select name="payFrequency" defaultValue="monthly">
+                  <Select name="payFrequency" defaultValue={init.payFrequency ?? "monthly"}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -2178,7 +2825,7 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                   </Select>
                 </Field>
                 <Field label="Salary Grade">
-                  <Select name="grade">
+                  <Select name="grade" defaultValue={init.grade}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select grade" />
                     </SelectTrigger>
@@ -2193,24 +2840,31 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 </Field>
               </FieldRow>
 
-              {["Earning", "Allowance", "Deduction", "Statutory"].map((kind) => {
-                const comps = payComponents.filter((c) => c.showInEmployeeForm && c.kind === kind);
-                if (!comps.length) return null;
-                return (
-                  <div key={kind} className="space-y-3">
-                    <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
-                      {kind === "Statutory" ? "Statutory (PF / ESI)" : `${kind}s`}
-                    </div>
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      {comps.map((c) => (
-                        <Field key={c.id} label={`${c.name} (${c.code}) · ${c.calculation}`}>
-                          <Input name={`pc_${c.code}`} placeholder={c.value} />
-                        </Field>
-                      ))}
-                    </div>
+              {payComponents.length > 0 && (
+                <div className="space-y-3">
+                  <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+                    Pay components (optional overrides)
                   </div>
-                );
-              })}
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    {payComponents.map((c) => (
+                      <Field
+                        key={c.code}
+                        label={`${c.name} (${c.code}) · ${c.calculation_type}`}
+                      >
+                        <Input
+                          name={`pc_${c.code}`}
+                          type="number"
+                          min={0}
+                          max={/percent/i.test(c.calculation_type ?? "") ? 100 : undefined}
+                          step="any"
+                          defaultValue={init.payComponents?.[c.code]}
+                          placeholder={/percent/i.test(c.calculation_type ?? "") ? "% (0–100)" : "₹ amount"}
+                        />
+                      </Field>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <Card className="shadow-card bg-muted/30">
                 <CardContent className="grid grid-cols-1 gap-3 p-4 text-sm sm:grid-cols-3">
@@ -2245,9 +2899,10 @@ function AddEmployeeDialog({ onClose, onCreated }) {
                 <Button type="button" variant="outline" onClick={() => setTab("bank")}>
                   ← Back
                 </Button>
-                <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                  <Checkbox id="notify" />{" "}
-                  <Label htmlFor="notify">Send welcome email with credentials</Label>
+                <div className="text-muted-foreground text-xs">
+                  {isEdit
+                    ? "Only the fields you changed are saved."
+                    : "Login credentials are emailed to the personal email automatically."}
                 </div>
               </div>
             </TabsContent>
@@ -2266,16 +2921,58 @@ function AddEmployeeDialog({ onClose, onCreated }) {
             {submitting ? (
               <>
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                <span>Creating Employee…</span>
+                <span>{isEdit ? "Saving Changes…" : "Creating Employee…"}</span>
               </>
+            ) : isEdit ? (
+              "Save Changes"
             ) : (
               "Create Employee"
             )}
           </Button>
         </DialogFooter>
       </form>
+      </FormErrorsContext.Provider>
+      <DocPreviewDialog
+        open={!!docPreview}
+        onClose={() => setDocPreview(null)}
+        title={docPreview?.title}
+        src={docPreview?.src}
+        isPdf={docPreview?.isPdf}
+      />
     </DialogContent>
   );
+}
+
+/** Loads the full record (list rows are partial) before showing the pre-filled form. */
+function EditEmployeeForm({ employee, onClose, onUpdated }) {
+  const [full, setFull] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    getEmployeeById(employee.id)
+      .then((data) => alive && setFull({ ...employee, ...data }))
+      .catch((err) => {
+        console.warn("Could not load employee profile:", err);
+        if (alive) setFull(employee);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [employee]);
+
+  if (!full) {
+    return (
+      <DialogContent className="max-w-5xl">
+        <DialogHeader>
+          <DialogTitle>Edit Employee</DialogTitle>
+          <DialogDescription>Loading employee record…</DialogDescription>
+        </DialogHeader>
+        <div className="grid h-64 place-items-center">
+          <Loader2 className="text-muted-foreground h-6 w-6 animate-spin" />
+        </div>
+      </DialogContent>
+    );
+  }
+  return <AddEmployeeDialog employee={full} onClose={onClose} onCreated={onUpdated} />;
 }
 
 /** Query-string contract of this screen (was the route's validateSearch). */

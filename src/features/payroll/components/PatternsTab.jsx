@@ -353,7 +353,8 @@ async function deletePattern(p) {
               type="button"
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-red-600 hover:bg-red-50 hover:text-red-700"
+              // className="h-7 w-7 text-red-600 hover:bg-red-50 hover:text-red-700"
+              className="h-7 w-7 text-red-400 hover:bg-red-50 hover:text-red-500"
               title="Delete attendance pattern"
               aria-label={`Delete ${p.name}`}
               disabled={deletingPatternId === p.id}

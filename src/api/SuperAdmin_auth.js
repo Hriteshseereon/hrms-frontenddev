@@ -46,8 +46,20 @@ const SuperAdmin_auth = {
     return SuperAdmin_axios.get("/super-admin/companies");
   },
 
+  getCompany(companyId) {
+    return SuperAdmin_axios.get(`/super-admin/companies/${companyId}`);
+  },
+
   createCompany(data) {
     return SuperAdmin_axios.post("/super-admin/companies", data);
+  },
+
+  updateCompany(companyId, data) {
+    return SuperAdmin_axios.put(`/super-admin/companies/${companyId}`, data);
+  },
+
+  deleteCompany(companyId) {
+    return SuperAdmin_axios.delete(`/super-admin/companies/${companyId}`);
   },
 
   // BRANCH APIs
@@ -57,8 +69,20 @@ const SuperAdmin_auth = {
     });
   },
 
+  getBranch(branchId) {
+    return SuperAdmin_axios.get(`/super-admin/branches/${branchId}`);
+  },
+
   createBranch(data) {
     return SuperAdmin_axios.post("/super-admin/branches", data);
+  },
+
+  updateBranch(branchId, data) {
+    return SuperAdmin_axios.put(`/super-admin/branches/${branchId}`, data);
+  },
+
+  deleteBranch(branchId) {
+    return SuperAdmin_axios.delete(`/super-admin/branches/${branchId}`);
   },
 
   // LOGOUT

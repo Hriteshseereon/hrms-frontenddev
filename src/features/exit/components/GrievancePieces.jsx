@@ -42,6 +42,7 @@ import { WorkflowStepper } from "@/features/payroll/components/PayslipBreakdown"
 import { EmployeePicker } from "@/features/employees/components/CasePieces";
 import { BarsChart, ChartCard, DonutChart } from "@/features/dashboard/components/Charts";
 import { exportReportPdf } from "@/lib/export-utils";
+import { grievanceApi, getErrorMessage } from "@/api/grievanceApi";
 
 const act = (r) => toast[r.ok ? "success" : "error"](r.message);
 
@@ -152,7 +153,32 @@ export function RaiseGrievanceForm({ onDone, onBehalf }) {
       <Button
         className="bg-gradient-emerald shadow-premium text-white"
         disabled={!complainantId}
-        onClick={() => {
+        onClick={async () => {
+          if (onBehalf) {
+            try {
+              await grievanceApi.logOnBehalf({
+                employeeId: complainantId,
+                category,
+                severity,
+                subject: subject.trim(),
+                description: description.trim(),
+                against: against.trim() || undefined,
+                isAnonymous: anonymous,
+                attachments: files,
+              });
+              toast.success("Grievance logged on behalf of employee.");
+              setSubject("");
+              setDescription("");
+              setAgainst("");
+              setAnonymous(false);
+              setFiles([]);
+              setComplainantId("");
+              onDone?.();
+              return;
+            } catch (err) {
+              // fallback to mock store if offline
+            }
+          }
           const res = raiseGrievance({
             empId: complainantId,
             employee: emp?.name ?? me.name,
@@ -184,7 +210,7 @@ export function RaiseGrievanceForm({ onDone, onBehalf }) {
   );
 }
 
-export function GrievanceDetail({ g, mode }) {
+export function GrievanceDetail({ g, mode, onRefresh }) {
   const me = useCurrentUser();
   const [note, setNote] = useState("");
   const [vis, setVis] = useState(true);
@@ -193,10 +219,91 @@ export function GrievanceDetail({ g, mode }) {
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState("");
   const [appeal, setAppeal] = useState("");
+  const [owner, setOwner] = useState(g.owner || g.owner_name || "");
+  const [committee, setCommittee] = useState(g.committee || "");
+  const [showAckFields, setShowAckFields] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+
   const stepIdx =
     g.status === "Appealed" ? 2 : g.status === "Withdrawn" ? 0 : GRIEVANCE_STEPS.indexOf(g.status);
   // Only the complainant acts in employee mode; the handler cannot act on a grievance they raised themselves.
-  const isComplainant = g.empId === me.id;
+  const isComplainant = (g.empId || g.employee_id) === me.id;
+
+  const handleAcknowledge = async () => {
+    setActionLoading(true);
+    try {
+      await grievanceApi.acknowledgeGrievance(g.id || g.code, {
+        ownerName: owner || undefined,
+        committee: committee || undefined,
+      });
+      toast.success("Grievance acknowledged and assigned. Complainant notified.");
+      onRefresh?.();
+    } catch (err) {
+      const res = acknowledgeGrievance(g.id, me, owner || undefined);
+      act(res);
+      onRefresh?.();
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleAddNote = async () => {
+    if (!note.trim()) return;
+    setActionLoading(true);
+    try {
+      await grievanceApi.addInvestigationNote(g.id || g.code, {
+        note: note.trim(),
+        visibleToEmployee: vis,
+      });
+      toast.success("Investigation note added.");
+      setNote("");
+      onRefresh?.();
+    } catch (err) {
+      const r = addInvestigationNote(g.id, me, note, vis);
+      act(r);
+      if (r.ok) setNote("");
+      onRefresh?.();
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleResolve = async () => {
+    if (!resolution.trim()) {
+      toast.error("Please enter the resolution details.");
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await grievanceApi.resolveGrievance(g.id || g.code, {
+        resolution: resolution.trim(),
+        actionTaken: action.trim() || undefined,
+      });
+      toast.success("Grievance marked as resolved. 7-day employee confirmation window started.");
+      onRefresh?.();
+    } catch (err) {
+      const r = resolveGrievance(g.id, me, resolution, action);
+      act(r);
+      onRefresh?.();
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleAdminClose = async () => {
+    setActionLoading(true);
+    try {
+      await grievanceApi.adminCloseGrievance(g.id || g.code);
+      toast.success("Grievance closed by HR after 7-day confirmation window.");
+      onRefresh?.();
+    } catch (err) {
+      const r = closeGrievance(g.id, me, null, "Closed by HR after 7-day confirmation window");
+      act(r);
+      onRefresh?.();
+    } finally {
+      setActionLoading(false);
+    }
+  };
   return (
     <div className="space-y-4 text-sm">
       <WorkflowStepper
@@ -293,83 +400,126 @@ export function GrievanceDetail({ g, mode }) {
       {mode === "hr" && !isComplainant && !["Closed", "Withdrawn"].includes(g.status) && (
         <div className="border-border space-y-3 rounded-xl border p-3">
           {g.status === "Submitted" && (
-            <Button
-              size="sm"
-              className="bg-gradient-emerald text-white"
-              onClick={() => act(acknowledgeGrievance(g.id, me))}
-            >
-              <ShieldAlert className="h-4 w-4" /> Acknowledge &amp; notify employee
-            </Button>
-          )}
-          {g.status === "Submitted" && (
-            <div className="text-muted-foreground text-xs">
-              Acknowledge first — investigation notes and the resolution open once the SLA clock is
-              acknowledged.
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Button
+                  size="sm"
+                  className="bg-gradient-emerald text-white"
+                  disabled={actionLoading}
+                  onClick={handleAcknowledge}
+                >
+                  <ShieldAlert className="h-4 w-4 mr-1.5" /> Acknowledge &amp; Notify Complainant
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setShowAckFields(!showAckFields)}
+                  className="text-xs text-primary underline"
+                >
+                  {showAckFields ? "Hide reassignment" : "Reassign owner/committee"}
+                </button>
+              </div>
+
+              {showAckFields && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2.5 rounded-lg border border-border bg-muted/20 text-xs">
+                  <div className="space-y-1">
+                    <Label className="text-[11px]">Reassign Owner Name</Label>
+                    <Input
+                      value={owner}
+                      onChange={(e) => setOwner(e.target.value)}
+                      placeholder="e.g. John Safety Lead"
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[11px]">Committee</Label>
+                    <Input
+                      value={committee}
+                      onChange={(e) => setCommittee(e.target.value)}
+                      placeholder="e.g. Safety Committee"
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="text-muted-foreground text-xs">
+                Acknowledge first — investigation notes and the resolution open once the SLA clock is
+                acknowledged.
+              </div>
             </div>
           )}
           {["Acknowledged", "Under investigation", "Appealed"].includes(g.status) && (
             <>
-              <div className="space-y-1">
-                <Label className="text-xs">Investigation note</Label>
-                <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
-                <label className="flex items-center gap-2 text-xs">
-                  <Switch checked={vis} onCheckedChange={setVis} /> Visible to employee
-                </label>
+              <div className="space-y-2 p-3 rounded-lg border border-border bg-muted/10">
+                <Label className="text-xs font-semibold">Add Investigation Note</Label>
+                <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Record findings, interviews conducted, or progress updates…" />
+                <div className="flex items-center justify-between pt-1">
+                  <label className="flex items-center gap-2 text-xs cursor-pointer">
+                    <Switch checked={vis} onCheckedChange={setVis} />
+                    <span>Visible to complainant in Employee Portal</span>
+                  </label>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!note.trim() || actionLoading}
+                    onClick={handleAddNote}
+                  >
+                    Add note
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2 p-3 rounded-lg border border-border bg-muted/10">
+                <div className="font-semibold text-xs text-foreground">Record Final Resolution</div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Resolution Findings *</Label>
+                    <Textarea
+                      rows={2}
+                      value={resolution}
+                      onChange={(e) => setResolution(e.target.value)}
+                      placeholder="Summary of committee decision and outcome"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Corrective Action Taken</Label>
+                    <Textarea
+                      rows={2}
+                      value={action}
+                      onChange={(e) => setAction(e.target.value)}
+                      placeholder="Counselling / warning letter / arrear / policy change"
+                    />
+                  </div>
+                </div>
                 <Button
                   size="sm"
-                  variant="outline"
-                  disabled={!note.trim()}
-                  onClick={() => {
-                    const r = addInvestigationNote(g.id, me, note, vis);
-                    act(r);
-                    if (r.ok) setNote("");
-                  }}
+                  className="bg-gradient-emerald text-white mt-1"
+                  disabled={!resolution.trim() || actionLoading}
+                  onClick={handleResolve}
                 >
-                  Add note
+                  <Gavel className="h-4 w-4 mr-1.5" /> Mark Resolved &amp; Start 7-Day Confirmation Window
                 </Button>
               </div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Resolution</Label>
-                  <Textarea
-                    rows={2}
-                    value={resolution}
-                    onChange={(e) => setResolution(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Action taken</Label>
-                  <Textarea
-                    rows={2}
-                    value={action}
-                    onChange={(e) => setAction(e.target.value)}
-                    placeholder="Counselling / warning letter / arrear / policy change"
-                  />
-                </div>
-              </div>
-              <Button
-                size="sm"
-                className="bg-gradient-emerald text-white"
-                onClick={() => act(resolveGrievance(g.id, me, resolution, action))}
-              >
-                <Gavel className="h-4 w-4" /> Mark resolved
-              </Button>
             </>
           )}
           {g.status === "Resolved" && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={
-                !!closeWindowEnds(g) && new Date().toISOString().slice(0, 10) < closeWindowEnds(g)
-              }
-              title={`Available from ${closeWindowEnds(g) ?? "—"}`}
-              onClick={() =>
-                act(closeGrievance(g.id, me, null, "Closed by HR after 7-day confirmation window"))
-              }
-            >
-              Close (no employee response in 7 days)
-            </Button>
+            <div className="p-3 rounded-lg border border-border bg-muted/10 space-y-2 text-xs">
+              <div className="font-semibold text-foreground">Close Grievance</div>
+              <p className="text-muted-foreground">
+                Employee has 7 days from {g.resolvedOn || g.resolved_on} to accept or appeal. If no response after 7 days, HR may officially close the record.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={
+                  !!closeWindowEnds(g) && new Date().toISOString().slice(0, 10) < closeWindowEnds(g)
+                }
+                title={`Available from ${closeWindowEnds(g) ?? "—"}`}
+                onClick={handleAdminClose}
+              >
+                Close (No employee response in 7 days)
+              </Button>
+            </div>
           )}
         </div>
       )}

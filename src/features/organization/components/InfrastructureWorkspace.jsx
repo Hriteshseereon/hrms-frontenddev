@@ -428,10 +428,10 @@ export function Infrastructure() {
           <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
             <Building2 className="text-primary h-6 w-6" /> Organization Infrastructure
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm">
+          {/* <p className="text-muted-foreground mt-1 text-sm">
             Central master data — branches, buildings, blocks, floors, departments and designations
             {org ? ` · ${org.name}` : ""}.
-          </p>
+          </p> */}
         </div>
       </div>
 

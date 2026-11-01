@@ -30,7 +30,7 @@ export async function createEmployee(data) {
   }
 
   // Check required fields
-  const required = ["first_name", "work_email", "password"];
+  const required = ["first_name", "work_email"];
   const missing = required.filter((field) => {
     const val = formData.get(field);
     return !val || !String(val).trim();
@@ -59,6 +59,7 @@ export async function getEmployees({
   department_id = "",
   company_id = "",
   branch_id = "",
+  designation_type = "",
 } = {}) {
   const params = {
     page: Math.max(1, Number(page) || 1),
@@ -79,6 +80,10 @@ export async function getEmployees({
   }
   if (branch_id && branch_id !== "all" && String(branch_id).trim()) {
     params.branch_id = String(branch_id).trim();
+  }
+
+  if (designation_type) {
+    params.designation_type = designation_type;
   }
 
   const response = await SuperAdmin_axios.get("/employees", { params });
@@ -139,6 +144,40 @@ export async function patchEmployee(id, employeeData) {
     cleanPayload,
   );
   return response.data;
+}
+
+/**
+ * PATCH: Edit fields AND files in one multipart call
+ * Endpoint: /employees/{id}/form
+ * Send only what changed. The string "null" clears manager_id / hr_partner_id / shift_id and moves
+ * placement up (company_id="null" -> organisation level, branch_id="null" -> company level).
+ * work_email and employee_code cannot be edited.
+ */
+export async function patchEmployeeForm(id, formData) {
+  if (!id) throw new Error("Employee profile ID is required.");
+  const response = await SuperAdmin_axios.patch(
+    `/employees/${encodeURIComponent(id)}/form`,
+    formData,
+  );
+  return response.data;
+}
+
+/** GET /payroll/pay-components -> [{code, name, calculation_type}] — the codes pc_<CODE> accepts. */
+export async function getPayComponents() {
+  const response = await SuperAdmin_axios.get("/payroll/pay-components");
+  const data = response.data;
+  return Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
+}
+
+/** `view_url` values come back as relative paths — prefix them with the API origin. */
+export function resolveApiUrl(url) {
+  if (!url) return "";
+  if (/^https?:\/\//i.test(url)) return url;
+  try {
+    return new URL(url, import.meta.env.VITE_API_BASE_URL).href;
+  } catch {
+    return url;
+  }
 }
 
 /**
