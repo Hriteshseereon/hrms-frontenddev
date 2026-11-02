@@ -13,8 +13,7 @@ function FinancePage() {
           <DollarSign className="text-primary h-6 w-6" /> Finance &amp; Accounts
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Attendance-linked payroll runs with maker–checker approval, generated payslips and
-          employee loans.
+          Create a payroll run, select employees, run payroll and record salary payments.
         </p>
       </div>
 
