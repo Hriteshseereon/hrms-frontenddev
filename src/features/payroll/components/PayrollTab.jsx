@@ -131,7 +131,7 @@ export function PayrollTab() {
   const canRun = can(me.role, "payroll.run");
   const canApprove = can(me.role, "payroll.approve");
   const canProcess =
-    can(me.role, "payroll.process") && ["Accountant", "Admin", "SuperAdmin"].includes(me.role);
+    can(me.role, "payroll.process") && ["Accountant", "CFO", "Admin", "SuperAdmin"].includes(me.role);
 
   const act = (r) => toast[r.ok ? "success" : "error"](r.message);
 
@@ -197,6 +197,10 @@ export function PayrollTab() {
 
   const selectionEditable =
     run && ["Draft", "Checks Failed", "Checks Passed"].includes(run.status);
+  const savedEmployeeIds = run?.employeeIds ?? run?.lines.map((line) => line.empId) ?? [];
+  const selectionMatchesRun =
+    savedEmployeeIds.length === selectedEmployeeIds.length &&
+    savedEmployeeIds.every((id) => selectedEmployeeIds.includes(id));
   const allEmployeesSelected = Boolean(
     registerLines.length && registerLines.every((line) => selectedEmployeeIds.includes(line.empId)),
   );
@@ -218,10 +222,13 @@ export function PayrollTab() {
     if (!sameSelection) {
       const prepared = setRunEmployees(run.id, selectedEmployeeIds, me);
       if (!prepared.ok) return act(prepared);
+      const checked = runChecks(run.id, me);
+      act(checked);
+      return;
     }
+    if (run.status === "Checks Passed") return act(submitForApproval(run.id, me));
     const checked = runChecks(run.id, me);
-    if (!checked.ok) return act(checked);
-    act(processRun(run.id, me));
+    act(checked);
   }
 
   const exportRegister = () => {
@@ -342,7 +349,7 @@ export function PayrollTab() {
               <div>
                 <div className="font-semibold">Payroll Runs</div>
                 <div className="text-muted-foreground text-xs">
-                  1. Create payroll → 2. Select and review employees → 3. Run payroll → 4. Record salary payment
+                  1. Create payroll → 2. Select employees → 3. Check payroll → 4. Payroll Admin approval → 5. Final payroll run → 6. Record payment
                 </div>
               </div>
             </div>
@@ -542,11 +549,11 @@ export function PayrollTab() {
             <Card className="shadow-card">
               <CardContent className="space-y-3 p-5">
                 <div className="flex items-center gap-2 text-sm font-semibold">
-                  <ShieldCheck className="text-primary h-4 w-4" /> Payroll run &amp; payment
+                  <ShieldCheck className="text-primary h-4 w-4" /> Payroll approval &amp; processing
                 </div>
                 {selectionEditable && canRun && (
                   <p className="text-muted-foreground rounded-lg border p-3 text-xs">
-                    Select employees in the Salary Register and click Run payroll. Compliance checks run automatically.
+                    Select employees, review the payroll register, then run compliance checks. Submit it for Payroll Admin approval once all checks pass.
                   </p>
                 )}
                 {run.status === "Checks Passed" && canRun && (
@@ -556,7 +563,7 @@ export function PayrollTab() {
                       className="w-full"
                       onClick={() => {
                         acknowledgeWarnings(run.id, me);
-                        toast.success("Warnings acknowledged — click Run payroll to finalize.");
+                        toast.success("Warnings acknowledged — submit the payroll for approval when ready.");
                       }}
                     >
                       <AlertTriangle className="h-4 w-4" /> Acknowledge{" "}
@@ -564,7 +571,7 @@ export function PayrollTab() {
                     </Button>
                   )
                 )}
-                {false && run.status === "Pending Approval" && (
+                {run.status === "Pending Approval" && (
                   <div className="space-y-2">
                     <div className="text-muted-foreground text-xs">
                       Awaiting <b>{nextApprovalLevel(run)}</b> ·{" "}
@@ -590,7 +597,7 @@ export function PayrollTab() {
                             rows={2}
                             value={remarks}
                             onChange={(e) => setRemarks(e.target.value)}
-                            placeholder="Approval remarks (bank file reference, reconciliation note)…"
+                            placeholder="Approval remarks (optional for approval; required for reject or send-back)…"
                           />
 
                           <div className="grid grid-cols-2 gap-2">
@@ -642,13 +649,21 @@ export function PayrollTab() {
                     )}
                   </div>
                 )}
-                {false && run.status === "Approved" && canProcess && (
-                  <Button
-                    className="bg-gradient-emerald w-full text-white"
-                    onClick={() => act(processRun(run.id, me))}
-                  >
-                    <Play className="h-4 w-4" /> Accountant: finalize payroll &amp; generate payslips
-                  </Button>
+                {run.status === "Approved" && (
+                  canProcess ? (
+                    <div className="space-y-2">
+                      <div className="border-primary/20 bg-primary/5 rounded-lg border p-3 text-xs">
+                        Payroll Admin approved this run. Review the totals, then finalize payroll to lock calculations and generate payslips.
+                      </div>
+                      <Button className="bg-gradient-emerald w-full text-white" onClick={() => act(processRun(run.id, me))}>
+                        <Play className="h-4 w-4" /> Finalize payroll &amp; generate payslips
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="border-border bg-muted/30 text-muted-foreground rounded-lg border p-3 text-xs">
+                      Approved by Payroll Admin. Waiting for an Accountant or authorized finance user to run final payroll.
+                    </div>
+                  )
                 )}
                 {false && run.status === "Processed" && canProcess && (
                   <div className="space-y-2">
@@ -849,7 +864,7 @@ export function PayrollTab() {
                   <div className="font-semibold">Salary Register · {periodLabel(run.period)}</div>
                   <div className="text-muted-foreground text-xs">
                     Attendance pattern → LOP → earned gross → state-aware statutory deductions.
-                    Select employees, then run payroll to calculate and check the selected employees.
+                    Review each employee’s calculated salary, resolve check errors, then submit the register for Payroll Admin approval.
                     Click a row to review the payslip calculation.
                   </div>
                 </div>
@@ -891,7 +906,10 @@ export function PayrollTab() {
                       disabled={!selectedEmployeeIds.length}
                       onClick={runSelectedPayroll}
                     >
-                      <Play className="h-4 w-4" /> Run payroll
+                      <Play className="h-4 w-4" />
+                      {run.status === "Checks Passed" && selectionMatchesRun
+                        ? "Submit for Payroll Admin approval"
+                        : "Run compliance checks"}
                     </Button>
                   )}
                 </div>

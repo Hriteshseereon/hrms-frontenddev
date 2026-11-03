@@ -674,10 +674,10 @@ export function StatutoryConfigTab() {
           <CardContent className="space-y-4 p-6">
             <div className="font-semibold">Payroll processing flow</div>
             <div className="border-border bg-muted/30 rounded-lg border p-3">
-              <div className="text-sm font-medium">Payroll creation → Employee selection → Payroll run → Record salary payment</div>
+              <div className="text-sm font-medium">Create payroll → Select employees → Compliance checks → Payroll Admin approval → Final payroll run → Record payment</div>
               <p className="text-muted-foreground mt-1 text-xs">
-                Create the run first, choose employees in the register, run payroll to generate
-                payslips, then record the bank transfer reference.
+                Create a run, select employees, resolve compliance issues and submit for approval.
+                After Payroll Admin approval, an Accountant finalizes payroll and generates payslips.
               </p>
             </div>
             <Tog

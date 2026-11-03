@@ -1549,6 +1549,8 @@ export function acknowledgeWarnings(id, user) {
 export function submitForApproval(id, user) {
   const run = runById(id);
   if (!run) return { ok: false, message: "Run not found." };
+  if (!user || !can(user.role, "payroll.run"))
+    return { ok: false, message: "You do not have permission to submit payroll for approval." };
   if (run.status !== "Checks Passed")
     return {
       ok: false,
@@ -1663,12 +1665,12 @@ export function sendBackRun(id, user, remarks) {
 }
 
 export function processRun(id, user) {
-  if (!user || !can(user.role, "payroll.run"))
-    return { ok: false, message: "You do not have permission to run payroll." };
+  if (!user || !can(user.role, "payroll.process"))
+    return { ok: false, message: "You do not have permission to finalize payroll." };
   const run = runById(id);
   if (!run) return { ok: false, message: "Run not found." };
-  if (run.status !== "Checks Passed")
-    return { ok: false, message: "Run compliance checks successfully before finalizing payroll." };
+  if (run.status !== "Approved")
+    return { ok: false, message: "Payroll Admin approval is required before finalizing payroll." };
   if (run.checks.some((check) => check.level === "warning" && !check.acknowledged && isOpenCheck(check)))
     return { ok: false, message: "Acknowledge all payroll warnings before finalizing." };
   update(id, (r) =>
@@ -1685,8 +1687,8 @@ export function processRun(id, user) {
 }
 
 export function markPaid(id, user, paymentRef) {
-  if (!user || !["Accountant", "Admin", "SuperAdmin"].includes(user.role))
-    return { ok: false, message: "Only the accountant can record salary payment for this payroll run." };
+  if (!user || !["Accountant", "CFO", "Admin", "SuperAdmin"].includes(user.role))
+    return { ok: false, message: "Only an Accountant or authorized finance administrator can record salary payment." };
   if (!String(paymentRef ?? "").trim())
     return { ok: false, message: "Enter the salary transfer reference before recording payment." };
   const run = runById(id);
@@ -1745,14 +1747,19 @@ export const runTone = (s) =>
 
 export const RUN_STEPS = [
   "Create payroll",
-  "Select & review employees",
-  "Run payroll",
-  "Record salary payment",
+  "Select employees",
+  "Compliance checks",
+  "Payroll Admin approval",
+  "Final payroll run",
+  "Record payment",
 ];
 export const runStepIndex = (s) => {
-  if (s === "Paid") return 4;
-  if (s === "Processed") return 3;
-  if (["Checks Passed", "Pending Approval", "Approved", "Checks Failed"].includes(s)) return 2;
+  if (s === "Paid") return 6;
+  if (s === "Processed") return 5;
+  if (s === "Approved") return 4;
+  if (s === "Pending Approval") return 3;
+  if (s === "Checks Passed") return 3;
+  if (s === "Checks Failed") return 2;
   if (s === "Draft") return 1;
   return 0;
 };
