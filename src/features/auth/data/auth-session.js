@@ -1405,7 +1405,7 @@ export function signInAs(id) {
 }
 
 /** Bridge the backend identity into the session used by portal guards and permissions. */
-export function signInFromBackend(user) {
+export function signInFromBackend(user, { portal } = {}) {
   if (!user?.id || !user.email) {
     throw new Error("Login response did not contain a valid user identity.");
   }
@@ -1428,7 +1428,8 @@ export function signInFromBackend(user) {
     orgId: user.organization_id || ORGANIZATION.id,
     companyId: user.company_id || null,
     branchId: user.branch_id || null,
-    portal: appRole === "Employee" ? "emp" : "org",
+    // The backend decides the portal (redirect_portal); the role is only a fallback for older responses.
+    portal: portal === "org" || portal === "emp" ? portal : appRole === "Employee" ? "emp" : "org",
     designation: user.role ? String(user.role).replace(/_/g, " ") : "Administrator",
     dept: "",
     branch: "",
@@ -1449,10 +1450,33 @@ export function signInSuperAdmin(user) {
 
 export function signOut() {
   if (typeof window !== "undefined") {
+    // Tell the backend to stop this device's tokens (fire and forget), then drop them locally.
+    const token =
+      window.localStorage.getItem("super_admin_access_token") ||
+      window.localStorage.getItem("access_token");
+    const base = import.meta.env.VITE_API_BASE_URL;
+    if (token && base) {
+      fetch(`${base}/auth/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token.replace(/^Bearer\s+/i, "")}` },
+        keepalive: true,
+      }).catch(() => {});
+    }
     window.localStorage.removeItem(KEY);
     window.localStorage.removeItem(API_USER_KEY);
     window.localStorage.removeItem("super_admin_access_token");
     window.localStorage.removeItem("super_admin_refresh_token");
+    window.localStorage.removeItem("access_token");
+    window.localStorage.removeItem("refresh_token");
+    import("./session-store").then((m) =>
+      m.useSessionStore.setState({
+        accessToken: null,
+        refreshToken: null,
+        role: null,
+        isAuthenticated: false,
+        mustChangePassword: false,
+      }),
+    );
   }
   apiUser = null;
   currentId = DEFAULT_ID;

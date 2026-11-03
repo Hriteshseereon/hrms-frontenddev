@@ -3,18 +3,14 @@ import { useSessionStore } from "@/features/auth/data/session-store";
 import { signInSuperAdmin, signOut } from "@/features/auth/data/auth-session";
 
 const SuperAdmin_auth = {
-  // LOGIN (supports POST /auth/login and falls back to /auth/super-admins/login)
-  async login(email, password) {
-    let response;
-    try {
-      response = await SuperAdmin_axios.post("/auth/login", { email, password });
-    } catch (err) {
-      if (err.response?.status === 404) {
-        response = await SuperAdmin_axios.post("/auth/super-admins/login", { email, password });
-      } else {
-        throw err;
-      }
-    }
+  // LOGIN — one endpoint for every role; the backend decides the role and the portal (redirect_portal).
+  async login(identifier, password) {
+    // "email" is the legacy key: sent too so a backend that has not been updated yet still accepts the login.
+    const response = await SuperAdmin_axios.post("/auth/login", {
+      identifier,
+      email: identifier,
+      password,
+    });
 
     const { access_token, refresh_token } = response.data;
 
