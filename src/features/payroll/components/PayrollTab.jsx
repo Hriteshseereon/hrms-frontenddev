@@ -13,7 +13,6 @@ import {
   AlertTriangle,
   Info,
   Lock,
-  Unlock,
   Eye,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -22,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -49,6 +49,8 @@ import {
   RUN_STEPS,
   acknowledgeWarnings,
   createRun,
+  setRunEmployees,
+  restartRunForNewFlow,
   decideRun,
   sendBackRun,
   markPaid,
@@ -64,13 +66,9 @@ import {
   submitForApproval,
   usePayrollRuns,
   dueDate,
+  computePayslip,
+  payrollRoster,
 } from "@/features/payroll/data/payroll-engine";
-import {
-  attendanceLockStore,
-  lockAttendance,
-  unlockAttendance,
-  useAttendanceLocks,
-} from "@/features/attendance/data/attendance-pattern";
 import { useStatutoryConfig } from "@/features/payroll/data/statutory-data";
 import { PayslipBreakdown, WorkflowStepper } from "@/features/payroll/components/PayslipBreakdown";
 import {
@@ -98,18 +96,24 @@ export function PayrollTab() {
   const inScope = useScopeMatch();
   const allRuns = usePayrollRuns();
   const runs = useMemo(
-    () => allRuns.filter((r) => inScope(r.orgId)).sort((a, b) => (a.period < b.period ? 1 : -1)),
-    [allRuns, inScope],
+    () =>
+      allRuns
+        .filter((r) => inScope(r.orgId) || r.orgId === orgId)
+        .sort((a, b) => (a.period < b.period ? 1 : -1)),
+    [allRuns, inScope, orgId],
   );
   const [selectedId, setSelectedId] = useState("");
   const run = runs.find((r) => r.id === selectedId) ?? runs[0];
-  const locks = useAttendanceLocks();
-  // The selected run's own entity — in the group view the active entity can differ from the run's company.
-  const allLocks = attendanceLockStore.use();
   const cfg = useStatutoryConfig();
 
   const [open, setOpen] = useState(false);
-  const [period, setPeriod] = useState("2026-08");
+  const [period, setPeriod] = useState(() => {
+    const today = new Date();
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const periodRun = runs.find(
+    (r) => r.orgId === orgId && r.period === period && r.status !== "Rejected",
+  );
   const [title, setTitle] = useState("");
   const [frequency, setFrequency] = useState("Monthly");
   const [payDate, setPayDate] = useState("");
@@ -120,15 +124,23 @@ export function PayrollTab() {
   const [remarks, setRemarks] = useState("");
   const [checkFilter, setCheckFilter] = useState("all");
   const [payRef, setPayRef] = useState("");
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState(
+    run?.employeeIds ?? run?.lines.map((line) => line.empId) ?? [],
+  );
 
   const canRun = can(me.role, "payroll.run");
   const canApprove = can(me.role, "payroll.approve");
-  const canProcess = can(me.role, "payroll.process");
-  const canLock = can(me.role, "attendance.lock");
+  const canProcess =
+    can(me.role, "payroll.process") && ["Accountant", "CFO", "Admin", "SuperAdmin"].includes(me.role);
 
   const act = (r) => toast[r.ok ? "success" : "error"](r.message);
 
   function submit() {
+    if (periodRun) {
+      setOpen(false);
+      openRegister(periodRun);
+      return;
+    }
     const res = createRun(
       {
         orgId,
@@ -140,36 +152,84 @@ export function PayrollTab() {
       },
       me,
     );
+    if (res.code === "DUPLICATE_PERIOD" && res.existingRun) {
+      setOpen(false);
+      openRegister(res.existingRun);
+      toast.info(`${periodLabel(period)} payroll already exists. Opened ${res.existingRun.id}.`);
+      return;
+    }
     act(res);
     if (res.ok) {
       setOpen(false);
       setTitle("");
       setPayDate("");
+      openRegister(res.run);
     }
   }
 
+  const registerLines = useMemo(() => {
+    if (!run) return [];
+    if (["Draft", "Checks Failed", "Checks Passed"].includes(run.status)) {
+      return payrollRoster(run.orgId).map((employee) => computePayslip(employee, run.period, cfg));
+    }
+    return run.lines;
+  }, [run, cfg]);
   const [stateFilter, setStateFilter] = useState("all");
   const rows = useMemo(
     () =>
-      (run?.lines ?? []).filter(
+      registerLines.filter(
         (l) =>
           `${l.name} ${l.empId} ${l.dept} ${l.state}`.toLowerCase().includes(q.toLowerCase()) &&
           (stateFilter === "all" || l.state === stateFilter),
       ),
-    [run, q, stateFilter],
+    [registerLines, q, stateFilter],
   );
-  const states = useMemo(() => [...new Set((run?.lines ?? []).map((l) => l.state))].sort(), [run]);
-  const t = run?.totals;
+  const states = useMemo(() => [...new Set(registerLines.map((l) => l.state))].sort(), [registerLines]);
+  const t = run?.lines.length ? run.totals : null;
   const errors = run?.checks.filter((c) => c.level === "error" && isOpenCheck(c)) ?? [];
   const warnings = run?.checks.filter((c) => c.level === "warning" && isOpenCheck(c)) ?? [];
   const infos = run?.checks.filter((c) => c.level === "info" && isOpenCheck(c)) ?? [];
   const closedChecks = run?.checks.filter((c) => !isOpenCheck(c)) ?? [];
-  const runLock = run ? (allLocks[`${run.orgId}:${run.period}`] ?? allLocks[run.period]) : null;
-  const locked = Boolean(runLock);
   const isMaker = run?.preparedBy.id === me.id;
   const alreadyApproved = Boolean(
     run?.approvals.some((a) => a.decision === "Approved" && a.byId === me.id),
   );
+
+  const selectionEditable =
+    run && ["Draft", "Checks Failed", "Checks Passed"].includes(run.status);
+  const savedEmployeeIds = run?.employeeIds ?? run?.lines.map((line) => line.empId) ?? [];
+  const selectionMatchesRun =
+    savedEmployeeIds.length === selectedEmployeeIds.length &&
+    savedEmployeeIds.every((id) => selectedEmployeeIds.includes(id));
+  const allEmployeesSelected = Boolean(
+    registerLines.length && registerLines.every((line) => selectedEmployeeIds.includes(line.empId)),
+  );
+
+  function openRegister(targetRun) {
+    setSelectedId(targetRun.id);
+    setSelectedEmployeeIds(targetRun.employeeIds ?? targetRun.lines.map((line) => line.empId));
+    requestAnimationFrame(() =>
+      document.getElementById("salary-register")?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  }
+
+  function runSelectedPayroll() {
+    if (!run) return;
+    const currentIds = run.employeeIds ?? run.lines.map((line) => line.empId);
+    const sameSelection =
+      currentIds.length === selectedEmployeeIds.length &&
+      currentIds.every((id) => selectedEmployeeIds.includes(id));
+    if (!sameSelection) {
+      const prepared = setRunEmployees(run.id, selectedEmployeeIds, me);
+      if (!prepared.ok) return act(prepared);
+      const checked = runChecks(run.id, me);
+      act(checked);
+      return;
+    }
+    if (run.status === "Checks Passed") return act(submitForApproval(run.id, me));
+    const checked = runChecks(run.id, me);
+    act(checked);
+  }
 
   const exportRegister = () => {
     if (!run) return;
@@ -200,7 +260,7 @@ export function PayrollTab() {
         "ESI (ER)",
         "CTC cost",
       ],
-      run.lines.map((l) => [
+      registerLines.map((l) => [
         l.empId,
         l.name,
         l.dept,
@@ -231,7 +291,7 @@ export function PayrollTab() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-4">
+      {t ? <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-4">
         {[
           { l: "Employees", v: String(t?.employees ?? 0), sub: run ? periodLabel(run.period) : "" },
           {
@@ -269,9 +329,19 @@ export function PayrollTab() {
             </CardContent>
           </Card>
         ))}
-      </div>
+      </div> : run ? (
+        <Card className="border-primary/20 bg-primary/5 shadow-card">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div>
+              <div className="font-semibold">Step 1 complete · {run.title}</div>
+              <p className="text-muted-foreground mt-1 text-sm">Select employees below. Review the pay preview and correct any employee details before running payroll.</p>
+            </div>
+            <Badge variant="outline">{selectedEmployeeIds.length} selected</Badge>
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <Card className="shadow-card">
+      <Card id="payroll-runs" className="shadow-card">
         <CardContent className="p-6">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -279,24 +349,27 @@ export function PayrollTab() {
               <div>
                 <div className="font-semibold">Payroll Runs</div>
                 <div className="text-muted-foreground text-xs">
-                  Draft → Compliance checks → {cfg.payroll.approvalLevels.join(" → ")} approval →
-                  Process → Pay
+                  1. Create payroll → 2. Select employees → 3. Check payroll → 4. Payroll Admin approval → 5. Final payroll run → 6. Record payment
                 </div>
               </div>
             </div>
             {canRun && (
-              <Dialog open={open} onOpenChange={setOpen}>
+              <Dialog
+                open={open}
+                onOpenChange={(next) => {
+                  setOpen(next);
+                }}
+              >
                 <DialogTrigger asChild>
                   <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
-                    <Play className="h-4 w-4" /> New Payroll Run
+                    <Play className="h-4 w-4" /> Create payroll
                   </Button>
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-lg">
                   <DialogHeader>
                     <DialogTitle>Create Payroll Run</DialogTitle>
                     <DialogDescription>
-                      The register is computed from attendance, patterns and statutory policy.
-                      Nothing is paid until the run clears checks and approval.
+                      Create the payroll period first. You will select employees and review their pay details in the next step.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
@@ -326,7 +399,7 @@ export function PayrollTab() {
                         <Input
                           value={title}
                           onChange={(e) => setTitle(e.target.value)}
-                          placeholder={`${periodLabel(period || "2026-08")} Salary`}
+                          placeholder={`${periodLabel(period)} Salary`}
                         />
                       </Field>
                     </div>
@@ -337,7 +410,7 @@ export function PayrollTab() {
                         onChange={(e) => setPayDate(e.target.value)}
                       />
                     </Field>
-                    <Field label="Bank account" required>
+                    <Field label="Pay from bank account" required>
                       <Select value={bank} onValueChange={setBank}>
                         <SelectTrigger>
                           <SelectValue />
@@ -351,11 +424,15 @@ export function PayrollTab() {
                         </SelectContent>
                       </Select>
                     </Field>
-                    {period && !locks[period] && cfg.payroll.requireAttendanceLock && (
-                      <div className="border-gold/40 bg-gold/10 flex gap-2 rounded-lg border p-3 text-xs sm:col-span-2">
-                        <AlertTriangle className="h-4 w-4 shrink-0" />
-                        Attendance for {periodLabel(period)} is not locked yet — the draft can be
-                        created but compliance checks will block until HR locks the month.
+                    <div className="border-primary/20 bg-primary/5 rounded-lg border p-3 text-xs sm:col-span-2">
+                      After creating the run, select all employees or choose individuals. Review the register before running payroll.
+                    </div>
+                    {periodRun && (
+                      <div className="border-primary/30 bg-primary/5 flex flex-col gap-2 rounded-lg border p-3 text-xs sm:col-span-2">
+                        <span>
+                          A {periodLabel(period)} run already exists: <b>{periodRun.id}</b> · {periodRun.status}.
+                          Open it to continue this payroll instead of creating a duplicate.
+                        </span>
                       </div>
                     )}
                   </div>
@@ -368,7 +445,7 @@ export function PayrollTab() {
                       className="bg-gradient-emerald text-white"
                       onClick={submit}
                     >
-                      Create Draft
+                      {periodRun ? "Open existing run" : "Create payroll"}
                     </Button>
                   </DialogFooter>
                 </DialogContent>
@@ -383,13 +460,12 @@ export function PayrollTab() {
                     "Run",
                     "Title",
                     "Period",
+                    "Frequency",
                     "Pay date",
-                    "Employees",
-                    "Earned gross",
-                    "LOP",
-                    "Net",
+                    "Bank account",
                     "Prepared by",
                     "Status",
+                    "Action",
                   ].map((h) => (
                     <th key={h} className="p-3 text-left">
                       {h}
@@ -401,7 +477,7 @@ export function PayrollTab() {
                 {runs.map((r) => (
                   <tr
                     key={r.id}
-                    onClick={() => setSelectedId(r.id)}
+                    onClick={() => openRegister(r)}
                     className={cn(
                       "hover:bg-muted/30 cursor-pointer transition",
                       run?.id === r.id && "bg-primary/5",
@@ -410,16 +486,15 @@ export function PayrollTab() {
                     <td className="text-muted-foreground p-3 font-mono text-xs">{r.id}</td>
                     <td className="p-3 font-medium">{r.title}</td>
                     <td className="text-muted-foreground p-3">{periodLabel(r.period)}</td>
+                    <td className="text-muted-foreground p-3">{r.frequency ?? "Monthly"}</td>
                     <td className="text-muted-foreground p-3">
                       <span className="whitespace-nowrap">{r.payDate}</span>
                     </td>
-                    <td className="p-3">{r.totals.employees}</td>
-                    <td className="p-3 tabular-nums">{inr(r.totals.earnedGross)}</td>
-                    <td className={cn("p-3 tabular-nums", r.totals.lop > 0 && "text-destructive")}>
-                      {r.totals.lop ? `− ${inr(r.totals.lop)}` : "—"}
-                    </td>
-                    <td className="text-primary p-3 font-semibold tabular-nums">
-                      {inr(r.totals.net)}
+                    <td
+                      className="text-muted-foreground max-w-[190px] truncate p-3 text-xs"
+                      title={r.bankAccount}
+                    >
+                      {r.bankAccount}
                     </td>
                     <td className="text-muted-foreground p-3">{r.preparedBy.name}</td>
                     <td className="p-3">
@@ -427,11 +502,25 @@ export function PayrollTab() {
                         {r.status}
                       </Badge>
                     </td>
+                    <td className="p-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openRegister(r);
+                        }}
+                      >
+                        {["Draft", "Checks Failed", "Checks Passed"].includes(r.status)
+                          ? "View employees"
+                          : "View register"}
+                      </Button>
+                    </td>
                   </tr>
                 ))}
                 {runs.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="text-muted-foreground p-8 text-center">
+                    <td colSpan={9} className="text-muted-foreground p-8 text-center">
                       No payroll runs for this organisation yet.
                     </td>
                   </tr>
@@ -460,70 +549,27 @@ export function PayrollTab() {
             <Card className="shadow-card">
               <CardContent className="space-y-3 p-5">
                 <div className="flex items-center gap-2 text-sm font-semibold">
-                  <ShieldCheck className="text-primary h-4 w-4" /> Workflow actions
+                  <ShieldCheck className="text-primary h-4 w-4" /> Payroll approval &amp; processing
                 </div>
-                <div className="border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-xs">
-                  <span className="flex items-center gap-1.5">
-                    {locked ? (
-                      <Lock className="text-primary h-3.5 w-3.5" />
-                    ) : (
-                      <Unlock className="text-destructive h-3.5 w-3.5" />
-                    )}{" "}
-                    Attendance {periodLabel(run.period)}:{" "}
-                    <b>{locked ? `locked by ${runLock.by}` : "not locked"}</b>
-                  </span>
-                  {canLock && ["Draft", "Checks Failed", "Checks Passed"].includes(run.status) && (
+                {selectionEditable && canRun && (
+                  <p className="text-muted-foreground rounded-lg border p-3 text-xs">
+                    Select employees, review the payroll register, then run compliance checks. Submit it for Payroll Admin approval once all checks pass.
+                  </p>
+                )}
+                {run.status === "Checks Passed" && canRun && (
+                  warnings.some((w) => !w.acknowledged) && (
                     <Button
-                      size="sm"
                       variant="outline"
-                      className="h-7 text-xs"
+                      className="w-full"
                       onClick={() => {
-                        if (locked) unlockAttendance(run.period, run.orgId);
-                        else lockAttendance(run.period, me.name, run.orgId);
-                        toast.success(
-                          locked ? "Attendance unlocked" : "Attendance locked for payroll",
-                        );
+                        acknowledgeWarnings(run.id, me);
+                        toast.success("Warnings acknowledged — submit the payroll for approval when ready.");
                       }}
                     >
-                      {locked ? "Unlock" : "Lock month"}
+                      <AlertTriangle className="h-4 w-4" /> Acknowledge{" "}
+                      {warnings.filter((w) => !w.acknowledged).length} warning(s)
                     </Button>
-                  )}
-                </div>
-                {(run.status === "Draft" ||
-                  run.status === "Checks Failed" ||
-                  run.status === "Checks Passed") &&
-                  canRun && (
-                    <Button
-                      className="bg-gradient-emerald w-full text-white"
-                      onClick={() => act(runChecks(run.id, me))}
-                    >
-                      <ShieldCheck className="h-4 w-4" />{" "}
-                      {run.checks.length ? "Re-run compliance checks" : "Run compliance checks"}
-                    </Button>
-                  )}
-                {run.status === "Checks Passed" && canRun && (
-                  <>
-                    {warnings.some((w) => !w.acknowledged) && (
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        onClick={() => {
-                          acknowledgeWarnings(run.id, me);
-                          toast.success("Warnings acknowledged");
-                        }}
-                      >
-                        <AlertTriangle className="h-4 w-4" /> Acknowledge{" "}
-                        {warnings.filter((w) => !w.acknowledged).length} warning(s)
-                      </Button>
-                    )}
-                    <Button
-                      className="bg-gradient-emerald w-full text-white"
-                      disabled={warnings.some((w) => !w.acknowledged)}
-                      onClick={() => act(submitForApproval(run.id, me))}
-                    >
-                      <Send className="h-4 w-4" /> Submit for {run.approvalLevels[0]} approval
-                    </Button>
-                  </>
+                  )
                 )}
                 {run.status === "Pending Approval" && (
                   <div className="space-y-2">
@@ -551,7 +597,7 @@ export function PayrollTab() {
                             rows={2}
                             value={remarks}
                             onChange={(e) => setRemarks(e.target.value)}
-                            placeholder="Approval remarks (bank file reference, reconciliation note)…"
+                            placeholder="Approval remarks (optional for approval; required for reject or send-back)…"
                           />
 
                           <div className="grid grid-cols-2 gap-2">
@@ -603,20 +649,28 @@ export function PayrollTab() {
                     )}
                   </div>
                 )}
-                {run.status === "Approved" && canProcess && (
-                  <Button
-                    className="bg-gradient-emerald w-full text-white"
-                    onClick={() => act(processRun(run.id, me))}
-                  >
-                    <Play className="h-4 w-4" /> Process — generate payslips
-                  </Button>
+                {run.status === "Approved" && (
+                  canProcess ? (
+                    <div className="space-y-2">
+                      <div className="border-primary/20 bg-primary/5 rounded-lg border p-3 text-xs">
+                        Payroll Admin approved this run. Review the totals, then finalize payroll to lock calculations and generate payslips.
+                      </div>
+                      <Button className="bg-gradient-emerald w-full text-white" onClick={() => act(processRun(run.id, me))}>
+                        <Play className="h-4 w-4" /> Finalize payroll &amp; generate payslips
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="border-border bg-muted/30 text-muted-foreground rounded-lg border p-3 text-xs">
+                      Approved by Payroll Admin. Waiting for an Accountant or authorized finance user to run final payroll.
+                    </div>
+                  )
                 )}
-                {run.status === "Processed" && canProcess && (
+                {false && run.status === "Processed" && canProcess && (
                   <div className="space-y-2">
                     <Input
                       value={payRef}
                       onChange={(e) => setPayRef(e.target.value)}
-                      placeholder="Bank bulk-transfer reference (e.g. NEFT-BULK-202608)"
+                      placeholder="Bank transfer reference (UTR)"
                     />
 
                     <Button
@@ -627,15 +681,14 @@ export function PayrollTab() {
                         setPayRef("");
                       }}
                     >
-                      <Banknote className="h-4 w-4" /> Confirm bank transfer
+                      <Banknote className="h-4 w-4" /> Record salary payment
                     </Button>
                     <p className="text-muted-foreground text-[11px]">
-                      ECR, ESI and TDS filings for {periodLabel(run.period)} can now be generated on
-                      the Statutory Compliance screen.
+                      Enter the transfer reference after salary has been credited to the selected employees.
                     </p>
                   </div>
                 )}
-                {run.status === "Paid" && (
+                {false && run.status === "Paid" && (
                   <div className="border-primary/30 bg-primary/5 rounded-lg border p-3 text-xs">
                     <CheckCircle2 className="text-primary mr-1 inline h-4 w-4" />
                     Paid on <span className="whitespace-nowrap">{run.paidOn}</span> ·{" "}
@@ -734,8 +787,8 @@ export function PayrollTab() {
 
             <Card className="shadow-card">
               <CardContent className="space-y-3 p-5">
-                <div className="text-sm font-semibold">Approval trail</div>
-                <div className="space-y-2">
+                <div className="text-sm font-semibold">Payroll history</div>
+                {false && <div className="space-y-2">
                   {run.approvalLevels.map((lvl, i) => {
                     const a = run.approvals[i];
                     return (
@@ -765,7 +818,7 @@ export function PayrollTab() {
                       </div>
                     );
                   })}
-                </div>
+                </div>}
                 <div className="pt-2 text-sm font-semibold">History</div>
                 <div className="max-h-48 space-y-1.5 overflow-y-auto text-xs">
                   {[...run.history].reverse().map((h, i) => (
@@ -781,17 +834,46 @@ export function PayrollTab() {
             </Card>
           </div>
 
-          <Card className="shadow-card">
+          <Card id="salary-register" className="shadow-card">
             <CardContent className="p-6">
+              {!selectionEditable && (
+                <div className="border-gold/40 bg-gold/10 text-muted-foreground mb-4 flex items-start gap-2 rounded-lg border p-3 text-xs">
+                  <Lock className="text-gold mt-0.5 h-4 w-4 shrink-0" />
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span>
+                      This run is <b>{run.status}</b>, so employee selection is locked at this stage.
+                    </span>
+                    {canRun && ["Pending Approval", "Approved"].includes(run.status) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const result = restartRunForNewFlow(run.id, me);
+                          act(result);
+                          if (result.ok) setSelectedEmployeeIds(result.employeeIds);
+                        }}
+                      >
+                        Move to new payroll flow
+                      </Button>
+                    )}
+                  </span>
+                </div>
+              )}
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
                   <div className="font-semibold">Salary Register · {periodLabel(run.period)}</div>
                   <div className="text-muted-foreground text-xs">
                     Attendance pattern → LOP → earned gross → state-aware statutory deductions.
-                    Click a row for the full payslip working.
+                    Review each employee’s calculated salary, resolve check errors, then submit the register for Payroll Admin approval.
+                    Click a row to review the payslip calculation.
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {selectionEditable && (
+                    <Badge variant="outline">
+                      {selectedEmployeeIds.length} / {registerLines.length} employees selected
+                    </Badge>
+                  )}
                   <div className="border-border bg-muted/40 flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-3 py-1.5 sm:flex-none">
                     <Search className="text-muted-foreground h-4 w-4" />
                     <Input
@@ -817,6 +899,19 @@ export function PayrollTab() {
                   <Button size="sm" variant="outline" onClick={exportRegister}>
                     <Download className="h-4 w-4" /> Export
                   </Button>
+                  {selectionEditable && canRun && (
+                    <Button
+                      size="sm"
+                      className="bg-gradient-emerald text-white"
+                      disabled={!selectedEmployeeIds.length}
+                      onClick={runSelectedPayroll}
+                    >
+                      <Play className="h-4 w-4" />
+                      {run.status === "Checks Passed" && selectionMatchesRun
+                        ? "Submit for Payroll Admin approval"
+                        : "Run compliance checks"}
+                    </Button>
+                  )}
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -840,12 +935,32 @@ export function PayrollTab() {
                         "",
                       ].map((h) => (
                         <th key={h} className="p-3 text-left whitespace-nowrap">
-                          {h}
+                          {h === "Employee" && selectionEditable ? (
+                            <span className="flex items-center gap-2">
+                              <Checkbox
+                                checked={allEmployeesSelected}
+                                aria-label="Select all employees"
+                                onCheckedChange={(checked) =>
+                                  setSelectedEmployeeIds(
+                                    checked ? registerLines.map((line) => line.empId) : [],
+                                  )
+                                }
+                              />
+                              Select all · Employee
+                            </span>
+                          ) : h}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-border divide-y">
+                    {registerLines.length === 0 && (
+                      <tr>
+                        <td colSpan={14} className="text-muted-foreground p-8 text-center">
+                          No active employees are available for this payroll period.
+                        </td>
+                      </tr>
+                    )}
                     {rows.map((l) => (
                       <tr
                         key={l.empId}
@@ -853,11 +968,29 @@ export function PayrollTab() {
                         onClick={() => setSlip(l)}
                       >
                         <td className="p-3 font-medium">
-                          {l.name}
-                          <div className="text-muted-foreground font-mono text-xs">
-                            {l.empId} · {l.dept}
-                            {l.wageRoll ? " · wage roll" : ""}
-                          </div>
+                          <span className="flex items-center gap-2">
+                            {selectionEditable && (
+                              <Checkbox
+                                checked={selectedEmployeeIds.includes(l.empId)}
+                                aria-label={`Select ${l.name}`}
+                                onClick={(event) => event.stopPropagation()}
+                                onCheckedChange={(checked) =>
+                                  setSelectedEmployeeIds((current) =>
+                                    checked
+                                      ? [...new Set([...current, l.empId])]
+                                      : current.filter((id) => id !== l.empId),
+                                  )
+                                }
+                              />
+                            )}
+                            <span>
+                              {l.name}
+                              <span className="text-muted-foreground block font-mono text-xs">
+                                {l.empId} · {l.dept}
+                                {l.wageRoll ? " · wage roll" : ""}
+                              </span>
+                            </span>
+                          </span>
                         </td>
                         <td className="text-muted-foreground p-3">{l.state}</td>
                         <td className="text-muted-foreground p-3 text-xs">{l.lop.pattern.name}</td>
@@ -988,13 +1121,51 @@ export function PayrollTab() {
                   )}
                 </table>
               </div>
-              <p className="text-muted-foreground mt-3 flex items-center gap-1 text-[11px]">
+              {run.lines.length > 0 && <p className="text-muted-foreground mt-3 flex items-center gap-1 text-[11px]">
                 <Info className="h-3 w-3" /> Employer legs (EPF 3.67 %, EPS 8.33 %, EDLI, admin, ESI
                 3.25 %, employer NPS, LWF) are in the exported register and the payslip working —
                 they are cost, not deductions.
-              </p>
+              </p>}
             </CardContent>
           </Card>
+          {run.status === "Processed" && canProcess && (
+            <Card>
+              <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2 font-semibold">
+                    <Banknote className="text-primary h-4 w-4" /> Confirm salary payment
+                  </div>
+                  <p className="text-muted-foreground mt-1 text-xs">
+                    Transfer salaries from <b>{run.bankAccount}</b> through your bank. After the transfer, enter its UTR here to mark this run as paid. This records the payment; it does not send money.
+                  </p>
+                </div>
+                <div className="flex w-full gap-2 sm:max-w-lg">
+                  <Input
+                    value={payRef}
+                    onChange={(e) => setPayRef(e.target.value)}
+                    placeholder="Bank transfer reference (UTR)"
+                  />
+                  <Button
+                    className="bg-gradient-emerald shrink-0 text-white"
+                    disabled={!payRef.trim()}
+                    onClick={() => {
+                      act(markPaid(run.id, me, payRef.trim()));
+                      setPayRef("");
+                    }}
+                  >
+                    Record payment
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {run.status === "Paid" && (
+            <Card className="border-primary/30 bg-primary/5">
+              <CardContent className="flex items-center gap-2 p-5 text-sm">
+                <CheckCircle2 className="text-primary h-4 w-4" /> Salary payment recorded on {run.paidOn} · {run.paymentRef}
+              </CardContent>
+            </Card>
+          )}
         </>
       )}
 

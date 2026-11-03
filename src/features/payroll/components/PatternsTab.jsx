@@ -1,8 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  CalendarCheck,
-  Lock,
-  Unlock,
   Plus,
   Save,
   Check,
@@ -39,17 +36,14 @@ import { cn } from "@/lib/utils";
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
 import { useDirectory } from "@/features/employees/data/employee-directory";
 import {
-  lockAttendance,
   savePattern,
   saveWorkConfig,
-  unlockAttendance,
-  useAttendanceLocks,
   usePatterns,
   useWorkConfigs,
   workConfigOf,
   attendanceForPeriod,
 } from "@/features/attendance/data/attendance-pattern";
-import { periodLabel, usePayrollRuns } from "@/features/payroll/data/payroll-engine";
+import { periodLabel } from "@/features/payroll/data/payroll-engine";
 import { saveContribution, useContributions } from "@/features/payroll/data/contributions-data";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
@@ -74,9 +68,7 @@ export function PatternsTab() {
   const me = useCurrentUser();
   const storePatterns = usePatterns();
   const configs = useWorkConfigs();
-  const locks = useAttendanceLocks();
   const inScope = useScopeMatch();
-  const runs = usePayrollRuns().filter((r) => inScope(r.orgId));
   const [edit, setEdit] = useState(null);
 const [viewPattern, setViewPattern] = useState(null);
 const [deletingPatternId, setDeletingPatternId] = useState(null);
@@ -248,7 +240,6 @@ async function deletePattern(p) {
     }
   }
 
-  const canLock = can(me.role, "attendance.lock");
   // Live directory (the static EMPLOYEES seed missed new hires and transfers).
   const directory = useDirectory();
   const employees = useMemo(
@@ -395,64 +386,6 @@ async function deletePattern(p) {
           </CardContent>
         </Card>
 
-        <Card className="shadow-card">
-          <CardContent className="space-y-3 p-6">
-            <div className="flex items-center gap-2 font-semibold">
-              <CalendarCheck className="text-primary h-4 w-4" /> Attendance → payroll lock
-            </div>
-            <div className="text-muted-foreground text-xs">
-              Payroll checks read attendance as final only once HR locks the month. Unlocking
-              re-opens corrections; re-run checks afterwards.
-            </div>
-            <div className="space-y-2">
-              {["2026-08", "2026-07", "2026-06", "2026-05", "2026-04"].map((p) => {
-                const l = locks[p];
-                const run = runs.find((r) => r.period === p);
-                const frozen =
-                  run && ["Pending Approval", "Approved", "Processed", "Paid"].includes(run.status);
-                return (
-                  <div
-                    key={p}
-                    className="border-border flex items-center justify-between rounded-lg border p-2.5 text-xs"
-                  >
-                    <div>
-                      {l ? (
-                        <Lock className="text-primary mr-1 inline h-3.5 w-3.5" />
-                      ) : (
-                        <Unlock className="text-destructive mr-1 inline h-3.5 w-3.5" />
-                      )}
-                      <b>{periodLabel(p)}</b>
-                      <div className="text-muted-foreground">
-                        {l ? `locked by ${l.by} on ${l.on}` : "open"}
-                        {run ? ` · payroll ${run.status}` : ""}
-                      </div>
-                    </div>
-                    {canLock && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7"
-                        disabled={Boolean(frozen)}
-                        title={frozen ? "Payroll already in approval — cannot unlock" : ""}
-                        onClick={() => {
-                          if (l) unlockAttendance(p);
-                          else lockAttendance(p, me.name);
-                          toast.success(
-                            l
-                              ? `${periodLabel(p)} unlocked`
-                              : `${periodLabel(p)} locked for payroll`,
-                          );
-                        }}
-                      >
-                        {l ? "Unlock" : "Lock"}
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       <Card className="shadow-card">
@@ -813,7 +746,6 @@ async function deletePattern(p) {
             weeklyOffs: detail.attendance.weeklyOffs,
             holidays: detail.attendance.holidays,
             source: detail.attendance.source,
-            locked: detail.attendance.locked,
             projectedLop: detail.lop,
             updatedOn: detail.config.updatedOn,
             updatedBy: detail.config.updatedBy,
@@ -825,7 +757,6 @@ async function deletePattern(p) {
             weeklyOffsInPattern: "Weekly offs (pattern)",
             projectedLop: "Projected LOP days",
             paidLeave: "Paid leave",
-            locked: "Attendance locked",
           }}
           sections={[
             { title: "Employee", keys: ["name", "empId", "dept"] },
@@ -855,7 +786,6 @@ async function deletePattern(p) {
                 "weeklyOffs",
                 "holidays",
                 "source",
-                "locked",
                 "projectedLop",
               ],
             },

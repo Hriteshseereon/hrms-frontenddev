@@ -35,6 +35,7 @@ import {
 import { PayslipBreakdown } from "@/features/payroll/components/PayslipBreakdown";
 import { createPersistentStore } from "@/lib/persist";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
+import { useActiveOrgId } from "@/features/organization/data/group-data";
 
 const payslipConfigStore = createPersistentStore(
   "seereon.payroll.payslip-config",
@@ -108,9 +109,19 @@ export function payslipExportOpts(slip, status, cfg = payslipConfigStore.get()) 
 
 export function PayslipsTab() {
   const inScope = useScopeMatch();
-  const runs = usePayrollRuns()
-    .filter((r) => inScope(r.orgId) && (r.status === "Processed" || r.status === "Paid"))
-    .sort((a, b) => (a.period < b.period ? 1 : -1));
+  const orgId = useActiveOrgId();
+  const allRuns = usePayrollRuns();
+  const runs = useMemo(
+    () =>
+      allRuns
+        .filter(
+          (r) =>
+            (inScope(r.orgId) || r.orgId === orgId) &&
+            (r.status === "Processed" || r.status === "Paid"),
+        )
+        .sort((a, b) => (a.period < b.period ? 1 : -1)),
+    [allRuns, inScope, orgId],
+  );
   const config = payslipConfigStore.use();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(config);
@@ -140,7 +151,7 @@ export function PayslipsTab() {
                   {config.title} — {config.brandName}
                 </div>
                 <div className="text-muted-foreground text-xs">
-                  Payslips exist only for processed payroll runs · {runs.length} run(s) available ·
+                  Available for processed or paid payroll runs · {runs.length} run(s) available ·
                   Logo: {config.brandLogo || "—"}
                 </div>
               </div>
@@ -400,8 +411,7 @@ export function PayslipsTab() {
       ) : (
         <Card className="shadow-card">
           <CardContent className="text-muted-foreground p-10 text-center">
-            No processed payroll run yet — payslips are generated when a run is processed on the
-            Payroll tab.
+            No processed or paid payroll runs are available for this organisation yet. Payslips are generated after final payroll is run.
           </CardContent>
         </Card>
       )}

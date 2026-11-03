@@ -141,8 +141,7 @@ export function LopExplainer({ slip }) {
         </div>
       </div>
       <p className="text-muted-foreground mt-2 text-xs">
-        {lop.explanation} Source: {a.source}
-        {a.locked ? " · locked" : " · not locked"}.
+        {lop.explanation} Source: {a.source}.
       </p>
     </div>
   );
