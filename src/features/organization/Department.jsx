@@ -12,6 +12,7 @@ import {
   Users,
 } from "lucide-react";
 
+import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import departmentApi from "@/api/departmentApi";
 
 function getErrorMessage(error) {
