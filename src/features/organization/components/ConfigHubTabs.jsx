@@ -1,3 +1,6 @@
+import {
+  createLeaveTypeApi,
+} from "@/features/leave/data/leaveMasterAdapters";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { companiesOf, useCurrentTenant } from "@/features/organization/data/tenancy";
 import { useOrgs, useActiveOrgId } from "@/features/organization/data/group-data";
@@ -1786,14 +1789,145 @@ function calendarError(c) {
 }
 
 export function LeaveMasterTab({ section = "both" }) {
-  const rows = useLeaveMaster();
+  const storeRows = useLeaveMaster();
   const orgId = useActiveOrgId();
   const calApi = useMemo(() => createHolidayCalendarApi(orgId), [orgId]);
+  const leaveApi = useMemo(() => createLeaveTypeApi(orgId), [orgId]);
   const [cals, setCals] = useState([]);
   const [edit, setEdit] = useState(null);
   const [cal, setCal] = useState(null);
   const showLeave = section !== "holidays";
   const showHol = section !== "leave";
+
+  // Leave types come from the API (GET /leave-types). They are also written into the local
+  // leave master store so leave applications and balances keep resolving them.
+  const [leaveOrder, setLeaveOrder] = useState(null); // ids of the leave types loaded from the server
+  const [leaveStatus, setLeaveStatus] = useState("loading"); // loading | ready | failed
+  const [savingLeave, setSavingLeave] = useState(false);
+  // Dropdown options (GET /leave-types/credits and /leave-types/approval-chains).
+  // The built-in lists are used until (or unless) the server answers.
+  const [creditOptions, setCreditOptions] = useState([
+    "Quarterly pro-rata",
+    "Monthly pro-rata",
+    "Annual upfront",
+    "On event",
+  ]);
+  const [chainOptions, setChainOptions] = useState([
+    "Manager",
+    "Manager → HR",
+    "HOD",
+    "HOD → HR",
+    "Manager → HOD → HR",
+  ]);
+
+  useEffect(() => {
+    if (!showLeave) return undefined;
+
+    let active = true;
+
+    leaveApi
+      .list()
+      .then((items) => {
+        if (!active) return;
+        items.forEach((item) => saveLeaveMasterRow(item));
+        setLeaveOrder(items.map((item) => item.id));
+        setLeaveStatus("ready");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setLeaveStatus("failed");
+        console.error("Failed to load leave types:", error);
+        toast.error(apiErrorMessage(error, "Unable to load leave types."));
+      });
+
+    leaveApi
+      .loadCredits()
+      .then((names) => {
+        if (active && names.length) setCreditOptions(names);
+      })
+      .catch(() => {});
+
+    leaveApi
+      .loadApprovalChains()
+      .then((names) => {
+        if (active && names.length) setChainOptions(names);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [showLeave, leaveApi]);
+
+  // Shown in the table: the server's leave types once loaded, the previous local list if the
+  // server could not be reached.
+  const rows =
+    leaveStatus === "ready"
+      ? leaveOrder.map((id) => storeRows.find((r) => r.id === id)).filter(Boolean)
+      : leaveStatus === "failed"
+        ? storeRows
+        : [];
+
+  // GET /leave-types/{id}: open the leave type with its latest server values.
+  async function openLeaveType(r) {
+    if (leaveStatus !== "ready" || !leaveOrder.includes(r.id)) {
+      setEdit(r);
+      return;
+    }
+
+    try {
+      const fresh = await leaveApi.getById(r.id);
+      setEdit(fresh ?? r);
+    } catch (error) {
+      console.error("Failed to load leave type:", error);
+      toast.error(apiErrorMessage(error, "Unable to load the leave type."));
+      setEdit(r);
+    }
+  }
+  
+
+  // POST for a new leave type, PATCH (changed fields only) for an existing one.
+  async function submitLeaveType() {
+    if (!edit) return;
+
+    if (leaveStatus === "loading") {
+      toast.error("Leave types are still loading. Please try again in a moment.");
+      return;
+    }
+
+    // Server unreachable: keep the previous local-only behaviour.
+    if (leaveStatus === "failed") {
+      saveLeaveMasterRow({ ...edit, code: edit.code.trim() });
+      setEdit(null);
+      toast.success("Leave type saved");
+      return;
+    }
+
+    setSavingLeave(true);
+
+    try {
+      const form = { ...edit, code: edit.code.trim() };
+      const saved = leaveOrder.includes(edit.id)
+        ? await leaveApi.patch(
+            edit.id,
+            form,
+            storeRows.find((r) => r.id === edit.id),
+          )
+        : await leaveApi.create(form);
+
+      saveLeaveMasterRow(saved);
+      setLeaveOrder((previous) =>
+        (previous ?? []).includes(saved.id) ? previous : [...(previous ?? []), saved.id],
+      );
+      setEdit(null);
+      toast.success("Leave type saved");
+    } catch (error) {
+      console.error("Failed to save leave type:", error);
+      toast.error(apiErrorMessage(error, "Unable to save the leave type."));
+    } finally {
+      setSavingLeave(false);
+    }
+  }
 
   // GET /attendance/holiday-calendars
   const reloadCals = useCallback(async () => {
@@ -1931,7 +2065,7 @@ export function LeaveMasterTab({ section = "both" }) {
                           size="sm"
                           variant="ghost"
                           className="h-7"
-                          onClick={() => setEdit(r)}
+                          onClick={() => openLeaveType(r)}
                         >
                           Edit
                         </Button>
@@ -2052,13 +2186,14 @@ export function LeaveMasterTab({ section = "both" }) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["Quarterly pro-rata", "Monthly pro-rata", "Annual upfront", "On event"].map(
-                      (o) => (
-                        <SelectItem key={o} value={o}>
-                          {o}
-                        </SelectItem>
-                      ),
-                    )}
+                    {(creditOptions.includes(edit.creditFrequency)
+                      ? creditOptions
+                      : [...creditOptions, edit.creditFrequency].filter(Boolean)
+                    ).map((o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -2072,13 +2207,14 @@ export function LeaveMasterTab({ section = "both" }) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["Manager", "Manager → HR", "HOD", "HOD → HR", "Manager → HOD → HR"].map(
-                      (o) => (
-                        <SelectItem key={o} value={o}>
-                          {o}
-                        </SelectItem>
-                      ),
-                    )}
+                    {(chainOptions.includes(edit.approvalChain)
+                      ? chainOptions
+                      : [...chainOptions, edit.approvalChain].filter(Boolean)
+                    ).map((o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -2188,13 +2324,10 @@ export function LeaveMasterTab({ section = "both" }) {
                   edit.validityDays,
                   edit.attachmentAfterDays,
                   edit.maxCarry,
-                ].some((n) => n < 0)
+                ].some((n) => n < 0) ||
+                savingLeave
               }
-              onClick={() => {
-                saveLeaveMasterRow({ ...edit, code: edit.code.trim() });
-                setEdit(null);
-                toast.success("Leave type saved");
-              }}
+              onClick={submitLeaveType}
             >
               Save
             </Button>

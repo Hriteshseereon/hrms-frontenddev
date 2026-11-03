@@ -109,8 +109,8 @@ export function GroupsWorkspace() {
       <Tabs defaultValue="structure">
         <ScrollTabsList>
           <TabsTrigger value="structure">Structure &amp; admins</TabsTrigger>
-          <TabsTrigger value="branding">Entity Branding</TabsTrigger>
-          <TabsTrigger value="directory">Group Directory</TabsTrigger>
+          {/* <TabsTrigger value="branding">Entity Branding</TabsTrigger> */}
+          {/* <TabsTrigger value="directory">Group Directory</TabsTrigger> */}
         </ScrollTabsList>
 
         <TabsContent value="structure" className="space-y-4 pt-4">
@@ -292,11 +292,13 @@ export function GroupsWorkspace() {
           )}
         </TabsContent>
 
+        {/* Entity Branding — hidden for now, uncomment to bring it back
         <TabsContent value="branding" className="pt-4">
           <BrandingPanel orgs={orgs} canEdit={(id) => canEditBranches(id)} />
         </TabsContent>
+        */}
 
-        <TabsContent value="directory" className="pt-4">
+        {/* <TabsContent value="directory" className="pt-4">
           <Card className="shadow-card">
             <CardContent className="p-5">
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -432,7 +434,7 @@ export function GroupsWorkspace() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent> */}
       </Tabs>
 
       {tenureDetail &&

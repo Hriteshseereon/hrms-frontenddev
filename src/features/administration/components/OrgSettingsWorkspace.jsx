@@ -143,29 +143,35 @@ export function OrgSettings() {
         <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
           <Settings className="text-primary h-6 w-6" /> Workspace Settings
         </h1>
-        <p className="text-muted-foreground mt-1 text-sm">
+        {/* <p className="text-muted-foreground mt-1 text-sm">
           Organisation profile, branding & colours (applied system-wide), security and notification
           channels{org ? ` — ${org.name}` : ""}.
-        </p>
+        </p> */}
+        <p className="text-muted-foreground mt-1 text-sm">
+  Branding & colours (applied system-wide) and notification channels
+  {org ? ` — ${org.name}` : ""}.
+</p>
       </div>
 
       <Tabs defaultValue="brand" className="w-full min-w-0">
         <ScrollTabsList>
-          <TabsTrigger value="general">
-            <Building2 className="h-4 w-4" /> Organization
-          </TabsTrigger>
+         {/*
+<TabsTrigger value="general">
+  <Building2 className="h-4 w-4" /> Organization
+</TabsTrigger>
+*/}
           <TabsTrigger value="brand">
             <Palette className="h-4 w-4" /> Branding & colours
           </TabsTrigger>
-          <TabsTrigger value="security">
+          {/* <TabsTrigger value="security">
             <ShieldCheck className="h-4 w-4" /> Security
-          </TabsTrigger>
+          </TabsTrigger> */}
           <TabsTrigger value="notify">
             <Bell className="h-4 w-4" /> Notifications
           </TabsTrigger>
         </ScrollTabsList>
 
-        <TabsContent value="general" className="pt-4">
+        {/* <TabsContent value="general" className="pt-4">
           <Card className="shadow-card">
             <CardHeader>
               <CardTitle className="text-base">Organization Profile</CardTitle>
@@ -252,14 +258,14 @@ export function OrgSettings() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent> */}
 
         {/* Keyed by entity so the colour draft never carries one company's palette into another. */}
         <TabsContent value="brand" className="pt-4">
           <BrandingTab key={activeOrgId} orgId={activeOrgId} />
         </TabsContent>
 
-        <TabsContent value="security" className="pt-4">
+        {/* <TabsContent value="security" className="pt-4">
           <Card className="shadow-card">
             <CardHeader>
               <CardTitle className="text-base">Security</CardTitle>
@@ -319,7 +325,7 @@ export function OrgSettings() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent> */}
 
         <TabsContent value="notify" className="pt-4">
           <Card className="shadow-card">

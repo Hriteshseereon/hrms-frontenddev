@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from "react";
 import {
   Plus,
@@ -12,6 +11,7 @@ import {
   LoaderCircle,
   Users,
 } from "lucide-react";
+
 import departmentApi from "@/api/departmentApi";
 
 function getErrorMessage(error) {
@@ -33,12 +33,7 @@ function getErrorMessage(error) {
 function extractDepartments(data) {
   if (Array.isArray(data)) return data;
 
-  return (
-    data?.items ??
-    data?.results ??
-    data?.departments ??
-    []
-  );
+  return data?.items ?? data?.results ?? data?.departments ?? [];
 }
 
 function normalizeDepartment(item) {
@@ -50,20 +45,25 @@ function normalizeDepartment(item) {
   };
 }
 
+/* Theme-aware input styling */
 const inputClass =
-  "w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100 dark:border-[#304238] dark:bg-[#0b1511] dark:text-[#eef5f0] dark:placeholder:text-[#71847a] dark:focus:ring-emerald-900";
+  "w-full rounded-xl border border-input bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none transition focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20";
 
+/* Theme-aware primary button */
 const buttonClass =
-  "inline-flex items-center justify-center gap-2 rounded-xl bg-[#14563f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1a6a4d] disabled:cursor-not-allowed disabled:opacity-60";
+  "inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60";
 
+/* Icons have no box by default. Hover uses the active organization theme. */
 const actionButtonClass =
-  "rounded-lg border border-slate-200 bg-white p-2 text-emerald-700 transition hover:bg-emerald-50 dark:border-[#304238] dark:bg-[#101a15] dark:text-emerald-300 dark:hover:bg-[#1b3829] disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50";
 
+/* Theme-aware panel */
 const panelClass =
-  "rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-[#25332c] dark:bg-[#101a15]";
+  "rounded-2xl border border-border bg-card text-card-foreground shadow-sm";
 
-const mutedClass = "text-slate-500 dark:text-[#91a49a]";
+const mutedClass = "text-muted-foreground";
 
+/* Modal */
 function Modal({ title, onClose, children, footer }) {
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -86,16 +86,16 @@ function Modal({ title, onClose, children, footer }) {
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="my-auto w-full max-w-xl overflow-hidden rounded-2xl border border-slate-200 bg-white text-slate-900 shadow-2xl dark:border-[#304238] dark:bg-[#101a15] dark:text-[#edf4ef]"
+        className="my-auto w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-card text-card-foreground shadow-2xl"
       >
-        <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-6 py-5 dark:border-[#25332c]">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-6 py-5">
           <h2 className="text-lg font-semibold">{title}</h2>
 
           <button
             type="button"
             onClick={onClose}
             aria-label="Close popup"
-            className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:text-[#9aada2] dark:hover:bg-[#1c2b23]"
+            className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
           >
             <X size={19} />
           </button>
@@ -104,7 +104,7 @@ function Modal({ title, onClose, children, footer }) {
         <div className="p-6">{children}</div>
 
         {footer && (
-          <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-4 dark:border-[#25332c]">
+          <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
             {footer}
           </div>
         )}
@@ -322,14 +322,16 @@ export default function Department() {
     ) + 1;
 
   return (
-    <div className="min-h-full space-y-6 bg-slate-50 p-5 text-slate-900 transition-colors dark:bg-[#080f0c] dark:text-[#edf4ef] sm:p-8">
+    <div className="min-h-full space-y-6 bg-background p-5 text-foreground transition-colors sm:p-8">
+      {/* Page Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
             <Building2
               size={30}
-              className="text-emerald-600 dark:text-emerald-400"
+              className="text-primary"
             />
+
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
               Department Management
             </h1>
@@ -350,10 +352,11 @@ export default function Department() {
         </button>
       </div>
 
+      {/* Error Message */}
       {pageError && (
         <div
           role="alert"
-          className="flex items-start justify-between gap-3 rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+          className="flex items-start justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
         >
           <span>{pageError}</span>
 
@@ -361,21 +364,26 @@ export default function Department() {
             type="button"
             onClick={() => setPageError("")}
             aria-label="Dismiss error"
+            className="rounded-md p-1 transition-colors hover:bg-destructive/10"
           >
             <X size={17} />
           </button>
         </div>
       )}
 
+      {/* Department Summary */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <div className={`${panelClass} p-5`}>
           <div className="flex items-center justify-between">
-            <p className={`text-xs font-medium tracking-wider ${mutedClass}`}>
+            <p
+              className={`text-xs font-medium tracking-wider ${mutedClass}`}
+            >
               TOTAL DEPARTMENTS
             </p>
+
             <Users
               size={20}
-              className="text-emerald-600 dark:text-emerald-300"
+              className="text-primary"
             />
           </div>
 
@@ -385,21 +393,27 @@ export default function Department() {
         </div>
       </div>
 
+      {/* Department Table */}
       <section className={`${panelClass} overflow-hidden`}>
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-200 p-5 dark:border-[#25332c]">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border p-5">
           <div>
-            <h2 className="text-lg font-semibold">Departments</h2>
+            <h2 className="text-lg font-semibold">
+              Departments
+            </h2>
+
             <p className={`mt-1 text-sm ${mutedClass}`}>
               View and manage department records.
             </p>
           </div>
 
           <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+            {/* Search */}
             <div className="relative min-w-[220px] flex-1 sm:w-72">
               <Search
                 size={18}
                 className={`absolute left-3 top-1/2 -translate-y-1/2 ${mutedClass}`}
               />
+
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
@@ -408,11 +422,12 @@ export default function Department() {
               />
             </div>
 
+            {/* Export */}
             <button
               type="button"
               onClick={exportCSV}
               disabled={!departments.length}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium hover:bg-slate-100 disabled:opacity-50 dark:border-[#293a33] dark:bg-[#101a15] dark:hover:bg-[#14221b]"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Download size={16} />
               Export CSV
@@ -422,15 +437,23 @@ export default function Department() {
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[600px] text-left text-sm">
-            <thead className="bg-slate-100 text-xs uppercase tracking-wider text-slate-600 dark:bg-[#15221b] dark:text-[#9aada2]">
+            <thead className="bg-muted/50 text-xs uppercase tracking-wider text-muted-foreground">
               <tr>
-                <th className="w-24 px-5 py-4">SL No.</th>
-                <th className="px-5 py-4">Department Name</th>
-                <th className="w-44 px-5 py-4">Actions</th>
+                <th className="w-24 px-5 py-4">
+                  SL No.
+                </th>
+
+                <th className="px-5 py-4">
+                  Department Name
+                </th>
+
+                <th className="w-44 px-5 py-4">
+                  Actions
+                </th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-slate-200 dark:divide-[#25332c]">
+            <tbody className="divide-y divide-border">
               {loading ? (
                 <tr>
                   <td
@@ -439,8 +462,9 @@ export default function Department() {
                   >
                     <LoaderCircle
                       size={20}
-                      className="mr-2 inline animate-spin"
+                      className="mr-2 inline animate-spin text-primary"
                     />
+
                     Loading departments...
                   </td>
                 </tr>
@@ -448,7 +472,7 @@ export default function Department() {
                 filteredDepartments.map((department, index) => (
                   <tr
                     key={department.id}
-                    className="transition hover:bg-emerald-50/60 dark:hover:bg-[#15221b]"
+                    className="transition-colors hover:bg-primary/5"
                   >
                     <td className={`px-5 py-4 ${mutedClass}`}>
                       {index + 1}
@@ -459,7 +483,8 @@ export default function Department() {
                     </td>
 
                     <td className="px-5 py-4">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        {/* View */}
                         <button
                           type="button"
                           onClick={() => handleView(department)}
@@ -471,6 +496,7 @@ export default function Department() {
                           <Eye size={16} />
                         </button>
 
+                        {/* Edit */}
                         <button
                           type="button"
                           onClick={() => handleEdit(department)}
@@ -481,13 +507,14 @@ export default function Department() {
                           <Pencil size={16} />
                         </button>
 
+                        {/* Delete */}
                         <button
                           type="button"
                           onClick={() => handleDelete(department)}
                           title="Delete"
                           aria-label={`Delete ${department.name}`}
                           disabled={deletingId === department.id}
-                          className="rounded-lg border border-red-200 bg-white p-2 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-[#49302d] dark:bg-[#101a15] dark:text-red-300 dark:hover:bg-[#38211e]"
+                          className={actionButtonClass}
                         >
                           {deletingId === department.id ? (
                             <LoaderCircle
@@ -522,16 +549,22 @@ export default function Department() {
           </table>
         </div>
 
+        {/* Table Footer */}
         <div
-          className={`border-t border-slate-200 px-5 py-4 text-right text-xs dark:border-[#25332c] ${mutedClass}`}
+          className={`border-t border-border px-5 py-4 text-right text-xs ${mutedClass}`}
         >
           Showing {filteredDepartments.length} of {departments.length} departments
         </div>
       </section>
 
+      {/* Add / Edit Department Modal */}
       {showForm && (
         <Modal
-          title={editingId !== null ? "Update Department" : "Add Department"}
+          title={
+            editingId !== null
+              ? "Update Department"
+              : "Add Department"
+          }
           onClose={closeForm}
           footer={
             <>
@@ -539,7 +572,7 @@ export default function Department() {
                 type="button"
                 onClick={closeForm}
                 disabled={saving}
-                className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium hover:bg-slate-100 dark:border-[#293a33] dark:hover:bg-[#18251e]"
+                className="rounded-xl border border-border px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-primary/10 hover:text-primary disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -551,10 +584,14 @@ export default function Department() {
                 className={buttonClass}
               >
                 {saving ? (
-                  <LoaderCircle size={17} className="animate-spin" />
+                  <LoaderCircle
+                    size={17}
+                    className="animate-spin"
+                  />
                 ) : (
                   <Plus size={17} />
                 )}
+
                 {saving
                   ? "Saving..."
                   : editingId !== null
@@ -574,7 +611,8 @@ export default function Department() {
                 htmlFor="departmentName"
                 className="mb-2 block text-sm font-medium"
               >
-                Department Name <span className="text-red-500">*</span>
+                Department Name{" "}
+                <span className="text-destructive">*</span>
               </label>
 
               <input
@@ -595,7 +633,7 @@ export default function Department() {
             {error && (
               <p
                 role="alert"
-                className="text-sm text-red-600 dark:text-red-400"
+                className="text-sm text-destructive"
               >
                 {error}
               </p>
@@ -604,6 +642,7 @@ export default function Department() {
         </Modal>
       )}
 
+      {/* Loading Department Details */}
       {viewLoading && (
         <Modal
           title="Department Details"
@@ -612,13 +651,15 @@ export default function Department() {
           <div className={`flex items-center gap-3 ${mutedClass}`}>
             <LoaderCircle
               size={20}
-              className="animate-spin text-emerald-500"
+              className="animate-spin text-primary"
             />
+
             Loading department details...
           </div>
         </Modal>
       )}
 
+      {/* View Department Modal */}
       {viewDepartment && (
         <Modal
           title="Department Details"
@@ -635,16 +676,24 @@ export default function Department() {
         >
           <div className="space-y-5">
             <div>
-              <p className={`text-sm ${mutedClass}`}>Department Name</p>
+              <p className={`text-sm ${mutedClass}`}>
+                Department Name
+              </p>
+
               <p className="mt-1 text-base font-semibold">
                 {viewDepartment.name}
               </p>
             </div>
 
             <div>
-              <p className={`text-sm ${mutedClass}`}>SL No.</p>
+              <p className={`text-sm ${mutedClass}`}>
+                SL No.
+              </p>
+
               <p className="mt-1 text-base font-semibold">
-                {viewSerialNumber > 0 ? viewSerialNumber : "—"}
+                {viewSerialNumber > 0
+                  ? viewSerialNumber
+                  : "—"}
               </p>
             </div>
           </div>
@@ -652,4 +701,5 @@ export default function Department() {
       )}
     </div>
   );
-}
+} 
+
