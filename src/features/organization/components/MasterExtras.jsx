@@ -1,6 +1,14 @@
-import { useState } from "react";
-import { Plus, Clock3, Shield } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Plus,
+  Clock3,
+  Shield,
+  Eye,
+  Pencil,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
+
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+
 import {
   Select,
   SelectContent,
@@ -16,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+
 import {
   Dialog,
   DialogContent,
@@ -25,15 +35,23 @@ import {
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
+
 import { nextId } from "@/lib/store";
+import { TIMESHEET_FIELDS } from "@/features/timesheets/data/timesheet-data";
+import { useActiveOrgId } from "@/features/organization/data/group-data";
+
 import {
-  timesheetFormatStore,
-  addTimesheetFormat,
-  toggleTimesheetFormat,
-  TIMESHEET_FIELDS,
-} from "@/features/timesheets/data/timesheet-data";
+  createTimesheetFormatApi,
+  apiErrorMessage,
+} from "@/features/attendance/data/attendanceMasterAdapters";
+
 import { DEPARTMENT_NAMES } from "@/features/finance/data/finance-data";
-import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
+
+import {
+  RecordDetailDialog,
+  clickableRow,
+} from "@/components/common/RecordDetail";
+
 
 function Head({ icon: Icon, title, desc, children }) {
   return (
@@ -42,19 +60,30 @@ function Head({ icon: Icon, title, desc, children }) {
         <div className="bg-gradient-emerald grid h-10 w-10 place-items-center rounded-xl text-white">
           <Icon className="h-5 w-5" />
         </div>
+
         <div>
           <div className="font-semibold">{title}</div>
           <div className="text-muted-foreground text-xs">{desc}</div>
         </div>
       </div>
+
       {children}
     </div>
   );
 }
 
+
 /** Name + description + status master backed by a shared store. */
-export function NamedMasterTab({ icon = Shield, title, desc, addLabel, prefix, store }) {
+export function NamedMasterTab({
+  icon = Shield,
+  title,
+  desc,
+  addLabel,
+  prefix,
+  store,
+}) {
   const rows = store.use();
+
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -62,13 +91,20 @@ export function NamedMasterTab({ icon = Shield, title, desc, addLabel, prefix, s
 
   function submit() {
     store.set((p) => [
-      { id: nextId(prefix, p.length), name: name.trim(), description: description.trim(), status },
+      {
+        id: nextId(prefix, p.length),
+        name: name.trim(),
+        description: description.trim(),
+        status,
+      },
       ...p,
     ]);
+
     setOpen(false);
     setName("");
     setDescription("");
     setStatus("Active");
+
     toast.success(`${title} entry added`);
   }
 
@@ -79,35 +115,54 @@ export function NamedMasterTab({ icon = Shield, title, desc, addLabel, prefix, s
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button size="sm" className="bg-gradient-emerald text-white">
-                <Plus className="h-4 w-4" /> {addLabel}
+                <Plus className="h-4 w-4" />
+                {addLabel}
               </Button>
             </DialogTrigger>
+
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
                 <DialogTitle>{addLabel}</DialogTitle>
-                <DialogDescription>Adds a new entry to {title.toLowerCase()}.</DialogDescription>
+
+                <DialogDescription>
+                  Adds a new entry to {title.toLowerCase()}.
+                </DialogDescription>
               </DialogHeader>
+
               <div className="space-y-4 py-2">
                 <div className="space-y-1.5">
                   <Label className="text-muted-foreground text-xs">
                     Name <span className="text-destructive">*</span>
                   </Label>
-                  <Input value={name} onChange={(e) => setName(e.target.value)} />
+
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
                 </div>
+
                 <div className="space-y-1.5">
-                  <Label className="text-muted-foreground text-xs">Description</Label>
+                  <Label className="text-muted-foreground text-xs">
+                    Description
+                  </Label>
+
                   <Textarea
                     rows={3}
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                   />
                 </div>
+
                 <div className="space-y-1.5">
-                  <Label className="text-muted-foreground text-xs">Status</Label>
+                  <Label className="text-muted-foreground text-xs">
+                    Status
+                  </Label>
+
                   <Select value={status} onValueChange={setStatus}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
+
                     <SelectContent>
                       <SelectItem value="Active">Active</SelectItem>
                       <SelectItem value="Inactive">Inactive</SelectItem>
@@ -115,10 +170,15 @@ export function NamedMasterTab({ icon = Shield, title, desc, addLabel, prefix, s
                   </Select>
                 </div>
               </div>
+
               <DialogFooter>
-                <Button variant="outline" onClick={() => setOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setOpen(false)}
+                >
                   Cancel
                 </Button>
+
                 <Button
                   disabled={!name.trim()}
                   className="bg-gradient-emerald text-white"
@@ -141,12 +201,20 @@ export function NamedMasterTab({ icon = Shield, title, desc, addLabel, prefix, s
                 <th className="p-3 text-left">Status</th>
               </tr>
             </thead>
+
             <tbody className="divide-border divide-y">
               {rows.map((r) => (
                 <tr key={r.id} className="hover:bg-muted/30">
-                  <td className="text-muted-foreground p-3 font-mono text-xs">{r.id}</td>
+                  <td className="text-muted-foreground p-3 font-mono text-xs">
+                    {r.id}
+                  </td>
+
                   <td className="p-3 font-medium">{r.name}</td>
-                  <td className="text-muted-foreground p-3">{r.description || "—"}</td>
+
+                  <td className="text-muted-foreground p-3">
+                    {r.description || "—"}
+                  </td>
+
                   <td className="p-3">
                     <Badge
                       variant="outline"
@@ -165,12 +233,28 @@ export function NamedMasterTab({ icon = Shield, title, desc, addLabel, prefix, s
   );
 }
 
+
+/* =========================================================
+   TIMESHEET FORMATS
+   ========================================================= */
+
 export function TimesheetFormatsTab() {
-  const rows = timesheetFormatStore.use();
+  const orgId = useActiveOrgId();
+
+  const api = useMemo(
+    () => createTimesheetFormatApi(orgId),
+    [orgId]
+  );
+
+  const [rows, setRows] = useState([]);
+
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   const [name, setName] = useState("");
   const [frequency, setFrequency] = useState("Daily");
   const [department, setDepartment] = useState("");
+
   const [fields, setFields] = useState([
     "Task Name",
     "Description",
@@ -179,27 +263,213 @@ export function TimesheetFormatsTab() {
     "Hours",
     "Status",
   ]);
+
   const [description, setDescription] = useState("");
+
   const [detail, setDetail] = useState(null);
 
-  const toggleField = (f, on) =>
-    setFields((p) => (on ? Array.from(new Set([...p, f])) : p.filter((x) => x !== f)));
+  // Holds the record currently being edited.
+  const [editing, setEditing] = useState(null);
 
-  function submit() {
-    addTimesheetFormat({
+
+  // GET /attendance-and-time/timesheet-formats
+  const reload = useCallback(async () => {
+    try {
+      const data = await api.list();
+      setRows(data);
+    } catch (error) {
+      console.error("Failed to load timesheet formats:", error);
+
+      toast.error(
+        apiErrorMessage(
+          error,
+          "Unable to load timesheet formats."
+        )
+      );
+    }
+  }, [api]);
+
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+
+  // Reset the form for Add Format.
+  function resetForm() {
+    setEditing(null);
+
+    setName("");
+    setFrequency("Daily");
+    setDepartment("");
+
+    setFields([
+      "Task Name",
+      "Description",
+      "Start Time",
+      "End Time",
+      "Hours",
+      "Status",
+    ]);
+
+    setDescription("");
+  }
+
+
+  // Add or Edit Timesheet Format.
+  async function submit() {
+    setSaving(true);
+
+    const payload = {
       name: name.trim(),
       frequency,
       department: department || "All departments",
       fields,
       description: description.trim(),
-      active: true,
-    });
-    setOpen(false);
-    setName("");
-    setDepartment("");
-    setDescription("");
-    toast.success("Timesheet format created");
+      active: editing ? editing.active : true,
+    };
+
+    try {
+      if (editing) {
+        // PUT /attendance-and-time/timesheet-formats/{id}
+        await api.update(editing._apiId, payload);
+
+        toast.success("Timesheet format updated");
+      } else {
+        // POST /attendance-and-time/timesheet-formats
+        await api.create(payload);
+
+        toast.success("Timesheet format created");
+      }
+
+      setOpen(false);
+      resetForm();
+
+      await reload();
+    } catch (error) {
+      console.error("Failed to save timesheet format:", error);
+
+      toast.error(
+        apiErrorMessage(
+          error,
+          editing
+            ? "Unable to update the timesheet format."
+            : "Unable to create the timesheet format."
+        )
+      );
+    } finally {
+      setSaving(false);
+    }
   }
+
+
+  // Checkbox fields.
+  const toggleField = (field, checked) => {
+    setFields((previous) =>
+      checked
+        ? Array.from(new Set([...previous, field]))
+        : previous.filter((item) => item !== field)
+    );
+  };
+
+
+  // PATCH /attendance-and-time/timesheet-formats/{id}
+  async function toggleActive(r, value) {
+    try {
+      await api.setActive(r._apiId, value);
+
+      toast.success("Timesheet format status updated");
+
+      await reload();
+    } catch (error) {
+      console.error("Failed to update status:", error);
+
+      toast.error(
+        apiErrorMessage(
+          error,
+          "Unable to update the status."
+        )
+      );
+    }
+  }
+
+
+  // GET /attendance-and-time/timesheet-formats/{id}
+  async function openDetail(r) {
+    setDetail(r);
+
+    try {
+      const result = await api.getById(r._apiId);
+      setDetail(result);
+    } catch (error) {
+      console.error("Failed to load timesheet format details:", error);
+
+      toast.error(
+        apiErrorMessage(
+          error,
+          "Unable to load timesheet format details."
+        )
+      );
+    }
+  }
+
+
+  // VIEW button.
+  async function handleView(r) {
+    await openDetail(r);
+  }
+
+
+  // EDIT button.
+  function handleEdit(r) {
+    setDetail(null);
+
+    setEditing(r);
+
+    setName(r.name || "");
+    setFrequency(r.frequency || "Daily");
+    setDepartment(
+      r.department === "All departments"
+        ? ""
+        : r.department || ""
+    );
+
+    setFields(Array.isArray(r.fields) ? r.fields : []);
+
+    setDescription(r.description || "");
+
+    setOpen(true);
+  }
+
+
+  // DELETE /attendance-and-time/timesheet-formats/{id}
+  async function handleDelete(r) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${r.name}"?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await api.remove(r._apiId);
+
+      toast.success("Timesheet format deleted");
+
+      await reload();
+    } catch (error) {
+      console.error("Failed to delete timesheet format:", error);
+
+      toast.error(
+        apiErrorMessage(
+          error,
+          "Unable to delete timesheet format."
+        )
+      );
+    }
+  }
+
 
   return (
     <Card className="shadow-card">
@@ -209,36 +479,69 @@ export function TimesheetFormatsTab() {
           title="Timesheet Formats"
           desc="Define what employees must fill in their timesheets"
         >
-          <Dialog open={open} onOpenChange={setOpen}>
+          <Dialog
+            open={open}
+            onOpenChange={(value) => {
+              setOpen(value);
+
+              if (!value) {
+                resetForm();
+              }
+            }}
+          >
             <DialogTrigger asChild>
-              <Button size="sm" className="bg-gradient-emerald text-white">
-                <Plus className="h-4 w-4" /> Add Format
+              <Button
+                size="sm"
+                className="bg-gradient-emerald text-white"
+                onClick={resetForm}
+              >
+                <Plus className="h-4 w-4" />
+                Add Format
               </Button>
             </DialogTrigger>
+
             <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
               <DialogHeader>
-                <DialogTitle>Add Timesheet Format</DialogTitle>
+                <DialogTitle>
+                  {editing
+                    ? "Edit Timesheet Format"
+                    : "Add Timesheet Format"}
+                </DialogTitle>
+
                 <DialogDescription>
                   Employees will see exactly the fields selected here.
                 </DialogDescription>
               </DialogHeader>
+
               <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
+                {/* Format name */}
                 <div className="space-y-1.5 sm:col-span-2">
                   <Label className="text-muted-foreground text-xs">
-                    Format name <span className="text-destructive">*</span>
+                    Format name{" "}
+                    <span className="text-destructive">*</span>
                   </Label>
+
                   <Input
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     placeholder="e.g. Daily Engineering Timesheet"
                   />
                 </div>
+
+                {/* Frequency */}
                 <div className="space-y-1.5">
-                  <Label className="text-muted-foreground text-xs">Frequency</Label>
-                  <Select value={frequency} onValueChange={(v) => setFrequency(v)}>
+                  <Label className="text-muted-foreground text-xs">
+                    Frequency
+                  </Label>
+
+                  <Select
+                    value={frequency}
+                    onValueChange={setFrequency}
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
+
                     <SelectContent>
                       {["Daily", "Weekly", "Monthly"].map((f) => (
                         <SelectItem key={f} value={f}>
@@ -248,12 +551,21 @@ export function TimesheetFormatsTab() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Department */}
                 <div className="space-y-1.5">
-                  <Label className="text-muted-foreground text-xs">Department</Label>
-                  <Select value={department} onValueChange={setDepartment}>
+                  <Label className="text-muted-foreground text-xs">
+                    Department
+                  </Label>
+
+                  <Select
+                    value={department}
+                    onValueChange={setDepartment}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="All departments" />
                     </SelectTrigger>
+
                     <SelectContent>
                       {DEPARTMENT_NAMES.map((d) => (
                         <SelectItem key={d} value={d}>
@@ -263,25 +575,38 @@ export function TimesheetFormatsTab() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Fields */}
                 <div className="space-y-2 sm:col-span-2">
-                  <Label className="text-muted-foreground text-xs">Fields shown to employees</Label>
+                  <Label className="text-muted-foreground text-xs">
+                    Fields shown to employees
+                  </Label>
+
                   <div className="border-border bg-muted/30 grid grid-cols-1 gap-2 rounded-lg border p-3 sm:grid-cols-3">
-                    {TIMESHEET_FIELDS.map((f) => (
+                    {TIMESHEET_FIELDS.map((field) => (
                       <label
-                        key={f}
+                        key={field}
                         className="text-muted-foreground flex cursor-pointer items-center gap-2 text-sm"
                       >
                         <Checkbox
-                          checked={fields.includes(f)}
-                          onCheckedChange={(v) => toggleField(f, !!v)}
-                        />{" "}
-                        {f}
+                          checked={fields.includes(field)}
+                          onCheckedChange={(value) =>
+                            toggleField(field, !!value)
+                          }
+                        />
+
+                        {field}
                       </label>
                     ))}
                   </div>
                 </div>
+
+                {/* Description */}
                 <div className="space-y-1.5 sm:col-span-2">
-                  <Label className="text-muted-foreground text-xs">Description</Label>
+                  <Label className="text-muted-foreground text-xs">
+                    Description
+                  </Label>
+
                   <Textarea
                     rows={2}
                     value={description}
@@ -289,22 +614,37 @@ export function TimesheetFormatsTab() {
                   />
                 </div>
               </div>
+
               <DialogFooter>
-                <Button variant="outline" onClick={() => setOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setOpen(false)}
+                >
                   Cancel
                 </Button>
+
                 <Button
-                  disabled={!name.trim() || fields.length === 0}
+                  disabled={
+                    !name.trim() ||
+                    fields.length === 0 ||
+                    saving
+                  }
                   className="bg-gradient-emerald text-white"
                   onClick={submit}
                 >
-                  Save format
+                  {saving
+                    ? "Saving..."
+                    : editing
+                      ? "Update format"
+                      : "Save format"}
                 </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
         </Head>
 
+
+        {/* Timesheet Formats table */}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
@@ -315,16 +655,32 @@ export function TimesheetFormatsTab() {
                 <th className="p-3 text-left">Department</th>
                 <th className="p-3 text-left">Fields</th>
                 <th className="p-3 text-left">Active</th>
+                <th className="p-3 text-left">Action</th>
               </tr>
             </thead>
+
             <tbody className="divide-border divide-y">
               {rows.map((r) => (
-                <tr key={r.id} className={`${clickableRow} align-top`} onClick={() => setDetail(r)}>
-                  <td className="text-muted-foreground p-3 font-mono text-xs">{r.id}</td>
+                <tr
+                  key={r._apiId || r.id}
+                  className={`${clickableRow} align-top`}
+                  onClick={() => openDetail(r)}
+                >
+                  {/* Code */}
+                  <td className="text-muted-foreground p-3 font-mono text-xs">
+                    {r.id}
+                  </td>
+
+                  {/* Name */}
                   <td className="p-3 font-medium">
                     {r.name}
-                    <div className="text-muted-foreground text-xs font-normal">{r.description}</div>
+
+                    <div className="text-muted-foreground text-xs font-normal">
+                      {r.description}
+                    </div>
                   </td>
+
+                  {/* Frequency */}
                   <td className="p-3">
                     <Badge
                       variant="outline"
@@ -333,28 +689,102 @@ export function TimesheetFormatsTab() {
                       {r.frequency}
                     </Badge>
                   </td>
-                  <td className="text-muted-foreground p-3">{r.department}</td>
+
+                  {/* Department */}
+                  <td className="text-muted-foreground p-3">
+                    {r.department}
+                  </td>
+
+                  {/* Fields */}
                   <td className="p-3">
                     <div className="flex flex-wrap gap-1">
-                      {r.fields.map((f) => (
-                        <Badge key={f} variant="outline" className="text-[10px]">
-                          {f}
+                      {(r.fields || []).map((field) => (
+                        <Badge
+                          key={field}
+                          variant="outline"
+                          className="text-[10px]"
+                        >
+                          {field}
                         </Badge>
                       ))}
                     </div>
                   </td>
-                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
+
+                  {/* Active switch */}
+                  <td
+                    className="p-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <Switch
                       checked={r.active}
-                      onCheckedChange={(v) => toggleTimesheetFormat(r.id, v)}
+                      onCheckedChange={(value) =>
+                        toggleActive(r, value)
+                      }
                     />
+                  </td>
+
+                  {/* Action buttons */}
+                  <td
+                    className="p-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center gap-1">
+                      {/* View */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title="View"
+                        onClick={() => handleView(r)}
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
+
+                      {/* Edit */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title="Edit"
+                        onClick={() => handleEdit(r)}
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+
+                      {/* Delete */}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        title="Delete"
+                        onClick={() => handleDelete(r)}
+                        className="h-8 w-8 text-red-400 hover:bg-red-50 hover:text-red-600"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}
+
+              {rows.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="text-muted-foreground p-6 text-center"
+                  >
+                    No timesheet formats found.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
 
+
+        {/* View details dialog */}
         {detail && (
           <RecordDetailDialog
             onClose={() => setDetail(null)}
@@ -362,14 +792,27 @@ export function TimesheetFormatsTab() {
             subtitle={`${detail.id} · ${detail.frequency} · ${detail.department}`}
             badges={
               <>
-                <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                <Badge
+                  variant="outline"
+                  className="border-primary/30 bg-primary/10 text-primary"
+                >
                   {detail.frequency}
                 </Badge>
-                <Badge variant="outline">{detail.active ? "Active" : "Inactive"}</Badge>
+
+                <Badge variant="outline">
+                  {detail.active ? "Active" : "Inactive"}
+                </Badge>
               </>
             }
-            record={detail}
-            labels={{ id: "Code", fields: "Fields shown to employees" }}
+            record={Object.fromEntries(
+              Object.entries(detail).filter(
+                ([key]) => key !== "_apiId"
+              )
+            )}
+            labels={{
+              id: "Code",
+              fields: "Fields shown to employees",
+            }}
           />
         )}
       </CardContent>
