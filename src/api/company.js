@@ -28,6 +28,11 @@ const Company_api = {
     return SuperAdmin_axios.put(`/super-admin/companies/${companyId}`, data);
   },
 
+  // Super Admin only: issue a new temporary password for the company admin (shown once).
+  resetAdminPassword(companyId) {
+    return SuperAdmin_axios.post(`/super-admin/companies/${companyId}/admin/reset-password`);
+  },
+
   // Delete company (fails if employees are assigned)
   deleteCompany(companyId) {
     return SuperAdmin_axios.delete(`/super-admin/companies/${companyId}`);

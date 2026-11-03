@@ -16,6 +16,9 @@ const INITIAL_STATE = {
   isBranchEmployee: false,
   status: null,
   permittedModules: [],
+  companyName: null, // company.name from login / GET /me
+  scopeCompanyId: "", // Super Admin: company chosen on the per-company master screens
+  branchName: null, // branch.name (null for company-level users)
   redirectPortal: null, // "org" | "emp" — decided by the backend at login
   designationType: null, // "HR" | "MANAGER" | "CEO" | null
   mustChangePassword: false,
@@ -84,11 +87,23 @@ export const useSessionStore = create()(
           status: user.status || null,
           permittedModules: permitted_modules || [],
           redirectPortal: redirect_portal,
+          companyName: loginResponse.company?.name ?? null,
+          branchName: loginResponse.branch?.name ?? null,
           designationType: user.designation_type || null,
           mustChangePassword: Boolean(
             loginResponse.must_change_password ?? user.must_change_password,
           ),
           isAuthenticated: Boolean(token),
+        });
+      },
+
+      /** Refreshes modules / company / branch from GET /me (call after any change to them). */
+      applyMe: (me) => {
+        if (!me) return;
+        set({
+          ...(Array.isArray(me.permitted_modules) ? { permittedModules: me.permitted_modules } : {}),
+          companyName: me.company?.name ?? null,
+          branchName: me.branch?.name ?? null,
         });
       },
 
@@ -156,6 +171,8 @@ export const useSessionStore = create()(
         status: state.status,
         permittedModules: state.permittedModules,
         redirectPortal: state.redirectPortal,
+        companyName: state.companyName,
+        branchName: state.branchName,
         designationType: state.designationType,
         mustChangePassword: state.mustChangePassword,
         isAuthenticated: state.isAuthenticated,

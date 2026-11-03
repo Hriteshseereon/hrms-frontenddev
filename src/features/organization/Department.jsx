@@ -126,13 +126,16 @@ export default function Department() {
   const [saving, setSaving] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const scope = useCompanyScope();
 
   async function loadDepartments() {
     setLoading(true);
     setPageError("");
 
     try {
-      const response = await departmentApi.getDepartments();
+      const response = await departmentApi.getDepartments(
+        scope.companyId ? { company_id: scope.companyId } : undefined,
+      );
 
       setDepartments(
         extractDepartments(response.data).map(normalizeDepartment)
@@ -146,7 +149,7 @@ export default function Department() {
 
   useEffect(() => {
     loadDepartments();
-  }, []);
+  }, [scope.companyId, scope.isSuper]);
 
   const filteredDepartments = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -194,6 +197,11 @@ export default function Department() {
       return;
     }
 
+    if (scope.isSuper && editingId === null && !scope.companyId) {
+      setError("Select a company first — departments belong to one company.");
+      return;
+    }
+
     setSaving(true);
     setError("");
     setPageError("");
@@ -212,6 +220,7 @@ export default function Department() {
         await departmentApi.createDepartment({
           department_name: name,
           is_active: true,
+          ...(scope.isSuper ? { company_id: scope.companyId } : {}),
         });
       }
 
@@ -342,14 +351,17 @@ export default function Department() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openAddForm}
-          className={buttonClass}
-        >
-          <Plus size={17} />
-          Add Department
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <CompanyScopeSelect scope={scope} />
+          <button
+            type="button"
+            onClick={openAddForm}
+            className={buttonClass}
+          >
+            <Plus size={17} />
+            Add Department
+          </button>
+        </div>
       </div>
 
       {/* Error Message */}

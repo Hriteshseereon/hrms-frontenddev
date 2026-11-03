@@ -37,6 +37,7 @@ const PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const fmtDateTime = (v) => (v ? new Date(v).toLocaleString() : "—");
 
 /** True while the signed-in account still has to replace a temporary / admin-reset password (local fallback when /me is unavailable). */
+import { useSessionStore } from "@/features/auth/data/session-store";
 function usePasswordResetPending(userId) {
   const logins = useLogins();
   const tenants = useTenantUsers();
@@ -304,6 +305,10 @@ function SecurityCard({ mustReset = false, onChanged }) {
       setNext("");
       setConfirm("");
       onChanged?.();
+      // Admins were sent here to replace a temporary password: take them back to their portal, reloaded with the new token.
+      if (mustReset && useSessionStore.getState().redirectPortal === "org") {
+        window.location.assign("/org/dashboard");
+      }
     } catch (err) {
       const { status, fields, general } = parseApiError(err);
       if (status === 429) {

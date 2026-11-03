@@ -29,8 +29,8 @@ export const rbacApi = {
   },
 
   // 2. List all roles with user count and screen count
-  getRoles: async () => {
-    const res = await SuperAdmin_axios.get("/roles");
+  getRoles: async (params) => {
+    const res = await SuperAdmin_axios.get("/roles", { params });
     return res.data?.data ?? res.data;
   },
 

@@ -1,3 +1,4 @@
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { WorkspaceLoading } from "@/components/common/WorkspaceLoading";
 import { usePathname, useRouter } from "@/lib/router";
 import { useEffect, useState } from "react";
@@ -32,6 +33,11 @@ function OrgShell({ children }) {
   useEffect(() => {
     if (!signedIn) router.replace(lastWorkspacePath());
   }, [signedIn, router]);
+  // Temporary password: the backend refuses every call until it is changed, so keep the user on the change screen.
+  const mustChangePassword = useSessionStore((s) => s.mustChangePassword);
+  useEffect(() => {
+    if (signedIn && mustChangePassword) router.replace("/emp/profile");
+  }, [signedIn, mustChangePassword, router]);
   // Tenant lock (Admin / Employee → own company; Super Admin → group view) applied after hydration.
   useEffect(() => {
     applyTenantScope(getCurrentUser());
