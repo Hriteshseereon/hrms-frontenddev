@@ -63,6 +63,11 @@ SuperAdmin_axios.interceptors.response.use(
       }
       return Promise.reject(error);
     }
+    if (error.response?.status === 403 && /module not enabled/i.test(detailText)) {
+      error.userMessage = "This module is not enabled for your company";
+      import("sonner").then((m) => m.toast.error(error.userMessage));
+      return Promise.reject(error);
+    }
     const isAuthRequest = /\/auth\/(?:super-admins\/login|login|refresh)/.test(
       request?.url ?? "",
     );

@@ -39,6 +39,7 @@ import { BrandLogo } from "@/components/brand/BrandLogo";
 import { SEEREON_LOGO_DATA_URL } from "@/features/administration/data/brand-logo";
 import { cn } from "@/lib/utils";
 import { canOpen, signOut, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useModuleAccess } from "@/features/auth/data/module-access";
 import { workspaceLoginPath } from "@/features/organization/data/tenancy";
 
 /**
@@ -118,9 +119,12 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
   const collapsed = collapsedPref && !mobileOpen;
   const pathname = usePathname();
   const me = useCurrentUser();
+  const moduleOn = useModuleAccess();
   const visible = EMP_NAV_ITEMS.map((i) =>
-    "children" in i ? { ...i, children: i.children.filter((c) => canOpen(me.role, c.to)) } : i,
-  ).filter((i) => ("children" in i ? i.children.length > 0 : canOpen(me.role, i.to)));
+    "children" in i
+      ? { ...i, children: i.children.filter((c) => canOpen(me.role, c.to) && moduleOn(c.to)) }
+      : i,
+  ).filter((i) => ("children" in i ? i.children.length > 0 : canOpen(me.role, i.to) && moduleOn(i.to)));
 
   const isActive = (to) => pathname === to || pathname.startsWith(to + "/");
   const [open, setOpen] = useState({});

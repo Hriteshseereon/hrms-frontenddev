@@ -82,6 +82,8 @@ import {
 // Company/branch scope dropdown disabled.
 // import { ScopeSwitcher } from "@/components/layout/ScopeSwitcher";
 
+import { useModuleAccess } from "@/features/auth/data/module-access";
+
 export const ORG_NAV_GROUPS = [
   {
     label: "Overview",
@@ -262,6 +264,7 @@ export function OrgSidebar({
     }));
 
   const me = useCurrentUser();
+  const moduleOn = useModuleAccess();
   const scope = useScope();
   const inScope = useScopeMatch();
 
@@ -304,6 +307,7 @@ export function OrgSidebar({
       .filter(
         (i) =>
           orgNavVisible(me.role, i) &&
+          moduleOn(i.to) &&
           (!i.groupOnly || isGroupTenant),
       )
       .map((i) => ({

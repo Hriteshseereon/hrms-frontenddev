@@ -1,0 +1,28 @@
+{
+  "employee": ["/org/employees", "/org/team", "/org/departments", "/org/designations", "/emp/movements"],
+  "attendance": ["/org/attendance", "/emp/attendance", "/emp/holidays"],
+  "leave": ["/org/leave", "/emp/leave"],
+  "payroll": [
+    "/org/finance",
+    "/org/tax",
+    "/org/payroll-reports",
+    "/emp/payslips",
+    "/emp/reports",
+    "/emp/ytd",
+    "/emp/it-statement",
+    "/emp/it-declaration",
+    "/emp/tax",
+    "/emp/loans"
+  ],
+  "expense": ["/org/claims", "/org/expenditure", "/emp/reimbursements"],
+  "performance": ["/org/performance", "/org/goals", "/emp/goals", "/emp/appraisals", "/emp/reviews"],
+  "recruitment": ["/org/recruitment", "/emp/referrals"],
+  "learning": ["/org/training", "/emp/training"],
+  "engagement": ["/org/announcements", "/emp/notices"],
+  "tours": ["/org/tours", "/emp/tours"],
+  "assets": ["/org/assets", "/org/asset-rollup", "/emp/assets"],
+  "helpdesk": ["/helpdesk", "/emp/complaints"],
+  "compliance": ["/org/compliance", "/org/grievances"],
+  "analytics": ["/org/reports", "/emp/reports-analytics"],
+  "exit": ["/org/exits", "/emp/resignation"]
+}

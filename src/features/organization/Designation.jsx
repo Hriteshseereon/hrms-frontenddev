@@ -11,6 +11,7 @@ import {
   LoaderCircle,
   Download,
 } from "lucide-react";
+import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import designationApi from "@/api/designationApi";
 import departmentApi from "@/api/departmentApi";
 
@@ -135,11 +136,13 @@ export default function Designation() {
   const [saving, setSaving] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const scope = useCompanyScope();
+  const scopeParams = scope.companyId ? { company_id: scope.companyId } : undefined;
   const [error, setError] = useState("");
   const [pageError, setPageError] = useState("");
 
   async function loadDesignations() {
-    const response = await designationApi.getDesignations();
+    const response = await designationApi.getDesignations(scopeParams);
 
     const records = extractList(response.data, [
       "items",
@@ -151,7 +154,7 @@ export default function Designation() {
   }
 
   async function loadDepartments() {
-    const response = await departmentApi.getDepartments();
+    const response = await departmentApi.getDepartments(scopeParams);
 
     const records = extractList(response.data, [
       "items",
@@ -190,7 +193,7 @@ export default function Designation() {
 
   useEffect(() => {
     loadPageData();
-  }, []);
+  }, [scope.companyId, scope.isSuper]);
 
   const filteredDesignations = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -250,6 +253,11 @@ export default function Designation() {
       return;
     }
 
+    if (scope.isSuper && editingId === null && !scope.companyId) {
+      setError("Select a company first — designations belong to one company.");
+      return;
+    }
+
     const duplicate = designations.some(
       (item) =>
         item.name.toLowerCase() === name.toLowerCase() &&
@@ -279,6 +287,7 @@ export default function Designation() {
         designation_name: name,
         department_id: departmentId || null,
         is_active: existing?.is_active ?? true,
+        ...(scope.isSuper && editingId === null ? { company_id: scope.companyId } : {}),
       };
 
       if (editingId !== null) {
@@ -413,14 +422,17 @@ export default function Designation() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openAddForm}
-          className={buttonClass}
-        >
-          <Plus size={17} />
-          Add Designation
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <CompanyScopeSelect scope={scope} />
+          <button
+            type="button"
+            onClick={openAddForm}
+            className={buttonClass}
+          >
+            <Plus size={17} />
+            Add Designation
+          </button>
+        </div>
       </div>
 
       {pageError && (

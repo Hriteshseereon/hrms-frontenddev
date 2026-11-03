@@ -6,23 +6,18 @@ import organizationApi from "@/api/organizationApi";
 import uploadApi from "@/api/uploadApi";
 import Link, { useRouter } from "@/lib/router";
 import {
-  AlertCircle,
   AlertTriangle,
-  Award,
-  Briefcase,
   Building2,
-  Calendar,
   Check,
   CheckSquare,
-  Clock,
   Copy,
   ExternalLink,
   FileCheck,
   FileText,
   GitBranch,
   Globe,
+  KeyRound,
   Landmark,
-  Laptop,
   LayoutDashboard,
   Loader2,
   Mail,
@@ -37,7 +32,6 @@ import {
   Square,
   Trash2,
   UploadCloud,
-  Users,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -63,7 +57,6 @@ import {
 } from "@/components/ui/select";
 import { allUsers, userByLogin } from "@/features/auth/data/auth-session";
 import {
-  credentialsEmail,
   provisionBranchAdmin,
   provisionEntityAdmin,
   useTenantUsers,
@@ -80,75 +73,9 @@ import {
 } from "@/features/organization/data/tenancy";
 import { directoryEmployees } from "@/features/employees/data/employee-directory";
 import { cn } from "@/lib/utils";
+import { useModuleCatalog } from "@/features/organization/data/useModuleCatalog";
 
 const EMAIL_REGEX = /^\S+@\S+\.\S+$/;
-
-// Available HRMS Module Catalog for Company Entitlements
-const SYSTEM_MODULES = [
-  {
-    key: "employee",
-    label: "Employee Lifecycle & Records",
-    desc: "Directory, Profiles, Onboarding & Documents",
-    icon: Users,
-    color: "text-blue-500 bg-blue-500/10",
-  },
-  {
-    key: "attendance",
-    label: "Time & Attendance",
-    desc: "Biometrics, Shifts, Overtime & Geo-tracking",
-    icon: Clock,
-    color: "text-amber-500 bg-amber-500/10",
-  },
-  {
-    key: "leave",
-    label: "Leave & Holidays",
-    desc: "Policy balances, approvals & holiday calendars",
-    icon: Calendar,
-    color: "text-emerald-500 bg-emerald-500/10",
-  },
-  {
-    key: "timesheet",
-    label: "Timesheet & Work Logs",
-    desc: "Project tracking, billable hours & approvals",
-    icon: FileText,
-    color: "text-cyan-500 bg-cyan-500/10",
-  },
-  {
-    key: "payroll",
-    label: "Salary, Compliance & Taxes",
-    desc: "PF, ESI, TDS, Payslips & Salary Structures",
-    icon: Receipt,
-    color: "text-purple-500 bg-purple-500/10",
-  },
-  {
-    key: "recruitment",
-    label: "Job Postings & ATS",
-    desc: "Candidate pipeline, interviews & offers",
-    icon: Briefcase,
-    color: "text-rose-500 bg-rose-500/10",
-  },
-  {
-    key: "performance",
-    label: "Appraisals & Reviews",
-    desc: "KPIs, OKRs, 360 Feedback & Appraisals",
-    icon: Award,
-    color: "text-orange-500 bg-orange-500/10",
-  },
-  {
-    key: "grievance",
-    label: "Disciplinary & Grievances",
-    desc: "Ticket resolution, committee cases & policies",
-    icon: AlertCircle,
-    color: "text-red-500 bg-red-500/10",
-  },
-  {
-    key: "assets",
-    label: "Asset Management",
-    desc: "Hardware assignment, warranties & returns",
-    icon: Laptop,
-    color: "text-indigo-500 bg-indigo-500/10",
-  },
-];
 
 function normalizeBranch(branch) {
   return {
@@ -206,6 +133,7 @@ export function TenantStructure({
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
+  const SYSTEM_MODULES = useModuleCatalog();
   const router = useRouter();
   const users = allUsers();
   const people = directoryEmployees();
@@ -326,6 +254,31 @@ export function TenantStructure({
       people.filter((employee) => employee.orgId === company.id).length
     );
   }, 0);
+
+  // Reset the temporary password of a company / branch admin; the new one is shown once.
+  const resetAdminPassword = async (kind, target) => {
+    if (!window.confirm(`Issue a new temporary password for the ${target.name} admin?`)) return;
+    try {
+      const response =
+        kind === "company"
+          ? await Company_api.resetAdminPassword(target.id)
+          : await Branch_api.resetBranchAdminPassword(target.id);
+      const data = response?.data?.data ?? response?.data ?? response;
+      const admin = data?.company_admin ?? data?.branch_admin ?? {};
+      setIssued({
+        kind,
+        user: {
+          name: admin.full_name ?? target.name,
+          email: admin.email ?? "",
+          role: kind === "company" ? "Company Admin" : "Branch Admin",
+        },
+        temporaryPassword: data?.temporary_password,
+        emailSent: Boolean(data?.email_sent),
+      });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Could not reset the admin password"));
+    }
+  };
 
   // Handle Delete Confirmation (Company or Branch)
   const handleDeleteExecute = async () => {
@@ -651,6 +604,16 @@ export function TenantStructure({
                   )}
                 </div>
 
+                {canManageGroup && (
+                  <button
+                    type="button"
+                    onClick={() => resetAdminPassword("company", company)}
+                    className="text-[11px] text-primary hover:underline flex items-center gap-1"
+                  >
+                    <KeyRound className="h-3 w-3" /> Reset company admin password
+                  </button>
+                )}
+
                 {/* 🏢 Branches Section */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs font-medium">
@@ -719,6 +682,24 @@ export function TenantStructure({
 
                         {canManage && (
                           <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              title="Branch admin"
+                              className="p-1 rounded text-muted-foreground hover:text-primary transition-colors"
+                              onClick={() =>
+                                setDialog({ kind: "branchAdmin", org: company, branch })
+                              }
+                            >
+                              <ShieldCheck className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              title="Reset branch admin password"
+                              className="p-1 rounded text-muted-foreground hover:text-primary transition-colors"
+                              onClick={() => resetAdminPassword("branch", branch)}
+                            >
+                              <KeyRound className="h-3 w-3" />
+                            </button>
                             <button
                               type="button"
                               title="Edit branch"
@@ -828,10 +809,22 @@ export function TenantStructure({
         <BranchDialog
           dialog={dialog}
           onClose={() => setDialog(null)}
-          onSuccess={() => {
+          onSuccess={(issuedRow) => {
             setDialog(null);
+            if (issuedRow) setIssued(issuedRow);
             void loadBranches();
             void loadCompanies();
+          }}
+        />
+      )}
+
+      {dialog?.kind === "branchAdmin" && (
+        <BranchAdminDialog
+          branch={dialog.branch}
+          onClose={() => setDialog(null)}
+          onSuccess={(row) => {
+            setDialog(null);
+            setIssued(row);
           }}
         />
       )}
@@ -839,7 +832,6 @@ export function TenantStructure({
       {issued && (
         <IssuedDialog
           row={issued}
-          tenant={tenant}
           onClose={() => setIssued(null)}
         />
       )}
@@ -901,6 +893,7 @@ export function TenantStructure({
 // 🏢 COMPANY CREATE / EDIT DIALOG (WITH 5 TABS & MODULE SELECTION)
 // =========================================================================
 function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
+  const SYSTEM_MODULES = useModuleCatalog();
   const isEdit = dialog.kind === "editCompany";
   const existing = isEdit ? dialog.company : null;
 
@@ -977,18 +970,6 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
     // Default modules for new company
     return ["employee", "attendance", "leave", "payroll"];
   });
-
-  // Password Generation for New Company Admin
-  const [passwordSuffix] = useState(() => {
-    const random = new Uint32Array(1);
-    crypto.getRandomValues(random);
-    return String(100 + (random[0] % 900));
-  });
-
-  const adminPassword =
-    adminName.trim() && adminEmail.trim()
-      ? `${adminName.slice(0, 2).padEnd(2, "a")}${adminEmail.split("@")[0].slice(0, 2).padEnd(2, "b")}@${passwordSuffix}`
-      : "";
 
   const handleFileUpload = async (file, fieldKey) => {
     if (!file) return;
@@ -1073,13 +1054,12 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       gst_doc_url: gstDocUrl,
       pan_doc_url: panDocUrl,
       cin_doc_url: cinDocUrl,
-      modules: selectedModules,
+      modules: selectedModules.filter((k) => SYSTEM_MODULES.some((m) => m.key === k)),
       ...(isEdit
         ? {}
         : {
             admin_email: adminEmail.trim().toLowerCase(),
             admin_name: adminName.trim(),
-            admin_password: adminPassword,
             admin_phone: contactPhone.trim(),
           }),
     };
@@ -1092,7 +1072,7 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
         onSuccess(null);
       } else {
         const response = await SuperAdmin_auth.createCompany(payload);
-        const data = response?.data ?? response;
+        const data = response?.data?.data ?? response?.data ?? response;
         toast.success(
           data?.message || `Company "${name}" created successfully`,
         );
@@ -1102,9 +1082,11 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
             id: data?.company_admin?.id ?? "",
             name: data?.company_admin?.full_name ?? adminName,
             email: data?.company_admin?.email ?? adminEmail,
-            role: "Admin",
+            role: "Company Admin",
           },
-          temporaryPassword: adminPassword,
+          kind: "company",
+          temporaryPassword: data?.temporary_password,
+          emailSent: Boolean(data?.email_sent),
           company: data?.company,
         });
       }
@@ -1264,7 +1246,7 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
                     <ShieldCheck className="h-4 w-4" /> Company Super Administrator Account
                   </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Provide the initial administrator's name and email. An auto-generated temporary password will be issued upon creation.
+                    Provide the initial administrator's name and email. A temporary password is generated by the server and shown once after creation.
                   </p>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1291,16 +1273,6 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
                     </div>
                   </div>
 
-                  {adminPassword && (
-                    <div className="text-xs bg-background/80 rounded-lg p-2 border border-border flex items-center justify-between">
-                      <span className="text-muted-foreground">
-                        Auto-generated password preview:
-                      </span>
-                      <code className="font-mono text-primary font-bold">
-                        {adminPassword}
-                      </code>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
@@ -1817,11 +1789,21 @@ function BranchDialog({ dialog, onClose, onSuccess }) {
   const [status, setStatus] = useState(
     editing?.status?.toLowerCase() || "active",
   );
+  const [adminName, setAdminName] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPhone, setAdminPhone] = useState("");
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim()) return toast.error("Branch name is required");
     if (!code.trim()) return toast.error("Branch code is required");
+    const wantsAdmin = !isEdit && (adminName.trim() || adminEmail.trim());
+    if (wantsAdmin && (!adminName.trim() || !adminEmail.trim())) {
+      return toast.error("Branch admin needs both a name and an email — or leave both empty");
+    }
+    if (wantsAdmin && !EMAIL_REGEX.test(adminEmail.trim())) {
+      return toast.error("Enter a valid branch admin email");
+    }
 
     const payload = {
       company_id: org?.id,
@@ -1835,6 +1817,13 @@ function BranchDialog({ dialog, onClose, onSuccess }) {
       state: state.trim(),
       pincode: pincode.trim(),
       status: status.toLowerCase(),
+      ...(wantsAdmin
+        ? {
+            admin_name: adminName.trim(),
+            admin_email: adminEmail.trim().toLowerCase(),
+            admin_phone: adminPhone.trim(),
+          }
+        : {}),
     };
 
     try {
@@ -1842,11 +1831,26 @@ function BranchDialog({ dialog, onClose, onSuccess }) {
       if (isEdit) {
         await Branch_api.updateBranch(editing.id, payload);
         toast.success(`Branch "${name}" updated successfully`);
+        onSuccess(null);
       } else {
-        await Branch_api.createBranch(payload);
+        const response = await Branch_api.createBranch(payload);
+        const data = response?.data?.data ?? response?.data ?? response;
         toast.success(`Branch "${name}" created successfully`);
+        onSuccess(
+          data?.temporary_password
+            ? {
+                kind: "branch",
+                user: {
+                  name: data.branch_admin?.full_name ?? adminName,
+                  email: data.branch_admin?.email ?? adminEmail,
+                  role: "Branch Admin",
+                },
+                temporaryPassword: data.temporary_password,
+                emailSent: Boolean(data.email_sent),
+              }
+            : null,
+        );
       }
-      onSuccess();
     } catch (error) {
       const msg = getApiErrorMessage(
         error,
@@ -1965,6 +1969,36 @@ function BranchDialog({ dialog, onClose, onSuccess }) {
             />
           </div>
 
+          {!isEdit && (
+            <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 space-y-2">
+              <div className="text-xs font-semibold text-primary flex items-center gap-1.5">
+                <ShieldCheck className="h-4 w-4" /> Branch Admin login (optional)
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Fill name and email to create a login for this branch. The password is generated by the
+                server and shown once.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <Input
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
+                  placeholder="Admin full name"
+                />
+                <Input
+                  type="email"
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  placeholder="Admin email"
+                />
+                <Input
+                  value={adminPhone}
+                  onChange={(e) => setAdminPhone(e.target.value)}
+                  placeholder="Admin phone (optional)"
+                />
+              </div>
+            </div>
+          )}
+
           <DialogFooter className="pt-2">
             <Button
               type="button"
@@ -1996,9 +2030,75 @@ function BranchDialog({ dialog, onClose, onSuccess }) {
 // =========================================================================
 // 🔑 ISSUED CREDENTIALS DIALOG
 // =========================================================================
-function IssuedDialog({ row, tenant, onClose }) {
+function BranchAdminDialog({ branch, onClose, onSuccess }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || !EMAIL_REGEX.test(email.trim())) {
+      return toast.error("Enter the admin's name and a valid email");
+    }
+    try {
+      setLoading(true);
+      const response = await Branch_api.setBranchAdmin(branch.id, {
+        admin_name: name.trim(),
+        admin_email: email.trim().toLowerCase(),
+        admin_phone: phone.trim(),
+      });
+      const data = response?.data?.data ?? response?.data ?? response;
+      if (data?.replaced) toast.info("The previous branch admin was deactivated");
+      onSuccess({
+        kind: "branch",
+        user: {
+          name: data?.branch_admin?.full_name ?? name,
+          email: data?.branch_admin?.email ?? email,
+          role: "Branch Admin",
+        },
+        temporaryPassword: data?.temporary_password,
+        emailSent: Boolean(data?.email_sent),
+      });
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, "Could not set the branch admin"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !loading && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Branch admin — {branch.name}</DialogTitle>
+          <DialogDescription>
+            Creates the branch admin login. If one already exists, that account is deactivated and replaced.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Admin full name" required />
+          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Admin email" required />
+          <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Admin phone (optional)" />
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={loading} onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading} className="bg-gradient-emerald text-white">
+              {loading && <Loader2 className="h-4 w-4 animate-spin mr-1.5" />}
+              Save admin
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// One-time temporary password: the backend never returns it again.
+function IssuedDialog({ row, onClose }) {
   const url = `${window.location.origin}/login`;
-  const mail = credentialsEmail(row, tenant.name, url);
+  const copyText = `Sign-in: ${url}\nEmail: ${row.user.email}\nTemporary password: ${row.temporaryPassword}`;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -2006,34 +2106,27 @@ function IssuedDialog({ row, tenant, onClose }) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-emerald-600">
             <ShieldCheck className="h-5 w-5" />
-            Company Admin Credentials Issued — {row.user.name}
+            {row.user.role} credentials — {row.user.name}
           </DialogTitle>
           <DialogDescription>
-            Share these temporary credentials with the company administrator. They
-            must be changed on first login.
+            Shown only now — this password cannot be retrieved later. The user must change it on first
+            sign-in.
+            {row.emailSent ? " The credentials were also emailed to them." : ""}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-2 text-sm pt-1">
           {[
             ["Sign-in URL", url],
-            [
-              "Portal Tab",
-              row.user.role === "SuperAdmin" ? "Super Admin" : "Admin",
-            ],
             ["Username / Email", row.user.email],
-            ["Temporary Password", row.temporaryPassword],
+            ["Temporary Password", row.temporaryPassword || "—"],
           ].map(([key, value]) => (
             <div
               key={key}
               className="border-border flex items-center justify-between rounded-lg border px-3 py-2 bg-muted/20"
             >
-              <span className="text-muted-foreground w-36 shrink-0 text-xs font-medium">
-                {key}
-              </span>
-              <code className="min-w-0 font-mono text-xs text-foreground font-semibold truncate">
-                {value}
-              </code>
+              <span className="text-muted-foreground w-36 shrink-0 text-xs font-medium">{key}</span>
+              <code className="min-w-0 font-mono text-xs text-foreground font-semibold truncate">{value}</code>
             </div>
           ))}
         </div>
@@ -2042,16 +2135,13 @@ function IssuedDialog({ row, tenant, onClose }) {
           <Button
             variant="outline"
             onClick={() => {
-              navigator.clipboard?.writeText(
-                `To: ${mail.to}\nSubject: ${mail.subject}\n\n${mail.body}`,
-              );
+              navigator.clipboard?.writeText(copyText);
               toast.success("Credentials copied to clipboard");
             }}
           >
             <Copy className="h-4 w-4 mr-1.5" />
-            Copy Details
+            Copy
           </Button>
-
           <Button className="bg-gradient-emerald text-white" onClick={onClose}>
             Done
           </Button>

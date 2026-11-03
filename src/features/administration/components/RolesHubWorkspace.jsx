@@ -39,11 +39,16 @@ import { UserAssignmentTab } from "@/features/administration/components/UserAssi
 import { BranchAccessTab } from "@/features/administration/components/BranchAccessTab";
 import { TemporaryAccessTab } from "@/features/administration/components/TemporaryAccessTab";
 import { SubstitutesTab } from "@/features/administration/components/SubstitutesTab";
+import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import { rbacApi, extractErrorMessage } from "@/api/rbacApi";
+
+// Branch label for the role detail view (the API returns objects or plain ids).
+const branchName = (b) => (b && typeof b === "object" ? (b.name ?? b.branch_name ?? String(b.id)) : String(b));
 
 export function RolesHub() {
   const me = useCurrentUser();
   const fallbackRoles = useRoles();
+  const scope = useCompanyScope();
   const fallbackRolesRef = useRef(fallbackRoles);
   fallbackRolesRef.current = fallbackRoles;
 
@@ -62,7 +67,7 @@ export function RolesHub() {
     inFlightRolesRef.current = true;
     try {
       setLoading(true);
-      const data = await rbacApi.getRoles();
+      const data = await rbacApi.getRoles(scope.companyId ? { company_id: scope.companyId } : undefined);
       if (Array.isArray(data) && data.length > 0) {
         setApiRoles(data);
       } else {
@@ -75,7 +80,7 @@ export function RolesHub() {
       setLoading(false);
       inFlightRolesRef.current = false;
     }
-  }, []);
+  }, [scope.companyId]);
 
   useEffect(() => {
     loadRoles();
@@ -178,6 +183,7 @@ export function RolesHub() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <CompanyScopeSelect scope={scope} />
           <Button variant="outline" size="sm" onClick={loadRoles} disabled={loading}>
             <RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? "animate-spin" : ""}`} /> Refresh
           </Button>
