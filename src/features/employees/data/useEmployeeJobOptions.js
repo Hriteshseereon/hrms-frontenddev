@@ -27,7 +27,7 @@ export const staffLabel = (e) =>
 
 /**
  * Dropdown data for the employee Add / Edit forms, all from the backend masters.
- * `designations` is the list of the chosen department; managers / HR are scoped to `companyId` when given.
+ * `departments` and `designations` are each the full company list (both optional on the form); managers / HR are scoped to `companyId` when given.
  */
 export function useEmployeeJobOptions({ deptId, companyId, orgId }) {
   const [departments, setDepartments] = useState([]);
@@ -106,11 +106,10 @@ export function useEmployeeJobOptions({ deptId, companyId, orgId }) {
       alive = false;
     };
   }, [companyParams.company_id]);
+  // Designations are independent of the department: every designation of the company is offered.
   useEffect(() => {
-    setDesignations(
-      deptId ? allDesignations.filter((d) => String(d.departmentId) === String(deptId)) : [],
-    );
-  }, [deptId, allDesignations]);
+    setDesignations(allDesignations);
+  }, [allDesignations]);
 
   useEffect(() => {
     let alive = true;

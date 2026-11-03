@@ -1069,6 +1069,9 @@ function makeTempPassword() {
 }
 
 /** Employee form: onboarding when `employee` is absent, the same form pre-filled with the record when present. */
+// Radix Select cannot hold an empty value: this stands for "nothing chosen" in optional dropdowns.
+const NONE = "__none__";
+
 function AddEmployeeDialog({ onClose, onCreated, employee }) {
   const isEdit = !!employee;
   const me = useCurrentUser();
@@ -1376,8 +1379,6 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       ["personalEmail", "Personal email"],
       ["phone", "Mobile number"],
       ["doj", "Date of joining"],
-      ["dept", "Department"],
-      ["designation", "Designation"],
       ["ctc", "Annual CTC"],
     ];
     const missing = required.filter(([k]) => !v[k]?.trim()).map(([, l]) => l);
@@ -1473,7 +1474,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       date_of_birth: v.dob || "",
       gender: v.gender || "",
       department: v.dept || "",
-      department_id: departmentIdParam,
+      department_id: isUuid(departmentIdParam) ? departmentIdParam : undefined,
       designation: v.designation || "",
       designation_id: isUuid(designationId) ? designationId : undefined,
       role: v.role || "Employee",
@@ -1584,6 +1585,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
         "linkedin_url", "github_url", "twitter_url", "website_url", "qualification", "institution",
         "year_of_passing", "education_score", "driving_license_number", "passport_number",
         "bank_account_holder_name", "bank_branch", "bank_account_type", "payment_mode",
+        "department", "department_id", "designation", "designation_id", // department / designation are optional
       ]);
       const edu = employee.education?.[0] ?? {};
       const eduPrev = {
@@ -2622,18 +2624,16 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                 </Field>
               </FieldRow>
               <FieldRow>
-                <Field label="Department" required>
+                <Field label="Department">
                   <Select
-                    value={deptId}
-                    onValueChange={(val) => {
-                      setDeptId(val);
-                      setDesignationId("");
-                    }}
+                    value={deptId || NONE}
+                    onValueChange={(val) => setDeptId(val === NONE ? "" : val)}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select department" />
+                      <SelectValue placeholder="Select department (optional)" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={NONE}>— None —</SelectItem>
                       {departments.map((d) => (
                         <SelectItem key={d.id} value={String(d.id)}>
                           {d.name}
@@ -2642,24 +2642,20 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Designation" required>
+                <Field label="Designation">
                   <Select
-                    value={designationId}
-                    onValueChange={setDesignationId}
-                    disabled={!deptId}
+                    value={designationId || NONE}
+                    onValueChange={(val) => setDesignationId(val === NONE ? "" : val)}
                   >
                     <SelectTrigger>
                       <SelectValue
                         placeholder={
-                          !deptId
-                            ? "Select a department first"
-                            : deptDesignations.length
-                              ? "Select designation"
-                              : "No designations for this department"
+                          deptDesignations.length ? "Select designation (optional)" : "No designations created yet"
                         }
                       />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={NONE}>— None —</SelectItem>
                       {deptDesignations.map((d) => (
                         <SelectItem key={d.id} value={String(d.id)}>
                           {d.name}
