@@ -56,6 +56,13 @@ SuperAdmin_axios.interceptors.response.use(
       });
       return Promise.reject(error);
     }
+    // Temporary / reset password: every call but the password ones answers 403 until it is changed.
+    if (error.response?.status === 403 && /password change required/i.test(detailText)) {
+      if (!window.location.pathname.startsWith("/emp/profile")) {
+        window.location.assign("/emp/profile");
+      }
+      return Promise.reject(error);
+    }
     const isAuthRequest = /\/auth\/(?:super-admins\/login|login|refresh)/.test(
       request?.url ?? "",
     );

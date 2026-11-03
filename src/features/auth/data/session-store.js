@@ -16,6 +16,9 @@ const INITIAL_STATE = {
   isBranchEmployee: false,
   status: null,
   permittedModules: [],
+  redirectPortal: null, // "org" | "emp" — decided by the backend at login
+  designationType: null, // "HR" | "MANAGER" | "CEO" | null
+  mustChangePassword: false,
   isAuthenticated: false,
 
   // IMPORTANT: Keep created employee IDs distinct from logged-in user session scope
@@ -39,6 +42,7 @@ export const useSessionStore = create()(
           token_type = "bearer",
           user = {},
           permitted_modules = [],
+          redirect_portal = null,
         } = loginResponse;
 
         const token = access_token || "";
@@ -59,7 +63,7 @@ export const useSessionStore = create()(
         // Bridge user into legacy auth-session for portal guards & navigation
         try {
           if (user?.id) {
-            signInFromBackend(user);
+            signInFromBackend(user, { portal: redirect_portal });
           }
         } catch (e) {
           console.warn("Could not sync session with legacy auth-session:", e);
@@ -79,6 +83,11 @@ export const useSessionStore = create()(
           isBranchEmployee: Boolean(user.is_branch_employee),
           status: user.status || null,
           permittedModules: permitted_modules || [],
+          redirectPortal: redirect_portal,
+          designationType: user.designation_type || null,
+          mustChangePassword: Boolean(
+            loginResponse.must_change_password ?? user.must_change_password,
+          ),
           isAuthenticated: Boolean(token),
         });
       },
@@ -146,6 +155,9 @@ export const useSessionStore = create()(
         isBranchEmployee: state.isBranchEmployee,
         status: state.status,
         permittedModules: state.permittedModules,
+        redirectPortal: state.redirectPortal,
+        designationType: state.designationType,
+        mustChangePassword: state.mustChangePassword,
         isAuthenticated: state.isAuthenticated,
       }),
     },
