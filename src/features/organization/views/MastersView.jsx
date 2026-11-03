@@ -102,7 +102,7 @@ import { RoundsWorkspace } from "@/features/recruitment/components/RoundsWorkspa
 
 import { LocationsWorkspace } from "@/features/recruitment/components/LocationsWorkspace";
 
-import { DeskSettings } from "@/features/helpdesk/components/DeskSettingsWorkspace";
+// import { DeskSettings } from "@/features/helpdesk/components/DeskSettingsWorkspace";
 
 import { ApprovalsWorkspace } from "@/features/administration/components/ApprovalsWorkspace";
 
@@ -1245,9 +1245,82 @@ function PayrollConfigTab() {
 }
 
 // Created once (module level) so the saved configuration is not reloaded on every render.
-const workdayConfigApi = createWorkdayConfigApi();
+const workdayMatrixApi = createWorkdayConfigApi();
+
+// Rows of the matrix, always Monday → Sunday.
+const WORKDAY_WEEK = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+];
+
+// Columns of the matrix (occurrence of the weekday inside a month).
+const WORKDAY_OCCURRENCES = ["1st", "2nd", "3rd", "4th", "5th"];
+
+const WORKDAY_TOTAL_CELLS = WORKDAY_WEEK.length * WORKDAY_OCCURRENCES.length;
+
+// Default matrix comes from the default working week (Monday–Friday).
+function defaultWorkdayMatrix(workingDays) {
+  return Object.fromEntries(
+    WORKDAY_WEEK.map((d) => [
+      d,
+      WORKDAY_OCCURRENCES.map(() => workingDays.includes(d)),
+    ]),
+  );
+}
+
+// Weekdays that have at least one working occurrence in the matrix.
+function workingDaysOf(matrix) {
+  return WORKDAY_WEEK.filter((d) =>
+    WORKDAY_OCCURRENCES.some((_, i) => !!matrix?.[d]?.[i]),
+  );
+}
+
+// Round checkbox used in the matrix (no extra imports needed).
+function MatrixCheck({ checked, indeterminate, onClick, label }) {
+  const filled = checked || indeterminate;
+
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={indeterminate && !checked ? "mixed" : !!checked}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={`mx-auto grid h-6 w-6 place-items-center rounded-full border transition ${
+        filled
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-muted-foreground/50 hover:border-primary"
+      }`}
+    >
+      {checked && (
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
+      )}
+      {indeterminate && !checked && (
+        <span className="h-0.5 w-2.5 rounded bg-current" />
+      )}
+    </button>
+  );
+}
 
 function WorkdayConfigTab() {
+  // Default working week (Monday–Friday). It is the starting point until a matrix is saved,
+  // and is kept in step with the saved matrix for the rest of the app.
   const [saved, setSaved] = useSharedList("workday-config", [
     "Monday",
     "Tuesday",
@@ -1256,31 +1329,24 @@ function WorkdayConfigTab() {
     "Friday",
   ]);
 
-  const [days, setDays] = useState(saved);
+  // The matrix being edited, and the copy last saved on the server ({ id, matrix } or null).
+  const [matrix, setMatrix] = useState(() => defaultWorkdayMatrix(saved));
+  const [serverRecord, setServerRecord] = useState(null);
+  const [savingMatrix, setSavingMatrix] = useState(false);
+  // true until the GET finishes, so Save cannot POST the defaults over a saved configuration.
+  const [loadingMatrix, setLoadingMatrix] = useState(true);
 
-  const [configId, setConfigId] = useState(null);
-
-  const [savingConfig, setSavingConfig] = useState(false);
-
-  // true once the GET has finished successfully (even if nothing is saved yet)
-  const [configLoaded, setConfigLoaded] = useState(false);
-
-  useEffect(() => {
-    setDays(saved);
-  }, [saved]);
-
-  // GET /attendance/workday-configurations: load the saved configuration.
+  // GET /attendance/workday-configurations: load the saved matrix.
   useEffect(() => {
     let active = true;
 
-    workdayConfigApi
+    workdayMatrixApi
       .load()
-      .then((config) => {
-        if (!active) return;
-        setConfigLoaded(true);
-        if (!config) return;
-        setConfigId(config.id);
-        setSaved(config.days);
+      .then((record) => {
+        if (!active || !record) return;
+        setServerRecord(record);
+        setMatrix(record.matrix);
+        setSaved(workingDaysOf(record.matrix));
       })
       .catch((error) => {
         if (active) {
@@ -1288,45 +1354,76 @@ function WorkdayConfigTab() {
             getErrorMessage(error, "Unable to load workday configuration"),
           );
         }
+      })
+      .finally(() => {
+        if (active) setLoadingMatrix(false);
       });
 
     return () => {
       active = false;
     };
-    // Load once when the tab opens. setSaved changes identity on every render, so
-    // listing it here would re-run this effect (and the GET) in a loop.
+    // Load once when the tab opens (setSaved changes identity on every render).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const toggle = (d) =>
-    setDays((p) => (p.includes(d) ? p.filter((x) => x !== d) : [...p, d]));
+  const cellOn = (day, i) => !!matrix[day]?.[i];
 
-  const dirty = WEEKDAYS.some((d) => days.includes(d) !== saved.includes(d));
+  function toggleCell(day, i) {
+    setMatrix((p) => ({
+      ...p,
+      [day]: WORKDAY_OCCURRENCES.map((_, j) =>
+        j === i ? !p[day]?.[j] : !!p[day]?.[j],
+      ),
+    }));
+  }
 
-  // Nothing exists on the server yet: the default week can be saved as-is (first POST).
-  const needsFirstSave = configLoaded && configId == null;
+  // "All" controls all five occurrences of that weekday.
+  function toggleAll(day) {
+    const allOn = WORKDAY_OCCURRENCES.every((_, i) => cellOn(day, i));
+    setMatrix((p) => ({
+      ...p,
+      [day]: WORKDAY_OCCURRENCES.map(() => !allOn),
+    }));
+  }
 
-  // POST when nothing is saved yet, otherwise PATCH only the days that changed.
-  async function saveConfig() {
-    setSavingConfig(true);
+  function setEverything(value) {
+    setMatrix(
+      Object.fromEntries(
+        WORKDAY_WEEK.map((d) => [d, WORKDAY_OCCURRENCES.map(() => value)]),
+      ),
+    );
+  }
+
+  const workingRules = WORKDAY_WEEK.reduce(
+    (sum, day) =>
+      sum + WORKDAY_OCCURRENCES.filter((_, i) => cellOn(day, i)).length,
+    0,
+  );
+  const holidayRules = WORKDAY_TOTAL_CELLS - workingRules;
+
+  // Nothing saved on the server yet, or the matrix differs from the saved copy.
+  const matrixDirty =
+    !serverRecord || JSON.stringify(matrix) !== JSON.stringify(serverRecord.matrix);
+
+  // POST /attendance/workday-configurations (creates or updates the configuration for the scope).
+  async function saveMatrix() {
+    setSavingMatrix(true);
 
     try {
-      const result = await workdayConfigApi.save({
-        id: configId,
-        days,
-        savedDays: saved,
-      });
+      const record = await workdayMatrixApi.save(matrix);
+      const savedMatrix = record?.matrix ?? matrix;
 
-      if (result?.id != null) setConfigId(result.id);
+      setServerRecord({ id: record?.id ?? serverRecord?.id ?? null, matrix: savedMatrix });
+      setMatrix(savedMatrix);
+      setSaved(workingDaysOf(savedMatrix));
 
-      setSaved(days);
-      toast.success(`${days.length}-day work week saved`);
+      toast.success("Workday configuration saved");
     } catch (error) {
       toast.error(
         getErrorMessage(error, "Unable to save workday configuration"),
       );
     } finally {
-      setSavingConfig(false);
+      setSavingMatrix(false);
     }
   }
 
@@ -1341,33 +1438,105 @@ function WorkdayConfigTab() {
           <Button
             size="sm"
             className="bg-gradient-emerald text-white"
-            disabled={
-              (!dirty && !needsFirstSave) || days.length === 0 || savingConfig
-            }
-            onClick={saveConfig}
+            disabled={!matrixDirty || savingMatrix || loadingMatrix}
+            onClick={saveMatrix}
           >
-            Save Configuration
+            {savingMatrix ? "Saving..." : "Save Configuration"}
           </Button>
         </SectionHead>
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {WEEKDAYS.map((d) => (
-            <div
-              key={d}
-              className="border-border bg-muted/30 flex items-center justify-between rounded-lg border px-4 py-3"
-            >
-              <span className="text-sm font-medium">{d}</span>
-              <Switch
-                checked={days.includes(d)}
-                onCheckedChange={() => toggle(d)}
-              />
-            </div>
-          ))}
+        <div className="border-border overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[560px] text-sm">
+            <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
+              <tr>
+                <th className="p-3 text-left">Weekday</th>
+                <th className="p-3 text-center">All</th>
+                {WORKDAY_OCCURRENCES.map((o) => (
+                  <th key={o} className="p-3 text-center">
+                    {o}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+
+            <tbody className="divide-border divide-y">
+              {WORKDAY_WEEK.map((day) => {
+                const values = WORKDAY_OCCURRENCES.map((_, i) =>
+                  cellOn(day, i),
+                );
+                const allOn = values.every(Boolean);
+                const someOn = values.some(Boolean);
+
+                return (
+                  <tr key={day} className="hover:bg-muted/30">
+                    <td className="p-3 font-medium">{day}</td>
+
+                    <td className="p-3 text-center">
+                      <MatrixCheck
+                        checked={allOn}
+                        indeterminate={someOn && !allOn}
+                        onClick={() => toggleAll(day)}
+                        label={`All ${day}s`}
+                      />
+                    </td>
+
+                    {WORKDAY_OCCURRENCES.map((o, i) => (
+                      <td key={o} className="p-3 text-center">
+                        <MatrixCheck
+                          checked={cellOn(day, i)}
+                          onClick={() => toggleCell(day, i)}
+                          label={`${o} ${day}`}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
-        <div className="text-muted-foreground mt-4 text-sm">
-          Working days per week:{" "}
-          <span className="text-foreground font-semibold">{days.length}</span>
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <div className="border-border bg-muted/30 rounded-lg border px-4 py-3">
+            <div className="text-primary text-2xl font-bold">
+              {workingRules}
+            </div>
+            <div className="text-muted-foreground text-xs">Working rules</div>
+          </div>
+          <div className="border-border bg-muted/30 rounded-lg border px-4 py-3">
+            <div className="text-destructive text-2xl font-bold">
+              {holidayRules}
+            </div>
+            <div className="text-muted-foreground text-xs">Holiday rules</div>
+          </div>
+          <div className="border-border bg-muted/30 rounded-lg border px-4 py-3">
+            <div className="text-2xl font-bold">{WORKDAY_TOTAL_CELLS}</div>
+            <div className="text-muted-foreground text-xs">Possible cells</div>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setEverything(true)}
+          >
+            All Working
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setEverything(false)}
+          >
+            All Holidays
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setMatrix(defaultWorkdayMatrix(saved))}
+          >
+            Reset
+          </Button>
         </div>
       </CardContent>
     </Card>
@@ -1735,26 +1904,26 @@ const GROUPS = [
       },
     ],
   },
-  {
-    group: "Helpdesk & workflows",
-    items: [
-      {
-        key: "helpdesk",
-        label: "Helpdesk desks, categories, SLA",
-        icon: LifeBuoy,
-      },
-      {
-        key: "approvals",
-        label: "Approval engine (workflows per module)",
-        icon: GitBranch,
-      },
-      {
-        key: "hrpolicy",
-        label: "HR policy & notification rules",
-        icon: BellRing,
-      },
-    ],
-  },
+  // {
+  //   group: "Helpdesk & workflows",
+  //   items: [
+  //     {
+  //       key: "helpdesk",
+  //       label: "Helpdesk desks, categories, SLA",
+  //       icon: LifeBuoy,
+  //     },
+  //     {
+  //       key: "approvals",
+  //       label: "Approval engine (workflows per module)",
+  //       icon: GitBranch,
+  //     },
+  //     {
+  //       key: "hrpolicy",
+  //       label: "HR policy & notification rules",
+  //       icon: BellRing,
+  //     },
+  //   ],
+  // },
   // {
   //   group: "Access & security",
   //   items: [
@@ -2225,7 +2394,7 @@ function Masters() {
             />
           )}
 
-          {tab === "helpdesk" && <DeskSettings />}
+          {/* {tab === "helpdesk" && <DeskSettings />} */}
 
           {tab === "approvals" && <ApprovalsWorkspace />}
 

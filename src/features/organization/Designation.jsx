@@ -245,11 +245,6 @@ export default function Designation() {
 
     const name = designationName.trim();
 
-    if (!departmentId) {
-      setError("Please select a department.");
-      return;
-    }
-
     if (!name) {
       setError("Designation name is required.");
       return;
@@ -258,13 +253,15 @@ export default function Designation() {
     const duplicate = designations.some(
       (item) =>
         item.name.toLowerCase() === name.toLowerCase() &&
-        String(item.department_id) === String(departmentId) &&
+        String(item.department_id ?? "") === String(departmentId) &&
         String(item.id) !== String(editingId)
     );
 
     if (duplicate) {
       setError(
-        "This designation already exists in the selected department."
+        departmentId
+          ? "This designation already exists in the selected department."
+          : "This designation already exists without a department."
       );
       return;
     }
@@ -280,7 +277,7 @@ export default function Designation() {
 
       const payload = {
         designation_name: name,
-        department_id: departmentId,
+        department_id: departmentId || null,
         is_active: existing?.is_active ?? true,
       };
 
@@ -301,7 +298,11 @@ export default function Designation() {
 
   function handleEdit(designation) {
     setDesignationName(designation.name);
-    setDepartmentId(String(designation.department_id));
+    setDepartmentId(
+      designation.department_id
+        ? String(designation.department_id)
+        : ""
+    );
     setEditingId(designation.id);
     setError("");
     setPageError("");
@@ -619,7 +620,7 @@ export default function Designation() {
               <button
                 type="submit"
                 form="designation-form"
-                disabled={saving || departments.length === 0}
+                disabled={saving}
                 className={buttonClass}
               >
                 {saving ? (
@@ -647,7 +648,8 @@ export default function Designation() {
                 htmlFor="departmentId"
                 className="mb-2 block text-sm font-medium"
               >
-                Department <span className="text-red-500">*</span>
+                Department 
+                {/* <span className={mutedClass}>(Optional)</span> */}
               </label>
 
               <select
@@ -658,10 +660,9 @@ export default function Designation() {
                   setError("");
                 }}
                 className={inputClass}
-                required
                 autoFocus
               >
-                <option value="">Select department</option>
+                <option value="">Select department (Optional)</option>
 
                 {departments.map((department) => (
                   <option key={department.id} value={department.id}>
@@ -672,7 +673,7 @@ export default function Designation() {
 
               {departments.length === 0 && !loading && (
                 <p className="mt-2 text-xs text-amber-600 dark:text-amber-300">
-                  No departments available. Create a department first.
+                  No departments available. You can still create a designation without selecting a department.
                 </p>
               )}
             </div>
@@ -741,32 +742,32 @@ export default function Designation() {
           }
         >
           <div className="space-y-5">
-  {/* SL No. */}
-  <div>
-    <p className={`text-sm ${mutedClass}`}>SL No.</p>
-    <p className="mt-1 font-semibold">
-      {filteredDesignations.findIndex(
-        (item) => String(item.id) === String(viewDesignation.id)
-      ) + 1}
-    </p>
-  </div>
+            {/* SL No. */}
+            <div>
+              <p className={`text-sm ${mutedClass}`}>SL No.</p>
+              <p className="mt-1 font-semibold">
+                {filteredDesignations.findIndex(
+                  (item) => String(item.id) === String(viewDesignation.id)
+                ) + 1}
+              </p>
+            </div>
 
-  {/* Department Name */}
-  <div>
-    <p className={`text-sm ${mutedClass}`}>Department</p>
-    <p className="mt-1 font-semibold">
-      {getDepartmentName(viewDesignation)}
-    </p>
-  </div>
+            {/* Department Name */}
+            <div>
+              <p className={`text-sm ${mutedClass}`}>Department</p>
+              <p className="mt-1 font-semibold">
+                {getDepartmentName(viewDesignation)}
+              </p>
+            </div>
 
-  {/* Designation Name */}
-  <div>
-    <p className={`text-sm ${mutedClass}`}>Designation Name</p>
-    <p className="mt-1 font-semibold">
-      {viewDesignation.name}
-    </p>
-  </div>
-</div>
+            {/* Designation Name */}
+            <div>
+              <p className={`text-sm ${mutedClass}`}>Designation Name</p>
+              <p className="mt-1 font-semibold">
+                {viewDesignation.name}
+              </p>
+            </div>
+          </div>
         </Modal>
       )}
     </div>

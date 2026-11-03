@@ -1981,7 +1981,8 @@ export function LeaveMasterTab({ section = "both" }) {
                   <button
                     type="button"
                     onClick={() => setCal(c)}
-                    className="border-border hover:bg-muted/30 w-full rounded-xl border p-4 text-left"
+                    // className="border-border hover:bg-muted/30 w-full rounded-xl border p-4 text-left"
+                    className="border-border hover:bg-muted/30 w-full rounded-xl border p-4 pr-12 text-left"
                   >
                     <Badge variant="outline" className="mb-2">
                       {c.type}
