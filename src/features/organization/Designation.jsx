@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from "react";
 import {
   Plus,
@@ -41,13 +40,20 @@ function extractList(data, keys) {
   return [];
 }
 
+// The API links a designation to a department by NAME (field "department" / "department_name").
 function normalizeDesignation(item) {
+  const departmentName =
+    item.department_name ??
+    (typeof item.department === "string"
+      ? item.department
+      : (item.department?.department_name ?? item.department?.name)) ??
+    "";
+
   return {
     ...item,
     id: item.id,
     name: item.designation_name ?? item.name ?? "",
-    department_id: item.department_id ?? "",
-    department_name: item.department_name ?? "",
+    department_name: departmentName,
     is_active: item.is_active ?? true,
   };
 }
@@ -127,7 +133,8 @@ export default function Designation() {
   const [designations, setDesignations] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [designationName, setDesignationName] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
+  // Holds the department NAME (the API links designations to departments by name).
+  const [departmentName, setDepartmentName] = useState("");
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -199,35 +206,20 @@ export default function Designation() {
     const query = search.trim().toLowerCase();
 
     return designations.filter((item) => {
-      const departmentName =
-        item.department_name ||
-        departments.find(
-          (department) =>
-            String(department.id) === String(item.department_id)
-        )?.name ||
-        "";
-
       return (
         item.name.toLowerCase().includes(query) ||
-        departmentName.toLowerCase().includes(query)
+        (item.department_name ?? "").toLowerCase().includes(query)
       );
     });
-  }, [designations, departments, search]);
+  }, [designations, search]);
 
   function getDepartmentName(designation) {
-    return (
-      designation.department_name ||
-      departments.find(
-        (department) =>
-          String(department.id) === String(designation.department_id)
-      )?.name ||
-      "—"
-    );
+    return designation.department_name || "—";
   }
 
   function resetForm() {
     setDesignationName("");
-    setDepartmentId("");
+    setDepartmentName("");
     setEditingId(null);
     setError("");
   }
@@ -261,13 +253,14 @@ export default function Designation() {
     const duplicate = designations.some(
       (item) =>
         item.name.toLowerCase() === name.toLowerCase() &&
-        String(item.department_id ?? "") === String(departmentId) &&
+        (item.department_name ?? "").toLowerCase() ===
+          departmentName.toLowerCase() &&
         String(item.id) !== String(editingId)
     );
 
     if (duplicate) {
       setError(
-        departmentId
+        departmentName
           ? "This designation already exists in the selected department."
           : "This designation already exists without a department."
       );
@@ -283,9 +276,10 @@ export default function Designation() {
         (item) => String(item.id) === String(editingId)
       );
 
+      // Department is optional: send its name, or null when none is selected.
       const payload = {
         designation_name: name,
-        department_id: departmentId || null,
+        department: departmentName || null,
         is_active: existing?.is_active ?? true,
         ...(scope.isSuper && editingId === null ? { company_id: scope.companyId } : {}),
       };
@@ -307,11 +301,7 @@ export default function Designation() {
 
   function handleEdit(designation) {
     setDesignationName(designation.name);
-    setDepartmentId(
-      designation.department_id
-        ? String(designation.department_id)
-        : ""
-    );
+    setDepartmentName(designation.department_name || "");
     setEditingId(designation.id);
     setError("");
     setPageError("");
@@ -401,6 +391,13 @@ export default function Designation() {
 
     URL.revokeObjectURL(url);
   }
+
+  // Keep the current department selectable even if it is not in the departments list.
+  const departmentOptions =
+    departmentName &&
+    !departments.some((department) => department.name === departmentName)
+      ? [{ id: "__current", name: departmentName }, ...departments]
+      : departments;
 
   return (
     <div className="min-h-full space-y-6 bg-slate-50 p-5 text-slate-900 transition-colors dark:bg-[#080f0c] dark:text-[#edf4ef] sm:p-8">
@@ -657,7 +654,7 @@ export default function Designation() {
           >
             <div>
               <label
-                htmlFor="departmentId"
+                htmlFor="departmentName"
                 className="mb-2 block text-sm font-medium"
               >
                 Department 
@@ -665,10 +662,10 @@ export default function Designation() {
               </label>
 
               <select
-                id="departmentId"
-                value={departmentId}
+                id="departmentName"
+                value={departmentName}
                 onChange={(event) => {
-                  setDepartmentId(event.target.value);
+                  setDepartmentName(event.target.value);
                   setError("");
                 }}
                 className={inputClass}
@@ -676,8 +673,8 @@ export default function Designation() {
               >
                 <option value="">Select department (Optional)</option>
 
-                {departments.map((department) => (
-                  <option key={department.id} value={department.id}>
+                {departmentOptions.map((department) => (
+                  <option key={department.id} value={department.name}>
                     {department.name}
                   </option>
                 ))}

@@ -1,6 +1,6 @@
 import { useRouter } from "@/lib/router";
 import { buildHref } from "@/lib/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Sparkles,
   Brain,
@@ -9,6 +9,8 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
+  Building2,
+  UserCircle,
   Crown,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,8 +26,49 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
+import { ORGANIZATION, signIn, userByLogin } from "@/features/auth/data/auth-session";
+import { signInEmployee } from "@/features/auth/data/emp-session";
+import { orgsStore, groupsStore } from "@/features/organization/data/group-data";
+import {
+  loginOf,
+  recordFailedSignIn,
+  recordSignIn,
+  signInPolicy,
+} from "@/features/auth/data/rbac-store";
+import { mustChangeTemporaryPassword } from "@/features/auth/data/tenant-users";
+import { findEmployee } from "@/features/employees/data/employee-directory";
+import { terminationStore } from "@/features/employees/data/people-cases";
 import { useOrganisation } from "@/features/organization/data/tenancy";
+import { env } from "@/config/env";
+// import { DEMO_LOGINS } from "@/features/auth/views/demo-logins";
+
+// Separate Super Admin authentication service
 import SuperAdmin_auth from "@/api/SuperAdmin_auth";
+
+const tabsFor = (ws) => [
+  {
+    key: "super",
+    icon: Crown,
+    title: "Super Admin",
+    text:
+      ws?.kind === "group"
+        ? "Head of the group — collective dashboards across every company, switch into any company or branch, run the organisation setup, create companies, branches and their admins."
+        : "Head of the organisation — dashboards, organisation setup, branches, admins and configuration for the whole company.",
+  },
+  {
+    key: "admin",
+    icon: Building2,
+    title: "Admin",
+    text: "Company Admin (one company, all its branches) or Branch Admin (one branch) — sees only the data of their company or branch.",
+  },
+  {
+    key: "employee",
+    icon: UserCircle,
+    title: "Employee",
+    text: "Every other role — CEO, CFO, HR, HOD, Manager, Employee. Screens open by role and only for your own company.",
+  },
+];
 
 const LEGAL = {
   privacy: {
@@ -48,95 +91,220 @@ const LEGAL = {
   },
 };
 
-/** Single sign-in for every role: the backend decides the role and the portal (redirect_portal). */
+/** Sign-in for the organisation: Super Admin, Admin and Employee tabs. */
 function Login() {
   const router = useRouter();
   const ws = useOrganisation();
 
+  const [tab, setTab] = useState("employee");
   const [show, setShow] = useState(false);
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [legal, setLegal] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  // Epoch ms until which the form stays disabled (423 locked / 429 too many attempts).
-  const [blockedUntil, setBlockedUntil] = useState(0);
-  const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => {
-    if (!blockedUntil) return undefined;
-    const id = setInterval(() => {
-      const t = Date.now();
-      setNow(t);
-      if (t >= blockedUntil) {
-        setBlockedUntil(0);
-        setError("");
-      }
-    }, 1000);
-    return () => clearInterval(id);
-  }, [blockedUntil]);
+  const TABS = tabsFor(ws);
+  const t = TABS.find((x) => x.key === tab);
 
   if (!ws) return null;
 
-  const secondsLeft = blockedUntil ? Math.max(0, Math.ceil((blockedUntil - now) / 1000)) : 0;
-  const blocked = secondsLeft > 0;
-
   async function submit(e) {
     e.preventDefault();
-    const identifier = login.trim();
-    if (!identifier || !password) {
-      setError("Enter your email or employee ID and your password.");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      const data = await SuperAdmin_auth.login(identifier, password);
-      const user = data?.user;
-      toast.success(`Welcome, ${user?.full_name || user?.name || "back"}`);
 
-      const mustChange = Boolean(data?.must_change_password ?? user?.must_change_password);
-      if (mustChange) {
-        toast.info("Please set a new password before you continue");
-        router.push("/emp/profile");
+    // Authenticate through the backend API for all roles
+    try {
+      const authData = await SuperAdmin_auth.login(login.trim(), password);
+      const user = authData?.user;
+      const roleUpper = String(user?.role || "").toUpperCase();
+
+      if (tab === "super" && roleUpper !== "SUPER_ADMIN" && roleUpper !== "SUPERADMIN") {
+        toast.error("This account is not a Super Admin — use the Admin or Employee tab");
         return;
       }
-      const portal =
-        data?.redirect_portal || (String(user?.role).toUpperCase() === "EMPLOYEE" ? "emp" : "org");
-      router.push(buildHref({ to: portal === "emp" ? "/emp/dashboard" : "/org/dashboard" }));
-    } catch (err) {
-      const status = err.response?.status;
-      const body = err.response?.data ?? {};
-      const detail = body.detail;
-      let message =
-        typeof detail === "string"
-          ? detail
-          : Array.isArray(detail)
-            ? detail.map((d) => d.msg).filter(Boolean).join(", ")
-            : "";
-      if (status === 423) {
-        const until = body.locked_until ? Date.parse(body.locked_until) : NaN;
-        const retry = Number(body.retry_after) || 0;
-        const end = !Number.isNaN(until) ? until : Date.now() + retry * 1000;
-        if (end > Date.now()) {
-          setNow(Date.now());
-          setBlockedUntil(end);
-        }
-        message = `${message || "Account locked"} — locked until ${new Date(end).toLocaleTimeString()}`;
-      } else if (status === 429) {
-        const retry = Number(body.retry_after || err.response?.headers?.["retry-after"]) || 30;
-        setNow(Date.now());
-        setBlockedUntil(Date.now() + retry * 1000);
-        message = message || "Too many attempts";
-      } else if (!status) {
-        message = "Cannot reach the server. Check your connection and try again.";
-      } else if (!message) {
-        message = "Sign in failed. Please try again.";
+
+      if (tab === "admin" && roleUpper !== "COMPANY_ADMIN" && roleUpper !== "BRANCH_ADMIN") {
+        toast.error(
+          roleUpper === "SUPER_ADMIN" || roleUpper === "SUPERADMIN"
+            ? "Super Admins sign in on the Super Admin tab"
+            : "Company / Branch Admin access only — other roles use the Employee tab",
+        );
+        return;
       }
-      setError(message);
-    } finally {
-      setBusy(false);
+
+      const roleLabel = roleUpper ? roleUpper.replace(/_/g, " ") : "User";
+      toast.success(`${user?.full_name || user?.name || roleLabel} login successful`);
+
+      const targetPath = roleUpper === "EMPLOYEE" ? "/emp/dashboard" : "/org/dashboard";
+      router.push(buildHref({ to: targetPath }));
+      return;
+    } catch (error) {
+      const detail = error.response?.data?.detail;
+      const status = error.response?.status;
+
+      // If backend returned invalid credentials or user does not exist in local mocks, show error
+      if (status === 401 || status === 403 || (detail && !userByLogin(login))) {
+        let message = "Login failed. Please check your credentials.";
+        if (typeof detail === "string") {
+          message = detail;
+        } else if (Array.isArray(detail)) {
+          message = detail
+            .map((item) => item.msg)
+            .filter(Boolean)
+            .join(", ");
+        }
+        toast.error(message);
+        return;
+      }
     }
+
+    // EXISTING ADMIN AND EMPLOYEE LOGIN: unchanged logic.
+    const found = userByLogin(login);
+
+    if (!found) {
+      toast.error(`No ${ws.name} account with that ID / e-mail`);
+      return;
+    }
+
+    const role = found.role;
+
+    if (tab === "super" && role !== "SuperAdmin") {
+      toast.error(
+        "This account is not a Super Admin — use the Admin or Employee tab",
+      );
+      return;
+    }
+
+    if (tab === "admin" && role !== "Admin" && role !== "BranchAdmin") {
+      toast.error(
+        role === "SuperAdmin"
+          ? "Super Admins sign in on the Super Admin tab"
+          : "Company / Branch Admin access only — other roles use the Employee tab",
+      );
+      return;
+    }
+
+    if (
+      tab === "employee" &&
+      (role === "Admin" ||
+        role === "SuperAdmin" ||
+        role === "BranchAdmin")
+    ) {
+      toast.error(
+        "Administrators sign in on the Admin / Super Admin tab",
+      );
+      return;
+    }
+
+    const org = orgsStore.get().find((o) => o.id === found.orgId);
+
+    const group = groupsStore
+      .get()
+      .find((g) => g.id === (found.groupId ?? org?.groupId));
+
+    // A suspended / inactive company cannot sign in.
+    const blocked = (s) =>
+      s === "Suspended" || s === "Inactive";
+
+    const groupOrgs = orgsStore
+      .get()
+      .filter((o) => o.groupId && o.groupId === group?.id);
+
+    if (
+      role === "SuperAdmin"
+        ? groupOrgs.length > 0 &&
+          groupOrgs.every((o) => blocked(o.status))
+        : blocked(org?.status)
+    ) {
+      toast.error(
+        `${org?.name ?? "This company"} is ${org?.status?.toLowerCase() ?? "suspended"} — contact your Super Admin`,
+      );
+      return;
+    }
+
+    // Check whether the local account is suspended or locked.
+    const account = loginOf(found.id);
+
+    if (account.status === "Suspended") {
+      toast.error(
+        "This account is suspended — contact your administrator",
+      );
+      return;
+    }
+
+    if (account.status === "Locked") {
+      toast.error(
+        "Account locked after too many failed attempts — ask your administrator to unlock it",
+      );
+      return;
+    }
+
+    // Block separated employees.
+    const today = new Date().toISOString().slice(0, 10);
+
+    const separated =
+      findEmployee(found.id)?.status === "Exited" ||
+      terminationStore
+        .get()
+        .some(
+          (c) =>
+            c.empId === found.id &&
+            c.status === "Effective" &&
+            c.lastWorkingDay < today,
+        );
+
+    if (separated) {
+      toast.error(
+        "This account belongs to a former employee and can no longer sign in",
+      );
+      return;
+    }
+
+    const signed = signIn(login, password);
+
+    if (!signed) {
+      const n = recordFailedSignIn(found.id);
+      const limit = Math.max(3, signInPolicy().lockAfter || 5);
+
+      toast.error(
+        n >= limit
+          ? `Incorrect password — account locked after ${limit} failed attempts`
+          : `Incorrect password (${n} of ${limit} attempts)`,
+      );
+
+      return;
+    }
+
+    recordSignIn(signed.id);
+    signInEmployee(signed.email);
+
+    toast.success(
+      `Welcome, ${signed.name} · ${
+        signed.role === "SuperAdmin" && group
+          ? `${group.name} · all companies`
+          : org?.name ?? ORGANIZATION.name
+      }`,
+    );
+
+    // Temporary / reset password handling.
+    if (
+      account.mustReset ||
+      mustChangeTemporaryPassword(signed.id)
+    ) {
+      toast.info(
+        "You signed in with a temporary password — please set a new one now",
+      );
+
+      router.push("/emp/profile");
+      return;
+    }
+
+    router.push(
+      buildHref({
+        to:
+          signed.portal === "org"
+            ? "/org/dashboard"
+            : "/emp/dashboard",
+      }),
+    );
   }
 
   return (
@@ -156,9 +324,12 @@ function Login() {
         </div>
 
         <div className="relative max-w-md space-y-6">
-          <div className="border-gold/40 text-gold inline-flex items-center gap-2 rounded-full border bg-white/5 px-3 py-1 text-[11px] font-medium tracking-wider uppercase">
+          {/* <div className="border-gold/40 text-gold inline-flex items-center gap-2 rounded-full border bg-white/5 px-3 py-1 text-[11px] font-medium tracking-wider uppercase">
             <Sparkles className="h-3 w-3" /> Seereon HRMS · multi-company HRMS
-          </div>
+          </div> */}
+          <div className="border-gold/40 text-gold inline-flex items-center gap-2 rounded-full border bg-white/5 px-3 py-1 text-[11px] font-medium tracking-wider uppercase">
+  <Sparkles className="h-3 w-3" /> WCS HRMS · multi-company HRMS
+</div>
 
           <h1 className="text-4xl leading-[1.1] font-bold tracking-tight">
             Smart Workforce.
@@ -214,9 +385,12 @@ function Login() {
         </div>
 
         <div className="relative flex justify-between text-xs text-white/50">
-          <span>
+          {/* <span>
             © 2026 Seereon Consulting &amp; IT Services · Seereon HRMS
-          </span>
+          </span> */}
+          <span>
+  © 2026 WCS Consulting &amp; IT Services · WCS HRMS
+</span>
 
           <div className="flex flex-wrap gap-4">
             <button
@@ -270,24 +444,55 @@ function Login() {
             and role.
           </p>
 
+          <div className="mt-5 grid grid-cols-3 gap-2">
+            {TABS.map((x) => (
+              <button
+                key={x.key}
+                type="button"
+                onClick={() => setTab(x.key)}
+                className={cn(
+                  "min-w-0 rounded-xl border p-2.5 text-left transition sm:p-3",
+                  tab === x.key
+                    ? "border-primary bg-primary/5 shadow-card"
+                    : "border-border hover:bg-muted/40",
+                )}
+              >
+                <x.icon
+                  className={cn(
+                    "mb-1 h-5 w-5",
+                    tab === x.key
+                      ? "text-primary"
+                      : "text-muted-foreground",
+                  )}
+                />
+
+                <div className="truncate text-[13px] font-semibold whitespace-nowrap sm:text-sm">
+                  {x.title}
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <p className="text-muted-foreground mt-2 text-xs">
+            {t.text}
+          </p>
+
           <form
             onSubmit={submit}
-            className="border-border bg-card shadow-premium mt-6 space-y-4 rounded-2xl border p-6"
+            className="border-border bg-card shadow-premium mt-4 space-y-4 rounded-2xl border p-6"
           >
             <div className="space-y-1.5">
               <Label htmlFor="u">
-                Email or employee ID
+                {tab === "super" ? "Email" : "Email or user ID"}
               </Label>
 
               <Input
                 id="u"
-                type="text"
-                autoComplete="username"
+                type={tab === "super" ? "email" : "text"}
                 required
                 value={login}
                 onChange={(e) => setLogin(e.target.value)}
-                placeholder="name@company.com or employee ID"
-                disabled={busy || blocked}
+                placeholder="name@company.com"
                 className="h-11"
               />
             </div>
@@ -302,8 +507,6 @@ function Login() {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  disabled={busy || blocked}
                   className="h-11 pr-10"
                 />
 
@@ -322,20 +525,12 @@ function Login() {
               </div>
             </div>
 
-            {error && (
-              <p role="alert" className="text-destructive text-sm">
-                {error}
-                {blocked ? ` (${secondsLeft}s)` : ""}
-              </p>
-            )}
-
             <Button
               type="submit"
-              disabled={busy || blocked}
               size="lg"
               className="bg-gradient-emerald shadow-premium h-11 w-full text-white hover:opacity-95"
             >
-              {busy ? "Signing in…" : blocked ? `Try again in ${secondsLeft}s` : "Sign in"}
+              Sign in as {t.title}
             </Button>
 
             <div className="text-muted-foreground flex items-center justify-center gap-4 text-center text-xs">
@@ -364,6 +559,11 @@ function Login() {
             </div>
           </form>
 
+          {/* {env.dataMode === "mock" && DEMO_LOGINS[tab] && (
+            <div className="border-border bg-muted/30 text-muted-foreground mt-4 rounded-xl border border-dashed p-3 text-xs">
+              Demo · {DEMO_LOGINS[tab]}
+            </div>
+          )} */}
         </div>
       </div>
 
