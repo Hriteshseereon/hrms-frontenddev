@@ -237,89 +237,96 @@ export function createEvaluationParamApi(organizationId) {
   };
 }
 
+// ============================================================================
+// REPLACE IN  src/features/recruitment/data/recruitmentMasterAdapters.js
+// Delete everything from the comment
+//     /* ---------- holiday calendars ----------
+// down to the closing brace of `export function createHolidayCalendarApi(...) { ... }`
+// and paste this block in its place. Nothing else in that file changes.
+// (`clean` and `SuperAdmin_holidayCalendar` are already defined/imported there.)
+// ============================================================================
+
 /* ---------- holiday calendars ----------
    UI name      <-> API holiday_title
-   UI appliesTo <-> API applies_to_branches (UI: "A, B" string | API: ["A", "B"])
+   UI type      <-> API type            ("National" <-> "NATIONAL", ...)
+   UI payType   <-> API leave_category  ("Paid" <-> "PAID", "Unpaid" <-> "UNPAID")
    UI holidays  <-> API holidays [{ holiday_date, holiday_name }]
+   Excel upload <-> POST /attendance/holiday-calendars/upload (multipart, field "file")
    Scope IDs are query params only. */
 const HOLIDAY_LIST_PAGE_SIZE = 100;
+
+const HOLIDAY_TYPE_TO_API = {
+  National: "NATIONAL",
+  "Regional / State": "REGIONAL_STATE",
+  "Optional / Restricted": "OPTIONAL_RESTRICTED",
+};
+const HOLIDAY_TYPE_FROM_API = Object.fromEntries(
+  Object.entries(HOLIDAY_TYPE_TO_API).map(([ui, api]) => [api, ui]),
+);
+
+const LEAVE_CATEGORY_TO_API = { Paid: "PAID", Unpaid: "UNPAID" };
+const LEAVE_CATEGORY_FROM_API = { PAID: "Paid", UNPAID: "Unpaid" };
 
 export function createHolidayCalendarApi(organizationId) {
   const service = SuperAdmin_holidayCalendar;
   const scope = organizationId ? { organization_id: organizationId } : undefined;
 
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
   const fromApi = (r) => ({
     id: r.id,
     _apiId: r.id,
     name: r.holiday_title ?? "",
-    type: r.type ?? "",
+    // Unknown / older values are shown as they come.
+    type: HOLIDAY_TYPE_FROM_API[String(r.type ?? "").toUpperCase()] ?? r.type ?? "",
     year: Number(r.year ?? new Date().getFullYear()),
-    appliesTo: (Array.isArray(r.applies_to_branches) ? r.applies_to_branches : [])
-      .map((b) => (typeof b === "string" ? b : (b?.name ?? "")))
-      .filter(Boolean)
-      .join(", "),
+    payType: LEAVE_CATEGORY_FROM_API[String(r.leave_category ?? "").toUpperCase()] ?? "Paid",
     holidays: (Array.isArray(r.holidays) ? r.holidays : []).map((h) => ({
       date: h.holiday_date ?? "",
       name: h.holiday_name ?? "",
     })),
     uploadedFile: r.csv_file_name ?? "",
+    fileUrl: r.csv_storage_key ?? "",
     active: true,
   });
 
-  // Turns typed branch names/codes into branch IDs
-  const resolveBranchIds = async (appliesTo) => {
-    const tokens = clean(appliesTo)
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!tokens.length) return [];
-    if (tokens.every((t) => UUID_RE.test(t))) return tokens;
-
-    const res = await SuperAdmin_branchLookup.getAll();
-    const data = res?.data;
-    const branches = Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
-
-    return tokens.map((t) => {
-      if (UUID_RE.test(t)) return t;
-      const key = t.toLowerCase();
-      const hit = branches.find(
-        (b) =>
-          String(b.name ?? "").toLowerCase() === key ||
-          String(b.code ?? "").toLowerCase() === key,
-      );
-      if (!hit) {
-        const msg = `Branch "${t}" not found. Use the exact branch name or code.`;
-        const err = new Error(msg);
-        err.response = { data: { detail: msg } };
-        throw err;
-      }
-      return hit.id;
-    });
-  };
-
-  const toPayload = async (cal) => ({
+  const toPayload = (cal) => ({
     holiday_title: clean(cal.name),
-    type: cal.type,
+    type: HOLIDAY_TYPE_TO_API[cal.type] ?? cal.type,
+    // type: cal.type,
     year: Number(cal.year),
-    applies_to_branches: await resolveBranchIds(cal.appliesTo),
+    leave_category: LEAVE_CATEGORY_TO_API[cal.payType] ?? "PAID",
     holidays: (cal.holidays ?? []).map((h) => ({
       holiday_date: h.date,
       holiday_name: clean(h.name),
     })),
   });
 
+  // The upload API returns an array of calendars (one per Holiday Title + Year).
+  const listFrom = (res) => {
+    const data = res?.data;
+    const items = Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
+    return items.map(fromApi);
+  };
+
+  const fileForm = (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return formData;
+  };
+
   return {
-    list: async () => {
-      const res = await service.getAll({ ...scope, page: 1, page_size: HOLIDAY_LIST_PAGE_SIZE });
-      const data = res?.data;
-      const items = Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
-      return items.map(fromApi);
-    },
-    create: async (cal) => service.create(await toPayload(cal), scope),
-    update: async (id, cal) => service.update(id, await toPayload(cal), scope),
+    list: async () =>
+      listFrom(await service.getAll({ ...scope, page: 1, page_size: HOLIDAY_LIST_PAGE_SIZE })),
+    getById: async (id) => fromApi((await service.getById(id, scope))?.data ?? {}),
+    create: (cal) => service.create(toPayload(cal), scope),
+    update: (id, cal) => service.update(id, toPayload(cal), scope),
     remove: (id) => service.remove(id, scope),
+    // POST /attendance/holiday-calendars/upload → created calendars (UI shape)
+    upload: async (file) => listFrom(await service.createWithFile(fileForm(file), scope)),
+    // PUT /attendance/holiday-calendars/{id}/upload → replaces one calendar from a file
+    uploadReplace: async (id, file) => {
+      const res = await service.updateWithFile(id, fileForm(file), scope);
+      return fromApi(res?.data ?? {});
+    },
   };
 }
 
