@@ -27,6 +27,9 @@ import { toast } from "sonner";
 import { useSessionStore, canCreateEmployee } from "@/features/auth/data/session-store";
 import SuperAdmin_auth from "@/api/SuperAdmin_auth";
 import Branch_api from "@/api/branch";
+import departmentApi from "@/api/departmentApi";
+import designationApi from "@/api/designationApi";
+import SuperAdmin_shift from "@/api/shift";
 import {
   isUuid,
   listOf,
@@ -115,9 +118,167 @@ import { EmployeeLeaveSheet } from "@/features/leave/components/LeavePieces";
 import { HireEmployeeDialog } from "@/features/employees/components/HireEmployeeDialog";
 import { useScope, useScopeMatch } from "@/features/organization/data/tenancy";
 
+const BULK_EMPLOYEE_COLUMNS = [
+  "first_name", "last_name", "personal_email", "phone", "date_of_birth", "gender",
+  "marital_status", "blood_group", "nationality", "religion", "whatsapp_number",
+  "emergency_contact_name", "emergency_contact_phone", "current_address", "permanent_address",
+  "linkedin_url", "github_url", "twitter_url", "website_url", "aadhaar_number", "pan_number",
+  "uan_number", "esic_number", "driving_license_number", "passport_number", "qualification",
+  "institution", "year_of_passing", "education_score", "bank_account_holder_name", "bank_name",
+  "bank_account_number", "bank_account_number_confirm", "ifsc_code", "bank_branch",
+  "bank_account_type", "payment_mode", "date_of_joining", "organization_name", "company_name", "department",
+  "designation", "manager_name", "hr_partner_name", "employment_type", "probation_months",
+  "ctc", "grade", "wage_type", "attendance_pattern_id", "notice_period_days", "work_mode",
+  "shift_name", "pay_frequency", "prev1_company", "prev1_role", "prev1_from",
+  "prev1_to", "prev1_ctc", "prev1_reason",
+];
+const REQUIRED_BULK_EMPLOYEE_COLUMNS = [
+  "first_name", "last_name", "personal_email", "phone", "date_of_birth", "aadhaar_number",
+  "pan_number", "bank_account_holder_name", "bank_name", "bank_account_number",
+  "bank_account_number_confirm", "ifsc_code", "date_of_joining", "ctc",
+];
+
+function normalizeCsvDate(value, rowNumber, column) {
+  const input = String(value ?? "").trim();
+  let year, month, day;
+  const iso = input.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const local = input.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (iso) [, year, month, day] = iso;
+  else if (local) [, day, month, year] = local;
+  else throw new Error(`Row ${rowNumber}: ${column} must be DD-MM-YYYY or YYYY-MM-DD.`);
+  const y = Number(year), m = Number(month), d = Number(day);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) {
+    throw new Error(`Row ${rowNumber}: ${column} is not a valid calendar date.`);
+  }
+  return `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function normalizeAadhaar(value) {
+  const input = String(value ?? "").trim().replace(/^'/, "").replace(/\s+/g, "");
+  if (/^\d{12}$/.test(input)) return input;
+  // Excel can serialize a 12 digit cell in scientific notation when the column
+  // was treated as numeric. Accept it only when it round-trips as an exact integer.
+  const numeric = Number(input);
+  return Number.isSafeInteger(numeric) && /^\d{12}$/.test(String(numeric)) ? String(numeric) : input;
+}
+
+function normalizeIntegerDigits(value) {
+  const input = String(value ?? "").trim().replace(/^'/, "").replace(/\s+/g, "");
+  if (/^\d+$/.test(input)) return input;
+  const match = input.match(/^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/);
+  if (!match) return input;
+  const [, whole, fraction = "", exponentText] = match;
+  if (fraction && /[1-9]/.test(fraction) && !exponentText) return input;
+  const exponent = Number(exponentText || 0);
+  const digits = `${whole}${fraction}`;
+  const decimalPosition = whole.length + exponent;
+  if (decimalPosition < digits.length && /[1-9]/.test(digits.slice(decimalPosition))) return input;
+  if (decimalPosition <= 0) return input;
+  return decimalPosition >= digits.length
+    ? `${digits}${"0".repeat(decimalPosition - digits.length)}`
+    : digits.slice(0, decimalPosition);
+}
+
+function parseEmployeeCsv(text) {
+  const rows = [];
+  let row = [], cell = "", quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"' && quoted && text[i + 1] === '"') { cell += '"'; i += 1; }
+    else if (ch === '"') quoted = !quoted;
+    else if (ch === "," && !quoted) { row.push(cell.trim()); cell = ""; }
+    else if ((ch === "\n" || ch === "\r") && !quoted) {
+      if (ch === "\r" && text[i + 1] === "\n") i += 1;
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = []; cell = "";
+    } else cell += ch;
+  }
+  row.push(cell.trim());
+  if (row.some(Boolean)) rows.push(row);
+  if (rows.length < 2) throw new Error("The CSV must include a header row and at least one employee.");
+  const headers = rows[0].map((h) => h.toLowerCase().replace(/^\uFEFF/, ""));
+  for (const required of REQUIRED_BULK_EMPLOYEE_COLUMNS) {
+    if (!headers.includes(required)) throw new Error(`Missing required column: ${required}`);
+  }
+  return rows.slice(1).map((values, index) => {
+    const employee = Object.fromEntries(headers.map((h, i) => [h, values[i] ?? ""]));
+    const missing = REQUIRED_BULK_EMPLOYEE_COLUMNS.filter((column) => !employee[column]?.trim());
+    if (missing.length) throw new Error(`Row ${index + 2}: fill required fields: ${missing.join(", ")}.`);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employee.personal_email)) throw new Error(`Row ${index + 2}: personal_email must be a valid email.`);
+    if (employee.phone.replace(/\D/g, "").length < 10) throw new Error(`Row ${index + 2}: phone must contain at least 10 digits.`);
+    employee.date_of_birth = normalizeCsvDate(employee.date_of_birth, index + 2, "date_of_birth");
+    employee.date_of_joining = normalizeCsvDate(employee.date_of_joining, index + 2, "date_of_joining");
+    if (employee.date_of_birth >= employee.date_of_joining) throw new Error(`Row ${index + 2}: date_of_birth must be before date_of_joining.`);
+    employee.aadhaar_number = normalizeAadhaar(employee.aadhaar_number);
+    if (!/^\d{12}$/.test(employee.aadhaar_number)) throw new Error(`Row ${index + 2}: aadhaar_number must be exactly 12 digits. In Excel, format the column as Text before entering it.`);
+    if (!/^[A-Z]{5}\d{4}[A-Z]$/i.test(employee.pan_number.trim())) throw new Error(`Row ${index + 2}: pan_number must look like ABCDE1234F.`);
+    employee.bank_account_number = normalizeIntegerDigits(employee.bank_account_number);
+    employee.bank_account_number_confirm = normalizeIntegerDigits(employee.bank_account_number_confirm);
+    if (!/^\d{9,18}$/.test(employee.bank_account_number)) throw new Error(`Row ${index + 2}: bank_account_number must contain 9–18 digits. Format the column as Text in Excel before entering it.`);
+    if (employee.bank_account_number !== employee.bank_account_number_confirm) throw new Error(`Row ${index + 2}: bank account confirmation does not match.`);
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/i.test(employee.ifsc_code.trim())) throw new Error(`Row ${index + 2}: ifsc_code must look like HDFC0001234.`);
+    if (!Number.isFinite(Number(employee.ctc)) || Number(employee.ctc) <= 0) throw new Error(`Row ${index + 2}: ctc must be a number greater than zero.`);
+    for (const [key, value] of Object.entries(employee)) {
+      if (value && !BULK_EMPLOYEE_COLUMNS.includes(key) && !/^pc_[A-Za-z0-9_]+$/.test(key) && !/^prev\d+_(company|role|from|to|ctc|reason)$/.test(key)) {
+        throw new Error(`CSV has an unsupported column: ${key}`);
+      }
+    }
+    return employee;
+  });
+}
+
+async function downloadEmployeeCsvTemplate() {
+  let defaultDepartment = null;
+  let defaultCompany = null;
+  let defaultOrganization = null;
+  const session = useSessionStore.getState();
+  try {
+    const [departmentResponse, companyResponse, organization] = await Promise.all([
+      departmentApi.getDepartments(session.companyId ? { company_id: session.companyId } : {}),
+      SuperAdmin_auth.getCompanies(),
+      organizationApi.getOrganization(),
+    ]);
+    const companies = listOf(companyResponse, ["items", "companies", "data"]);
+    defaultCompany = companies.find((company) => company.id === session.companyId) ?? null;
+    defaultOrganization = organization;
+    const response = departmentResponse;
+    defaultDepartment = listOf(response, ["items", "departments", "data"])[0] ?? null;
+  } catch (error) {
+    toast.error("Could not load organization options for the sample row. The template will download without them.");
+  }
+  const sample = {
+    first_name: "Asha", last_name: "Patel", personal_email: "asha.patel@example.com", phone: "9876543210",
+    date_of_birth: "1995-04-12", gender: "Female", nationality: "Indian", aadhaar_number: "'123456789012",
+    pan_number: "ABCDE1234F", bank_account_holder_name: "Asha Patel", bank_name: "HDFC Bank",
+    bank_account_number: "'50100123456789", bank_account_number_confirm: "'50100123456789",
+    ifsc_code: "HDFC0001234", date_of_joining: "2026-11-15",
+    organization_name: defaultOrganization?.name ?? defaultOrganization?.organisation_name ?? defaultOrganization?.organization_name ?? defaultOrganization?.legal_name ?? "",
+    company_name: defaultCompany?.company_name ?? defaultCompany?.name ?? "",
+    department: defaultDepartment?.department_name ?? defaultDepartment?.name ?? "",
+    designation: "", employment_type: "Full-time", probation_months: "3", ctc: "600000",
+    wage_type: "Salaried", bank_account_type: "savings", pay_frequency: "monthly",
+  };
+  const csvCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const csv = `${BULK_EMPLOYEE_COLUMNS.join(",")}\n${BULK_EMPLOYEE_COLUMNS.map((column) => csvCell(sample[column])).join(",")}\n`;
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = "employee-onboarding-template.csv"; link.click();
+  URL.revokeObjectURL(url);
+}
+
+function readableApiError(error) {
+  const detail = error?.response?.data?.detail ?? error?.response?.data?.message ?? error?.message;
+  if (Array.isArray(detail)) return detail.map((item) => item?.msg ?? item?.message ?? JSON.stringify(item)).join("; ");
+  if (detail && typeof detail === "object") return detail.msg ?? detail.message ?? JSON.stringify(detail);
+  return String(detail || "Employee creation failed.");
+}
+
 function Employees() {
   const { id: presetId } = useSearch(validateSearch);
   const [openAdd, setOpenAdd] = useState(false);
+  const [openBulk, setOpenBulk] = useState(false);
   const [picked, setPicked] = useState(null);
   const setSelected = setPicked;
   // Global search / deep links open a record directly: /org/employees?id=SRN-0006
@@ -309,6 +470,7 @@ function Employees() {
           {/* Creating people needs employee.manage (custom roles can open this screen without it); the Super Admin's
               collective view keeps Hire, which asks for the company itself. */}
           {canManagePeople && <HireEmployeeDialog />}
+          {canManagePeople && <BulkEmployeeUploadDialog open={openBulk} onOpenChange={setOpenBulk} onCreated={fetchBackendEmployees} orgName={orgName} />}
           <Dialog open={openAdd} onOpenChange={setOpenAdd}>
             {canManagePeople && (
               <DialogTrigger asChild>
@@ -741,6 +903,223 @@ function Employees() {
         )}
       </Dialog>
     </div>
+  );
+}
+
+function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState(null);
+  const inputRef = useRef(null);
+  const close = () => { if (!busy) { onOpenChange(false); setFile(null); setSummary(null); } };
+  const upload = async () => {
+    if (!file) { toast.error("Choose a CSV file to continue."); return; }
+    let employees;
+    try { employees = parseEmployeeCsv(await file.text()); }
+    catch (error) { toast.error(error.message || "Could not read this CSV."); return; }
+    setBusy(true); setSummary(null);
+    let succeeded = 0;
+    const failures = [];
+    let departments = [], designations = [], assignablePeople = [], shifts = [], companies = [], organization = null;
+    try {
+      const session = useSessionStore.getState();
+      const scopeParams = session.companyId ? { company_id: session.companyId } : {};
+      const [response, companyResponse, organizationResponse] = await Promise.all([
+        departmentApi.getDepartments(scopeParams),
+        SuperAdmin_auth.getCompanies().catch(() => null),
+        organizationApi.getOrganization(),
+      ]);
+      departments = listOf(response, ["items", "departments", "data"]).map((department) => ({
+        id: department.id,
+        name: department.department_name ?? department.name ?? "",
+        company_id: department.company_id,
+      }));
+      companies = listOf(companyResponse, ["items", "companies", "data"]).map((company) => ({
+        id: company.id, name: company.company_name ?? company.name ?? "", organization_id: company.organization_id,
+      }));
+      organization = organizationResponse;
+      const [designationResponse, peopleResponse, shiftResponse] = await Promise.all([
+        designationApi.getDesignations(scopeParams),
+        getEmployees({ page: 1, limit: 100, ...scopeParams }),
+        SuperAdmin_shift.getAll({ page: 1, page_size: 100, ...(session.organizationId ? { organization_id: session.organizationId } : {}) }),
+      ]);
+      designations = listOf(designationResponse, ["items", "results", "designations", "data"]).map((item) => ({
+        id: item.id, name: item.designation_name ?? item.name ?? "", department_id: item.department_id,
+      }));
+      assignablePeople = listOf(peopleResponse, ["items", "employees", "data"]).map((person) => ({
+        id: person.id,
+        name: [person.first_name, person.last_name].filter(Boolean).join(" ").trim() || person.name || person.work_email,
+      }));
+      shifts = listOf(shiftResponse, ["items", "shifts", "data"]).map((shift) => ({
+        id: shift.id, name: shift.shift_name ?? shift.name ?? "",
+      }));
+    } catch {
+      setBusy(false);
+      toast.error("Could not load departments. Refresh the page and try again.");
+      return;
+    }
+    const generatedEmails = new Set();
+    const departmentLists = new Map();
+    const designationLists = new Map();
+    for (const [index, employee] of employees.entries()) {
+      const payload = Object.fromEntries(Object.entries(employee).filter(([key, value]) => key !== "bank_account_number_confirm" && value !== "" && (BULK_EMPLOYEE_COLUMNS.includes(key) || /^pc_[A-Za-z0-9_]+$/.test(key) || /^prev\d+_(company|role|from|to|ctc|reason)$/.test(key))));
+      const normalizeOptionName = (value) => String(value ?? "").normalize("NFKC").replace(/[\u200B-\u200D\uFEFF]/g, "").trim().replace(/\s+/g, " ").toLowerCase();
+      const exactName = (list, name) => list.filter((item) => normalizeOptionName(item.name) === normalizeOptionName(name));
+      const session = useSessionStore.getState();
+      const orgLabel = organization?.name ?? organization?.organisation_name ?? organization?.organization_name ?? organization?.legal_name ?? "";
+      const organizationId = organization?.id ?? session.organizationId;
+      if (employee.organization_name && normalizeOptionName(employee.organization_name) !== normalizeOptionName(orgLabel)) {
+        failures.push({ row: index + 2, email: employee.personal_email, message: `Organization "${employee.organization_name}" does not match the active organization.` });
+        continue;
+      }
+      let companyId = session.companyId || "";
+      if (employee.company_name) {
+        const companyMatches = exactName(companies, employee.company_name).filter((company) => !company.organization_id || !organizationId || company.organization_id === organizationId);
+        if (companyMatches.length !== 1) {
+          failures.push({ row: index + 2, email: employee.personal_email, message: `Company "${employee.company_name}" must match one configured company in the active organization.` });
+          continue;
+        }
+        companyId = companyMatches[0].id;
+      }
+      if (organizationId && isUuid(organizationId)) payload.organization_id = organizationId;
+      if (companyId && isUuid(companyId)) payload.company_id = companyId;
+      if (companyId && companyId === session.companyId && session.branchId && isUuid(session.branchId)) payload.branch_id = session.branchId;
+
+      let departmentOptions = departments;
+      if (companyId && companyId !== session.companyId) {
+        if (!departmentLists.has(companyId)) {
+          departmentLists.set(companyId, departmentApi.getDepartments({ company_id: companyId }).then((response) =>
+            listOf(response, ["items", "departments", "data"]).map((department) => ({
+              id: department.id, name: department.department_name ?? department.name ?? "", company_id: department.company_id,
+            })),
+          ));
+        }
+        try { departmentOptions = await departmentLists.get(companyId); } catch { departmentOptions = departments; }
+      }
+      let departmentMatch = exactName(departmentOptions, employee.department);
+      if (companyId && departmentMatch.length > 1) {
+        const companyMatches = departmentMatch.filter((item) => item.company_id === companyId);
+        const sharedMatches = departmentMatch.filter((item) => !item.company_id);
+        departmentMatch = companyMatches.length ? companyMatches : sharedMatches;
+      }
+      if (!departmentMatch.length && companyId) {
+        try {
+          if (!departmentLists.has("all")) {
+            departmentLists.set("all", departmentApi.getDepartments().then((allResponse) =>
+              listOf(allResponse, ["items", "departments", "data"]).map((department) => ({
+                id: department.id, name: department.department_name ?? department.name ?? "", company_id: department.company_id,
+              })),
+            ));
+          }
+          const allDepartments = await departmentLists.get("all");
+          const companyScopedMatches = exactName(allDepartments, employee.department).filter((item) => !item.company_id || item.company_id === companyId);
+          departmentMatch = companyScopedMatches.filter((item) => item.company_id === companyId).length
+            ? companyScopedMatches.filter((item) => item.company_id === companyId)
+            : companyScopedMatches;
+        } catch {
+          // Keep the scoped lookup result and report a useful row-level error below.
+        }
+      }
+      if (departmentMatch.length === 1 && companyId && departmentMatch[0].company_id && departmentMatch[0].company_id !== companyId) departmentMatch = [];
+      if (departmentMatch.length === 1) payload.department_id = departmentMatch[0].id;
+      if (!payload.department_id || !isUuid(payload.department_id)) {
+        const detail = departmentMatch.length > 1
+          ? `Department name "${employee.department}" matches multiple configured departments; contact an admin to resolve the duplicate names.`
+          : `Department name "${employee.department || "(blank)"}" was not found in the configured department list.`;
+        failures.push({ row: index + 2, email: employee.personal_email, message: detail });
+        continue;
+      }
+      if (employee.designation) {
+        let designationOptions = designations;
+        if (companyId && companyId !== session.companyId) {
+          if (!designationLists.has(companyId)) {
+            designationLists.set(companyId, designationApi.getDesignations({ company_id: companyId }).then((response) =>
+              listOf(response, ["items", "results", "designations", "data"]).map((item) => ({
+                id: item.id, name: item.designation_name ?? item.name ?? "", department_id: item.department_id,
+              })),
+            ));
+          }
+          try { designationOptions = await designationLists.get(companyId); } catch { designationOptions = designations; }
+        }
+        const designationMatches = exactName(designationOptions, employee.designation).filter((item) => !item.department_id || item.department_id === payload.department_id);
+        if (designationMatches.length !== 1) {
+          failures.push({ row: index + 2, email: employee.personal_email, message: `Designation "${employee.designation}" must match one configured designation for this department.` });
+          continue;
+        }
+        payload.designation_id = designationMatches[0].id;
+      }
+      for (const [nameColumn, idField, label] of [["manager_name", "manager_id", "Manager"], ["hr_partner_name", "hr_partner_id", "HR partner"], ["shift_name", "shift_id", "Shift"]]) {
+        if (!employee[nameColumn]) continue;
+        const matches = exactName(nameColumn === "shift_name" ? shifts : assignablePeople, employee[nameColumn]);
+        if (matches.length !== 1) {
+          failures.push({ row: index + 2, email: employee.personal_email, message: `${label} name "${employee[nameColumn]}" must match one configured record.` });
+          break;
+        }
+        payload[idField] = matches[0].id;
+      }
+      if (failures.some((failure) => failure.row === index + 2)) continue;
+      delete payload.organization_name;
+      delete payload.company_name;
+      delete payload.manager_name;
+      delete payload.hr_partner_name;
+      delete payload.shift_name;
+      payload.role = "Employee";
+      let emailAttempt = 0;
+      payload.work_email = generateWorkEmail({ first: employee.first_name, last: employee.last_name, org: orgName, attempt: emailAttempt });
+      while (generatedEmails.has(payload.work_email.toLowerCase())) {
+        emailAttempt += 1;
+        payload.work_email = generateWorkEmail({ first: employee.first_name, last: employee.last_name, org: orgName, attempt: emailAttempt });
+      }
+      generatedEmails.add(payload.work_email.toLowerCase());
+      payload.password = makeTempPassword();
+      payload.status = "ACTIVE";
+      payload.probation_months = "3";
+      payload.employment_type ||= "Full-time";
+      payload.wage_type = "Salaried";
+      try {
+        for (;;) {
+          try { await createEmployeeApi(payload); break; }
+          catch (error) {
+            if (!isDuplicateWorkEmail(error) || emailAttempt >= 5) throw error;
+            emailAttempt += 1;
+            payload.work_email = generateWorkEmail({ first: employee.first_name, last: employee.last_name, org: orgName, attempt: emailAttempt });
+            generatedEmails.add(payload.work_email.toLowerCase());
+          }
+        }
+        succeeded += 1;
+      }
+      catch (error) {
+        failures.push({ row: index + 2, email: payload.work_email || employee.personal_email, message: readableApiError(error) });
+      }
+    }
+    setBusy(false); setSummary({ succeeded, failures });
+    if (succeeded) { onCreated(); toast.success(`${succeeded} employee${succeeded === 1 ? "" : "s"} onboarded.`); }
+    if (!failures.length) { setFile(null); }
+  };
+  return (
+    <Dialog open={open} onOpenChange={(value) => { if (!value) close(); else onOpenChange(true); }}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline"><Upload className="h-4 w-4" /> Bulk Upload</Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Bulk upload</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <Button type="button" variant="outline" size="sm" onClick={downloadEmployeeCsvTemplate}><Download className="h-4 w-4" /> Download Template</Button>
+          <div className="rounded-lg border border-dashed p-5">
+            <Label htmlFor="employee-bulk-csv">Employee CSV</Label>
+            <Input ref={inputRef} id="employee-bulk-csv" type="file" accept=".csv,text/csv" className="mt-2" disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setSummary(null); }} />
+          </div>
+          {file && <p className="text-sm">Selected: <span className="font-medium">{file.name}</span></p>}
+          {summary && <div className="max-h-40 space-y-1 overflow-auto rounded-md bg-muted/40 p-3 text-sm"><p>{summary.succeeded} created · {summary.failures.length} failed</p>{summary.failures.map((failure) => <p className="text-destructive" key={`${failure.row}-${failure.email}`}>Row {failure.row} ({failure.email}): {failure.message}</p>)}</div>}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={close} disabled={busy}>Close</Button>
+          <Button type="button" onClick={upload} disabled={busy || !file} className="bg-gradient-emerald text-white">{busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Uploading…</> : "Upload and onboard"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
