@@ -1,16 +1,14 @@
 import { CalendarDays } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useHolidaysLegacy } from "@/features/organization/data/hr-masters";
+import { useEmployeeHolidays } from "@/features/organization/data/employeeHolidayAdapter";
 import { HolidayCalendar, typeTone } from "@/features/organization/components/HolidayCalendar";
-import { useCurrentEmployee } from "@/features/auth/data/emp-session";
-import { getEmployeeProfile } from "@/features/employees/data/employee-directory";
 
 function EmpHolidays() {
-  // Single source: the three holiday calendars (National / State / Optional) maintained in Master Data.
-  // Only the calendars that apply to the employee's own branch (state holidays of other branches are not days off).
-  const me = useCurrentEmployee();
-  const holidays = useHolidaysLegacy(getEmployeeProfile(me.id).job.location || me.branch);
+  // Single source: the holiday calendars (National / State / Optional) created in Super Admin →
+  // Master Data, loaded from GET /attendance/holiday-calendars. The backend returns only the
+  // calendars in the logged-in employee's scope (from the token).
+  const { holidays, loading } = useEmployeeHolidays();
 
   return (
     <div className="space-y-6">
@@ -61,7 +59,9 @@ function EmpHolidays() {
           {holidays.length === 0 && (
             <Card className="shadow-card md:col-span-2 lg:col-span-3">
               <CardContent className="text-muted-foreground p-10 text-center text-sm">
-                No holiday calendar has been published for your branch yet.
+                {loading
+                  ? "Loading holidays…"
+                  : "No holiday calendar has been published for your branch yet."}
               </CardContent>
             </Card>
           )}

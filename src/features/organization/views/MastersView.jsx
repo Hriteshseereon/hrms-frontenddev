@@ -1829,43 +1829,43 @@ const GROUPS = [
       },
     ],
   },
-  // {
-  //   group: "Payroll & statutory",
-  //   items: [
-  //     {
-  //       key: "salaryconfig",
-  //       label: "Salary configuration & payroll policy",
-  //       icon: Wallet,
-  //       perm: "payroll.manage",
-  //     },
-  //     {
-  //       key: "payroll",
-  //       label: "Pay components",
-  //       icon: Coins,
-  //       perm: "payroll.manage",
-  //     },
-  //     {
-  //       key: "statutory",
-  //       label: "Statutory configuration — PF methods, ESI, TDS",
-  //       icon: ShieldCheck,
-  //       perm: "statutory.configure",
-  //     },
-  //     {
-  //       key: "states",
-  //       label: "State policies — PT, LWF, minimum wage",
-  //       icon: MapPinned,
-  //       perm: "statutory.configure",
-  //     },
-  //     { key: "insurance", label: "Insurance & benefit plans", icon: ShieldPlus },
-  //     {
-  //       key: "loanpolicy",
-  //       label: "Loan & advance policy",
-  //       icon: Wallet,
-  //       perm: "finance.manage",
-  //     },
-  //     { key: "reimcat", label: "Reimbursement categories", icon: Receipt },
-  //   ],
-  // },
+  {
+    group: "Payroll & statutory",
+    items: [
+      {
+        key: "salaryconfig",
+        label: "Salary configuration & payroll policy",
+        icon: Wallet,
+        perm: "payroll.manage",
+      },
+      {
+        key: "payroll",
+        label: "Pay components",
+        icon: Coins,
+        perm: "payroll.manage",
+      },
+      {
+        key: "statutory",
+        label: "Statutory configuration — PF methods, ESI, TDS",
+        icon: ShieldCheck,
+        perm: "statutory.configure",
+      },
+      {
+        key: "states",
+        label: "State policies — PT, LWF, minimum wage",
+        icon: MapPinned,
+        perm: "statutory.configure",
+      },
+      { key: "insurance", label: "Insurance & benefit plans", icon: ShieldPlus },
+      {
+        key: "loanpolicy",
+        label: "Loan & advance policy",
+        icon: Wallet,
+        perm: "finance.manage",
+      },
+      { key: "reimcat", label: "Reimbursement categories", icon: Receipt },
+    ],
+  },
   {
     group: "Performance",
     items: [
