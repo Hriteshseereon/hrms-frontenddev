@@ -32,24 +32,24 @@ function TrainingPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="assignments">
-        <ScrollTabsList>
-          <TabsTrigger value="assignments">
-            <ClipboardCheck className="h-4 w-4" /> Assigned Trainings
-          </TabsTrigger>
-          <TabsTrigger value="getting-started">
-            <BookOpen className="h-4 w-4" /> Getting Started
-          </TabsTrigger>
-          <TabsTrigger value="trainers">
-            <UserCheck className="h-4 w-4" /> Trainer List
-          </TabsTrigger>
-          <TabsTrigger value="types">
-            <Tags className="h-4 w-4" /> Training Type
-          </TabsTrigger>
-          <TabsTrigger value="trainings">
-            <CalendarRange className="h-4 w-4" /> Trainings
-          </TabsTrigger>
-        </ScrollTabsList>
+<Tabs defaultValue="trainers">
+          <ScrollTabsList>
+  <TabsTrigger value="trainers">
+    <UserCheck className="h-4 w-4" /> Trainer List
+  </TabsTrigger>
+  <TabsTrigger value="types">
+    <Tags className="h-4 w-4" /> Training Type
+  </TabsTrigger>
+  <TabsTrigger value="trainings">
+    <CalendarRange className="h-4 w-4" /> Trainings
+  </TabsTrigger>
+  <TabsTrigger value="assignments">
+    <ClipboardCheck className="h-4 w-4" /> Assigned Trainings
+  </TabsTrigger>
+  <TabsTrigger value="getting-started">
+    <BookOpen className="h-4 w-4" /> Getting Started
+  </TabsTrigger>
+</ScrollTabsList>
 
         <TabsContent value="assignments" className="pt-4">
           <TrainingAssignmentsTab />

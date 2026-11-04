@@ -98,8 +98,11 @@ export function PayrollTab() {
   const inScope = useScopeMatch();
   const allRuns = usePayrollRuns();
   const runs = useMemo(
-    () => allRuns.filter((r) => inScope(r.orgId)).sort((a, b) => (a.period < b.period ? 1 : -1)),
-    [allRuns, inScope],
+    () =>
+      allRuns
+        .filter((r) => r.orgId === orgId || inScope(r.orgId))
+        .sort((a, b) => (a.period < b.period ? 1 : -1)),
+    [allRuns, inScope, orgId],
   );
   const [selectedId, setSelectedId] = useState("");
   const run = runs.find((r) => r.id === selectedId) ?? runs[0];
