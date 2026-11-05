@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FileText, Settings2, Download, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -35,6 +35,7 @@ import {
 import { PayslipBreakdown } from "@/features/payroll/components/PayslipBreakdown";
 import { createPersistentStore } from "@/lib/persist";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
+import { getEmployees } from "@/api/employeeApi";
 
 const payslipConfigStore = createPersistentStore(
   "seereon.payroll.payslip-config",
@@ -108,6 +109,50 @@ export function payslipExportOpts(slip, status, cfg = payslipConfigStore.get()) 
 
 export function PayslipsTab() {
   const inScope = useScopeMatch();
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(true);
+  const [employeesError, setEmployeesError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    async function loadEmployees() {
+      setEmployeesLoading(true);
+      setEmployeesError("");
+      try {
+        const all = [];
+        let page = 1;
+        let total = Infinity;
+        while (all.length < total) {
+          const response = await getEmployees({ page, limit: 100 });
+          const payload = response?.data ?? response;
+          const items = Array.isArray(payload)
+            ? payload
+            : payload?.items ??
+              payload?.results ??
+              (Array.isArray(payload?.data) ? payload.data : payload?.data?.items) ??
+              [];
+          if (!Array.isArray(items) || !items.length) break;
+          all.push(...items);
+          const reportedTotal = Number(payload?.total ?? payload?.total_count);
+          if (Number.isFinite(reportedTotal) && reportedTotal >= 0) total = reportedTotal;
+          if (items.length < 100) break;
+          page += 1;
+        }
+        if (!cancelled) setEmployees(all);
+      } catch (error) {
+        if (!cancelled) {
+          setEmployeesError(
+            error?.response?.data?.detail ?? error?.message ?? "Could not load employees.",
+          );
+        }
+      } finally {
+        if (!cancelled) setEmployeesLoading(false);
+      }
+    }
+    loadEmployees();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const runs = usePayrollRuns()
     .filter((r) => inScope(r.orgId) && (r.status === "Processed" || r.status === "Paid"))
     .sort((a, b) => (a.period < b.period ? 1 : -1));
@@ -119,11 +164,31 @@ export function PayslipsTab() {
   const [slip, setSlip] = useState(null);
   const run = runs.find((r) => r.id === runId) ?? runs[0];
   const rows = useMemo(
-    () =>
-      (run?.lines ?? []).filter((l) =>
-        `${l.name} ${l.empId}`.toLowerCase().includes(q.toLowerCase()),
-      ),
-    [run, q],
+    () => {
+      const employeeById = new Map();
+      employees.forEach((employee) => {
+        [employee.id, employee.employee_id, employee.employee_code].filter(Boolean).forEach((id) =>
+          employeeById.set(String(id).toLowerCase(), employee),
+        );
+      });
+      return (run?.lines ?? [])
+        .map((line) => {
+          const employee = employeeById.get(String(line.empId).toLowerCase());
+          if (!employee) return line;
+          return {
+            ...line,
+            name:
+              [employee.first_name, employee.last_name].filter(Boolean).join(" ") ||
+              employee.name ||
+              line.name,
+            dept: employee.department || employee.department_name || line.dept,
+            designation: employee.designation || line.designation,
+            branch: employee.branch_name || employee.branch || line.branch,
+          };
+        })
+        .filter((line) => `${line.name} ${line.empId}`.toLowerCase().includes(q.toLowerCase()));
+    },
+    [run, q, employees],
   );
 
   return (
@@ -141,8 +206,14 @@ export function PayslipsTab() {
                 </div>
                 <div className="text-muted-foreground text-xs">
                   Payslips exist only for processed payroll runs · {runs.length} run(s) available ·
+                  {employeesLoading
+                    ? " Loading employee directory…"
+                    : ` ${employees.length} employee(s) loaded from the employee API ·`}{" "}
                   Logo: {config.brandLogo || "—"}
                 </div>
+                {employeesError && (
+                  <div className="text-destructive mt-1 text-xs">Employee API: {employeesError}</div>
+                )}
               </div>
             </div>
             <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">

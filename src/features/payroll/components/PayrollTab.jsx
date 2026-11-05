@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Play,
   Wallet,
@@ -14,7 +14,6 @@ import {
   Info,
   Lock,
   Unlock,
-  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -80,6 +79,7 @@ import {
 } from "@/features/payroll/components/ComplianceCheckDialog";
 import { employeeCheckState, isOpenCheck } from "@/features/payroll/data/payroll-engine";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
+import { getEmployees } from "@/api/employeeApi";
 
 function Field({ label, children, required }) {
   return (
@@ -110,6 +110,44 @@ export function PayrollTab() {
   // The selected run's own entity — in the group view the active entity can differ from the run's company.
   const allLocks = attendanceLockStore.use();
   const cfg = useStatutoryConfig();
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(false);
+  const [employeesError, setEmployeesError] = useState("");
+  const fetchEmployees = useCallback(async () => {
+    setEmployeesLoading(true);
+    setEmployeesError("");
+    try {
+      const all = [];
+      let page = 1;
+      let total = Infinity;
+      while (all.length < total) {
+        const response = await getEmployees({ page, limit: 100 });
+        const payload = response?.data ?? response;
+        const items = Array.isArray(payload)
+          ? payload
+          : payload?.items ??
+            payload?.results ??
+            (Array.isArray(payload?.data) ? payload.data : payload?.data?.items) ??
+            [];
+        if (!Array.isArray(items) || !items.length) break;
+        all.push(...items);
+        const reportedTotal = Number(payload?.total ?? payload?.total_count);
+        if (Number.isFinite(reportedTotal) && reportedTotal >= 0) total = reportedTotal;
+        if (items.length < 100) break;
+        page += 1;
+      }
+      setEmployees(all);
+    } catch (error) {
+      setEmployeesError(
+        error?.response?.data?.detail ?? error?.message ?? "Could not load employees.",
+      );
+    } finally {
+      setEmployeesLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    fetchEmployees();
+  }, [fetchEmployees]);
 
   const [open, setOpen] = useState(false);
   const [period, setPeriod] = useState("2026-08");
@@ -152,16 +190,48 @@ export function PayrollTab() {
   }
 
   const [stateFilter, setStateFilter] = useState("all");
-  const rows = useMemo(
-    () =>
-      (run?.lines ?? []).filter(
+  const rows = useMemo(() => {
+    const lines = run?.lines ?? [];
+    const byId = new Map();
+    const byName = new Map();
+    lines.forEach((line) => {
+      byId.set(String(line.empId).toLowerCase(), line);
+      byName.set(String(line.name).trim().toLowerCase(), line);
+    });
+    const apiRows = employees.map((employee) => {
+      const name =
+        [employee.first_name, employee.last_name].filter(Boolean).join(" ") ||
+        employee.name ||
+        employee.work_email ||
+        "Employee";
+      const line =
+        [employee.id, employee.employee_id, employee.employee_code]
+          .filter(Boolean)
+          .map((id) => byId.get(String(id).toLowerCase()))
+          .find(Boolean) ?? byName.get(String(name).trim().toLowerCase());
+      return {
+        ...(line ?? {}),
+        empId: line?.empId ?? employee.employee_code ?? employee.employee_id ?? employee.id,
+        name,
+        dept: employee.department || employee.department_name || line?.dept || "—",
+        designation: employee.designation || line?.designation || "—",
+        branch: employee.branch_name || employee.branch || line?.branch || "—",
+        state: employee.state || employee.state_name || line?.state || "—",
+        hasPayslip: Boolean(line),
+      };
+    });
+    const allRows = employees.length ? apiRows : lines.map((line) => ({ ...line, hasPayslip: true }));
+    return allRows.filter(
         (l) =>
           `${l.name} ${l.empId} ${l.dept} ${l.state}`.toLowerCase().includes(q.toLowerCase()) &&
           (stateFilter === "all" || l.state === stateFilter),
-      ),
-    [run, q, stateFilter],
+      );
+  }, [run, q, stateFilter, employees]);
+  const states = useMemo(
+    () =>
+      [...new Set([...(run?.lines ?? []).map((l) => l.state), ...employees.map((e) => e.state || e.state_name).filter(Boolean)])].sort(),
+    [run, employees],
   );
-  const states = useMemo(() => [...new Set((run?.lines ?? []).map((l) => l.state))].sort(), [run]);
   const t = run?.totals;
   const errors = run?.checks.filter((c) => c.level === "error" && isOpenCheck(c)) ?? [];
   const warnings = run?.checks.filter((c) => c.level === "warning" && isOpenCheck(c)) ?? [];
@@ -236,7 +306,15 @@ export function PayrollTab() {
     <div className="space-y-6">
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-4">
         {[
-          { l: "Employees", v: String(t?.employees ?? 0), sub: run ? periodLabel(run.period) : "" },
+          {
+            l: "Employees",
+            v: String(employees.length || t?.employees || 0),
+            sub: employees.length
+              ? `${t?.employees ?? 0} with payslips${run ? ` · ${periodLabel(run.period)}` : ""}`
+              : run
+                ? periodLabel(run.period)
+                : "",
+          },
           {
             l: "Gross earned",
             v: inr(t?.earnedGross ?? 0),
@@ -791,8 +869,13 @@ export function PayrollTab() {
                   <div className="font-semibold">Salary Register · {periodLabel(run.period)}</div>
                   <div className="text-muted-foreground text-xs">
                     Attendance pattern → LOP → earned gross → state-aware statutory deductions.
-                    Click a row for the full payslip working.
+                    Click a row for the full payslip working. {employeesLoading
+                      ? "Loading employee directory…"
+                      : `${employees.length} employee(s) loaded from API; ${run.lines.length} payslip(s) in this run.`}
                   </div>
+                  {employeesError && (
+                    <div className="text-destructive mt-1 text-xs">Employee API: {employeesError}</div>
+                  )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="border-border bg-muted/40 flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-3 py-1.5 sm:flex-none">
@@ -820,6 +903,15 @@ export function PayrollTab() {
                   <Button size="sm" variant="outline" onClick={exportRegister}>
                     <Download className="h-4 w-4" /> Export
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={fetchEmployees}
+                    disabled={employeesLoading}
+                    title="Refresh employee directory from the backend"
+                  >
+                    {employeesLoading ? "Loading…" : "Refresh employees"}
+                  </Button>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -840,7 +932,6 @@ export function PayrollTab() {
                         "Deductions",
                         "Net",
                         "Checks",
-                        "",
                       ].map((h) => (
                         <th key={h} className="p-3 text-left whitespace-nowrap">
                           {h}
@@ -852,8 +943,8 @@ export function PayrollTab() {
                     {rows.map((l) => (
                       <tr
                         key={l.empId}
-                        className="hover:bg-muted/30 cursor-pointer"
-                        onClick={() => setSlip(l)}
+                        className={cn(l.hasPayslip && "hover:bg-muted/30 cursor-pointer")}
+                        onClick={() => l.hasPayslip && setSlip(l)}
                       >
                         <td className="p-3 font-medium">
                           {l.name}
@@ -863,71 +954,81 @@ export function PayrollTab() {
                           </div>
                         </td>
                         <td className="text-muted-foreground p-3">{l.state}</td>
-                        <td className="text-muted-foreground p-3 text-xs">{l.lop.pattern.name}</td>
+                        <td className="text-muted-foreground p-3 text-xs">
+                          {l.lop?.pattern?.name ?? "—"}
+                        </td>
                         <td className="p-3 tabular-nums">
-                          {l.lop.payableDays}{" "}
-                          <span
-                            className={cn(
-                              "text-xs",
-                              l.lop.lopDays
-                                ? "text-destructive font-semibold"
-                                : "text-muted-foreground",
-                            )}
-                          >
-                            / {l.lop.lopDays} LOP
-                          </span>
+                          {l.hasPayslip ? (
+                            <>
+                              {l.lop.payableDays}{" "}
+                              <span
+                                className={cn(
+                                  "text-xs",
+                                  l.lop.lopDays
+                                    ? "text-destructive font-semibold"
+                                    : "text-muted-foreground",
+                                )}
+                              >
+                                / {l.lop.lopDays} LOP
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">No slip in run</span>
+                          )}
                         </td>
                         <td className="text-muted-foreground p-3 tabular-nums">
-                          {inr(l.structureGross)}
+                          {l.hasPayslip ? inr(l.structureGross) : "—"}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {inr(l.earnedGross)}
-                          {l.lop.lopAmount > 0 && (
+                          {l.hasPayslip ? inr(l.earnedGross) : "—"}
+                          {l.hasPayslip && l.lop.lopAmount > 0 && (
                             <div className="text-destructive text-[11px]">
                               − {inr(l.lop.lopAmount)}
                             </div>
                           )}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {l.pf.applicable ? (
+                          {l.hasPayslip && l.pf.applicable ? (
                             inr(l.pf.employee + l.pf.vpf)
-                          ) : (
+                          ) : l.hasPayslip ? (
                             <span className="text-muted-foreground">—</span>
-                          )}
-                          {l.pf.vpf > 0 && (
+                          ) : "—"}
+                          {l.hasPayslip && l.pf.vpf > 0 && (
                             <div className="text-muted-foreground text-[11px]">incl. VPF</div>
                           )}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {l.esi.applicable ? (
+                          {l.hasPayslip && l.esi.applicable ? (
                             inr(l.esi.employee)
-                          ) : (
+                          ) : l.hasPayslip ? (
                             <span className="text-muted-foreground">—</span>
-                          )}
+                          ) : "—"}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {l.pt ? inr(l.pt) : <span className="text-muted-foreground">—</span>}
+                          {l.hasPayslip && l.pt ? inr(l.pt) : "—"}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {l.tds.monthly ? (
+                          {l.hasPayslip && l.tds.monthly ? (
                             inr(l.tds.monthly)
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
                         <td className="text-destructive p-3 tabular-nums">
-                          − {inr(l.totalDeductions)}
+                          {l.hasPayslip ? `− ${inr(l.totalDeductions)}` : "—"}
                         </td>
                         <td
                           className={cn(
                             "p-3 font-semibold tabular-nums",
-                            l.net < 0 ? "text-destructive" : "text-primary",
+                            l.hasPayslip && l.net < 0 ? "text-destructive" : "text-primary",
                           )}
                         >
-                          {inr(l.net)}
+                          {l.hasPayslip ? inr(l.net) : "—"}
                         </td>
                         <td className="p-3">
                           {(() => {
+                            if (!l.hasPayslip)
+                              return <span className="text-muted-foreground text-xs">Not in run</span>;
                             if (!run.checks.length)
                               return <span className="text-muted-foreground text-xs">—</span>;
                             const st = employeeCheckState(run, l.empId);
@@ -957,9 +1058,6 @@ export function PayrollTab() {
                             );
                           })()}
                         </td>
-                        <td className="p-3">
-                          <Eye className="text-muted-foreground h-4 w-4" />
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -985,7 +1083,6 @@ export function PayrollTab() {
                               ? "all clear"
                               : ""}
                         </td>
-                        <td />
                       </tr>
                     </tfoot>
                   )}

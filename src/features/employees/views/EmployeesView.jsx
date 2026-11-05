@@ -462,26 +462,6 @@ function Employees() {
             {departments} departments · {orgName}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={exportList}>
-            <Download className="h-4 w-4" /> Export
-            {chosen.length ? ` (${chosen.length} selected)` : ""}
-          </Button>
-          {/* Creating people needs employee.manage (custom roles can open this screen without it); the Super Admin's
-              collective view keeps Hire, which asks for the company itself. */}
-          {canManagePeople && <HireEmployeeDialog />}
-          {canManagePeople && <BulkEmployeeUploadDialog open={openBulk} onOpenChange={setOpenBulk} onCreated={fetchBackendEmployees} orgName={orgName} />}
-          <Dialog open={openAdd} onOpenChange={setOpenAdd}>
-            {canManagePeople && (
-              <DialogTrigger asChild>
-                <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
-                  <Plus className="h-4 w-4" /> Add Employee (Detailed Form)
-                </Button>
-              </DialogTrigger>
-            )}
-            <AddEmployeeDialog onClose={() => setOpenAdd(false)} onCreated={() => fetchBackendEmployees()} />
-          </Dialog>
-        </div>
       </div>
 
       <Tabs defaultValue="all">
@@ -499,6 +479,24 @@ function Employees() {
         </ScrollTabsList>
 
         <TabsContent value="all" className="space-y-6 pt-4">
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={exportList}>
+              <Download className="h-4 w-4" /> Export
+              {chosen.length ? ` (${chosen.length} selected)` : ""}
+            </Button>
+            {canManagePeople && <HireEmployeeDialog />}
+            {canManagePeople && <BulkEmployeeUploadDialog open={openBulk} onOpenChange={setOpenBulk} onCreated={fetchBackendEmployees} orgName={orgName} />}
+            <Dialog open={openAdd} onOpenChange={setOpenAdd}>
+              {canManagePeople && (
+                <DialogTrigger asChild>
+                  <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
+                    <Plus className="h-4 w-4" /> Add Employee (Detailed Form)
+                  </Button>
+                </DialogTrigger>
+              )}
+              <AddEmployeeDialog onClose={() => setOpenAdd(false)} onCreated={() => fetchBackendEmployees()} />
+            </Dialog>
+          </div>
           <Card className="shadow-card">
             <CardContent className="flex flex-wrap items-center gap-3 p-4">
               <div className="border-border bg-muted/40 flex max-w-md min-w-[240px] flex-1 items-center gap-2 rounded-lg border px-3 py-2">
