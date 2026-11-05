@@ -95,11 +95,10 @@ function Login() {
       const user = data?.user;
       toast.success(`Welcome, ${user?.full_name || user?.name || "back"}`);
 
-      const mustChange = Boolean(data?.must_change_password ?? user?.must_change_password);
-      if (mustChange) {
+      // A temporary password (must_change_password) is handled by the portal itself: it shows a blocking
+      // "Set new password" screen and loads no data until the password is changed.
+      if (data?.must_change_password ?? user?.must_change_password) {
         toast.info("Please set a new password before you continue");
-        router.push("/emp/profile");
-        return;
       }
       const portal =
         data?.redirect_portal || (String(user?.role).toUpperCase() === "EMPLOYEE" ? "emp" : "org");

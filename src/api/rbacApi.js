@@ -71,31 +71,15 @@ export const rbacApi = {
   },
 
   // 9. List User Role Assignments (supports /roles/assignments and /user-branch-roles)
-  getUserRoleAssignments: async () => {
-    try {
-      const res = await SuperAdmin_axios.get("/roles/assignments");
-      return res.data?.data ?? res.data;
-    } catch (err) {
-      if (err.response?.status === 404) {
-        const res = await SuperAdmin_axios.get("/user-branch-roles");
-        return res.data?.data ?? res.data;
-      }
-      throw err;
-    }
+  getUserRoleAssignments: async (params) => {
+    const res = await SuperAdmin_axios.get("/roles/assignments", { params });
+    return res.data?.data ?? res.data;
   },
 
   // 10. Assign user to role on branches
   assignUserRole: async (payload) => {
-    try {
-      const res = await SuperAdmin_axios.post("/roles/assignments", payload);
-      return res.data?.data ?? res.data;
-    } catch (err) {
-      if (err.response?.status === 404) {
-        const res = await SuperAdmin_axios.post("/user-branch-roles", payload);
-        return res.data?.data ?? res.data;
-      }
-      throw err;
-    }
+    const res = await SuperAdmin_axios.post("/roles/assignments", payload);
+    return res.data?.data ?? res.data;
   },
 
   // 11. Bulk update branch access for user
@@ -112,16 +96,8 @@ export const rbacApi = {
 
   // 13. Revoke role assignment (DELETE /roles/assignments/:id or /user-branch-roles/:id)
   revokeAssignment: async (assignmentId) => {
-    try {
-      const res = await SuperAdmin_axios.delete(`/roles/assignments/${encodeURIComponent(assignmentId)}`);
-      return res.data?.data ?? res.data;
-    } catch (err) {
-      if (err.response?.status === 404) {
-        const res = await SuperAdmin_axios.delete(`/user-branch-roles/${encodeURIComponent(assignmentId)}`);
-        return res.data?.data ?? res.data;
-      }
-      throw err;
-    }
+    const res = await SuperAdmin_axios.delete(`/roles/assignments/${encodeURIComponent(assignmentId)}`);
+    return res.data?.data ?? res.data;
   },
 
   // Backward compatibility alias for revokeUserRole

@@ -15,7 +15,13 @@ const INITIAL_STATE = {
   branchId: null, // user.branch_id (logged-in session scope)
   isBranchEmployee: false,
   status: null,
-  permittedModules: [],
+  // Access (login / refresh / GET /me). Not persisted: re-read from GET /me on every app load.
+  permittedModules: [], // module keys, e.g. ["employee", "attendance"]
+  roles: [], // [{ id, name }] — empty for an employee with no role
+  permissions: [], // "employee.edit", "<screen_code>.view", ...
+  branchScope: "ALL", // "ALL" or an array of branch ids
+  accessLoaded: false, // true once the access fields above came from the backend in this page load
+  accessError: null, // { reason: "module" | "permission", path } — set by a 403 from the API client
   companyName: null, // company.name from login / GET /me
   scopeCompanyId: "", // Super Admin: company chosen on the per-company master screens
   branchName: null, // branch.name (null for company-level users)
@@ -27,6 +33,28 @@ const INITIAL_STATE = {
   // IMPORTANT: Keep created employee IDs distinct from logged-in user session scope
   lastCreatedEmployee: null, // { employeeId, userId, organizationId, companyId, branchId, placementLevel }
 };
+
+/**
+ * Access fields from a login / refresh / GET /me body. `onlyPresent` (GET /me, refresh) leaves a field
+ * untouched when the body does not carry it; login resets it to "nothing granted".
+ */
+function accessFields(body, onlyPresent = false) {
+  const out = {};
+  const put = (key, value, ok) => {
+    if (ok) out[key] = value;
+    else if (!onlyPresent) out[key] = INITIAL_STATE[key];
+  };
+  put("permittedModules", body?.permitted_modules, Array.isArray(body?.permitted_modules));
+  put("accessLoaded", true, Array.isArray(body?.permitted_modules));
+  put("roles", body?.roles, Array.isArray(body?.roles));
+  put("permissions", body?.permissions, Array.isArray(body?.permissions));
+  put(
+    "branchScope",
+    body?.branch_scope,
+    body?.branch_scope === "ALL" || Array.isArray(body?.branch_scope),
+  );
+  return out;
+}
 
 export const useSessionStore = create()(
   persist(
@@ -44,7 +72,6 @@ export const useSessionStore = create()(
           refresh_token,
           token_type = "bearer",
           user = {},
-          permitted_modules = [],
           redirect_portal = null,
         } = loginResponse;
 
@@ -85,7 +112,7 @@ export const useSessionStore = create()(
           branchId: user.branch_id || null,
           isBranchEmployee: Boolean(user.is_branch_employee),
           status: user.status || null,
-          permittedModules: permitted_modules || [],
+          ...accessFields(loginResponse),
           redirectPortal: redirect_portal,
           companyName: loginResponse.company?.name ?? null,
           branchName: loginResponse.branch?.name ?? null,
@@ -101,7 +128,14 @@ export const useSessionStore = create()(
       applyMe: (me) => {
         if (!me) return;
         set({
-          ...(Array.isArray(me.permitted_modules) ? { permittedModules: me.permitted_modules } : {}),
+          ...accessFields(me, true),
+          // GET /me says whether the temporary-password lock still applies (also after a reload).
+          ...(typeof (me.must_change_password ?? me.user?.must_change_password) === "boolean"
+            ? { mustChangePassword: me.must_change_password ?? me.user.must_change_password }
+            : {}),
+          ...(me.redirect_portal === "org" || me.redirect_portal === "emp"
+            ? { redirectPortal: me.redirect_portal }
+            : {}),
           companyName: me.company?.name ?? null,
           branchName: me.branch?.name ?? null,
         });
@@ -169,7 +203,6 @@ export const useSessionStore = create()(
         branchId: state.branchId,
         isBranchEmployee: state.isBranchEmployee,
         status: state.status,
-        permittedModules: state.permittedModules,
         redirectPortal: state.redirectPortal,
         companyName: state.companyName,
         branchName: state.branchName,
