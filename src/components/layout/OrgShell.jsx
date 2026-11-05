@@ -14,6 +14,8 @@ import {
   useIsSignedIn,
 } from "@/features/auth/data/auth-session";
 import { cn } from "@/lib/utils";
+import { ForcePasswordChange } from "@/features/auth/components/ForcePasswordChange";
+import { useRouteModuleOk } from "@/features/auth/data/module-access";
 import { useSessionCutoff } from "@/features/auth/data/session-guard";
 import { applyTenantScope } from "@/features/organization/data/group-data";
 import { applyBranchScope, lastWorkspacePath } from "@/features/organization/data/tenancy";
@@ -33,11 +35,8 @@ function OrgShell({ children }) {
   useEffect(() => {
     if (!signedIn) router.replace(lastWorkspacePath());
   }, [signedIn, router]);
-  // Temporary password: the backend refuses every call until it is changed, so keep the user on the change screen.
+  // Temporary password: the backend refuses every call until it is changed, so only the change screen renders.
   const mustChangePassword = useSessionStore((s) => s.mustChangePassword);
-  useEffect(() => {
-    if (signedIn && mustChangePassword) router.replace("/emp/profile");
-  }, [signedIn, mustChangePassword, router]);
   // Tenant lock (Admin / Employee → own company; Super Admin → group view) applied after hydration.
   useEffect(() => {
     applyTenantScope(getCurrentUser());
@@ -48,8 +47,13 @@ function OrgShell({ children }) {
     setMobileOpen(false);
   }, [pathname]);
   // Role-based screen guard: admin-portal screens outside the role's scope are blocked.
-  const allowed = pathname === "/org" || canOpenPath(me.role, pathname);
+  const moduleOk = useRouteModuleOk(pathname);
+  // A 403 from the API ("Module not enabled…" / "Permission denied") on this screen replaces it with a notice.
+  const accessError = useSessionStore((s) => s.accessError);
+  const deniedReason = accessError?.path === pathname ? accessError.reason : null;
+  const allowed = !deniedReason && (pathname === "/org" || (moduleOk && canOpenPath(me.role, pathname)));
   if (!signedIn) return null;
+  if (mustChangePassword) return <ForcePasswordChange />;
   // Role-dependent UI is rendered only once the browser session is known (see useHydrated).
   if (!hydrated) return <WorkspaceLoading />;
   return (
@@ -77,6 +81,8 @@ function OrgShell({ children }) {
           ) : (
             <AccessDenied
               role={me.role}
+              reason={deniedReason ?? (moduleOk ? undefined : "module")}
+              info={deniedReason ? accessError.info : undefined}
               homeTo={me.role === "Employee" ? "/emp/dashboard" : "/org/dashboard"}
             />
           )}

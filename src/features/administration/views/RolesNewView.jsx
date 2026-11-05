@@ -112,6 +112,8 @@ function RoleWizard({ existing }) {
   const [description, setDescription] = useState(existing?.description ?? "");
   const [perms, setPerms] = useState(() => existing?.permissions ?? {});
   const [submitting, setSubmitting] = useState(false);
+  // Holders of an "Admin portal access" role land in the org portal after login.
+  const [isAdminPortal, setIsAdminPortal] = useState(Boolean(existing?.is_admin_portal));
 
   const isBuiltIn = Boolean(existing?.built_in || existing?.builtIn);
 
@@ -209,6 +211,7 @@ function RoleWizard({ existing }) {
         description: description.trim(),
         permissions: normalizedPermissions,
         status: existing?.status || "Active",
+        is_admin_portal: isAdminPortal,
         ...(scope.isSuper && !existing ? { company_id: scope.companyId } : {}),
       };
 
@@ -348,6 +351,19 @@ function RoleWizard({ existing }) {
                 placeholder="Describe what responsibilities and scope this role blueprint covers..."
               />
             </div>
+            <label className="border-border flex cursor-pointer items-start gap-3 rounded-lg border p-3">
+              <Checkbox
+                checked={isAdminPortal}
+                onCheckedChange={(v) => setIsAdminPortal(Boolean(v))}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="text-sm font-medium">Admin portal access</span>
+                <span className="text-muted-foreground block text-xs">
+                  People with this role open the admin portal after login instead of the employee portal.
+                </span>
+              </span>
+            </label>
           </CardContent>
         </Card>
       )}

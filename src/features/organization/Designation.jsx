@@ -54,9 +54,19 @@ function normalizeDesignation(item) {
     id: item.id,
     name: item.designation_name ?? item.name ?? "",
     department_name: departmentName,
+    designation_type: item.designation_type ? String(item.designation_type).toLowerCase() : "",
     is_active: item.is_active ?? true,
   };
 }
+
+// Marks who counts as HR / Manager / CEO: the HR and Manager pickers list employees by this type.
+const DESIGNATION_TYPES = [
+  { value: "hr", label: "HR" },
+  { value: "manager", label: "Manager" },
+  { value: "ceo", label: "CEO" },
+];
+
+const typeLabel = (value) => DESIGNATION_TYPES.find((t) => t.value === value)?.label ?? "—";
 
 function normalizeDepartment(item) {
   return {
@@ -135,6 +145,7 @@ export default function Designation() {
   const [designationName, setDesignationName] = useState("");
   // Holds the department NAME (the API links designations to departments by name).
   const [departmentName, setDepartmentName] = useState("");
+  const [designationType, setDesignationType] = useState("");
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -220,6 +231,7 @@ export default function Designation() {
   function resetForm() {
     setDesignationName("");
     setDepartmentName("");
+    setDesignationType("");
     setEditingId(null);
     setError("");
   }
@@ -280,6 +292,7 @@ export default function Designation() {
       const payload = {
         designation_name: name,
         department: departmentName || null,
+        designation_type: designationType || null,
         is_active: existing?.is_active ?? true,
         ...(scope.isSuper && editingId === null ? { company_id: scope.companyId } : {}),
       };
@@ -302,6 +315,7 @@ export default function Designation() {
   function handleEdit(designation) {
     setDesignationName(designation.name);
     setDepartmentName(designation.department_name || "");
+    setDesignationType(designation.designation_type || "");
     setEditingId(designation.id);
     setError("");
     setPageError("");
@@ -504,6 +518,7 @@ export default function Designation() {
                 <th className="w-24 px-5 py-4">SL No.</th>
                 <th className="px-5 py-4">Designation Name</th>
                 <th className="px-5 py-4">Department</th>
+                <th className="px-5 py-4">Type</th>
                 <th className="w-44 px-5 py-4">Actions</th>
               </tr>
             </thead>
@@ -512,7 +527,7 @@ export default function Designation() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className={`px-5 py-12 text-center ${mutedClass}`}
                   >
                     <LoaderCircle
@@ -538,6 +553,10 @@ export default function Designation() {
 
                     <td className="px-5 py-4">
                       {getDepartmentName(designation)}
+                    </td>
+
+                    <td className="px-5 py-4">
+                      {typeLabel(designation.designation_type)}
                     </td>
 
                     <td className="px-5 py-4">
@@ -589,7 +608,7 @@ export default function Designation() {
               {!loading && filteredDesignations.length === 0 && (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className={`px-5 py-12 text-center ${mutedClass}`}
                   >
                     {pageError
@@ -709,6 +728,32 @@ export default function Designation() {
               />
             </div>
 
+            <div>
+              <label
+                htmlFor="designationType"
+                className="mb-2 block text-sm font-medium"
+              >
+                Designation type <span className={mutedClass}>(Optional)</span>
+              </label>
+
+              <select
+                id="designationType"
+                value={designationType}
+                onChange={(event) => setDesignationType(event.target.value)}
+                className={inputClass}
+              >
+                <option value="">None</option>
+                {DESIGNATION_TYPES.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ))}
+              </select>
+              <p className={`mt-2 text-xs ${mutedClass}`}>
+                People with an HR or Manager type are listed in the HR and Manager pickers.
+              </p>
+            </div>
+
             {error && (
               <p
                 role="alert"
@@ -774,6 +819,13 @@ export default function Designation() {
               <p className={`text-sm ${mutedClass}`}>Designation Name</p>
               <p className="mt-1 font-semibold">
                 {viewDesignation.name}
+              </p>
+            </div>
+
+            <div>
+              <p className={`text-sm ${mutedClass}`}>Designation type</p>
+              <p className="mt-1 font-semibold">
+                {typeLabel(viewDesignation.designation_type)}
               </p>
             </div>
           </div>

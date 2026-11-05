@@ -25,6 +25,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { useSessionStore, canCreateEmployee } from "@/features/auth/data/session-store";
+import { useCan } from "@/features/auth/data/module-access";
 import SuperAdmin_auth from "@/api/SuperAdmin_auth";
 import Branch_api from "@/api/branch";
 import departmentApi from "@/api/departmentApi";
@@ -306,7 +307,12 @@ function Employees() {
   const session = useSessionStore();
   const roleUpper = String(session.role || me?.role || "").toUpperCase();
   const isEmployeeRole = roleUpper === "EMPLOYEE";
-  const canManagePeople = (can(me.role, "employee.manage") || canCreateEmployee(session.role)) && !isEmployeeRole;
+  // `permissions` from the backend: add / edit need "employee.edit" (module level), admins hold it by scope.
+  const canDo = useCan();
+  const canManagePeople =
+    (can(me.role, "employee.manage") || canCreateEmployee(session.role)) &&
+    !isEmployeeRole &&
+    canDo("employee.edit");
   const orgName = useOrgs().find((o) => o.id === orgId)?.name ?? "Organization";
   const directory = useDirectory();
   // Always show the live record — the dialog kept the row captured at click time, so a promotion / transfer made from

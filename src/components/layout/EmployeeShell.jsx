@@ -1,3 +1,4 @@
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { WorkspaceLoading } from "@/components/common/WorkspaceLoading";
 import { usePathname, useRouter } from "@/lib/router";
 import { useEffect, useState } from "react";
@@ -13,6 +14,8 @@ import {
   useIsSignedIn,
 } from "@/features/auth/data/auth-session";
 import { cn } from "@/lib/utils";
+import { ForcePasswordChange } from "@/features/auth/components/ForcePasswordChange";
+import { useRouteModuleOk } from "@/features/auth/data/module-access";
 import { useSessionCutoff } from "@/features/auth/data/session-guard";
 import { applyTenantScope } from "@/features/organization/data/group-data";
 import { applyBranchScope, lastWorkspacePath } from "@/features/organization/data/tenancy";
@@ -39,8 +42,14 @@ function EmpShell({ children }) {
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
-  const allowed = pathname === "/emp" || canOpenPath(me.role, pathname);
+  const moduleOk = useRouteModuleOk(pathname);
+  const mustChangePassword = useSessionStore((s) => s.mustChangePassword);
+  const accessError = useSessionStore((s) => s.accessError);
+  const deniedReason = accessError?.path === pathname ? accessError.reason : null;
+  const allowed = !deniedReason && (pathname === "/emp" || (moduleOk && canOpenPath(me.role, pathname)));
   if (!signedIn) return null;
+  // Temporary password: only the change screen renders until it is changed (nothing else may call the API).
+  if (mustChangePassword) return <ForcePasswordChange />;
   // Role-dependent UI is rendered only once the browser session is known (see useHydrated).
   if (!hydrated) return <WorkspaceLoading />;
   return (
@@ -60,7 +69,16 @@ function EmpShell({ children }) {
       >
         <EmpTopbar onMenu={() => setMobileOpen((v) => !v)} />
         <main className="app-main max-w-full min-w-0 overflow-x-hidden p-4 md:p-6 lg:p-8">
-          {allowed ? <>{children}</> : <AccessDenied role={me.role} homeTo="/emp/dashboard" />}
+          {allowed ? (
+            <>{children}</>
+          ) : (
+            <AccessDenied
+              role={me.role}
+              reason={deniedReason ?? (moduleOk ? undefined : "module")}
+              info={deniedReason ? accessError.info : undefined}
+              homeTo="/emp/dashboard"
+            />
+          )}
         </main>
       </div>
       <AIAssistant />
