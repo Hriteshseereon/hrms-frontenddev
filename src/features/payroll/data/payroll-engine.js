@@ -37,7 +37,11 @@ import {
   NEW_REGIME_SLABS,
   policyForState,
 } from "@/features/payroll/data/statutory-data";
-import { computeLop, isAttendanceLocked } from "@/features/attendance/data/attendance-pattern";
+import {
+  computeLop,
+  hasPayrollAttendanceSnapshot,
+  isAttendanceLocked,
+} from "@/features/attendance/data/attendance-pattern";
 import {
   monthlyNps,
   monthlyVpf,
@@ -897,11 +901,11 @@ export function runComplianceChecks(
 ) {
   const out = [];
   const dim = new Date(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0).getDate();
-  if (cfg.payroll.requireAttendanceLock && !isAttendanceLocked(period, orgId)) {
+  if (!isAttendanceLocked(period, orgId)) {
     out.push({
       code: "ATT-LOCK",
       level: "error",
-      message: `Attendance for ${periodLabel(period)} is not locked. Lock it on the Attendance → Payroll Sync tab before running payroll.`,
+      message: `Attendance for ${periodLabel(period)} is not locked. Lock it on the Attendance → Payroll Attendance Lock tab before running payroll.`,
     });
   }
   for (const l of lines) {
@@ -1353,7 +1357,16 @@ export function runChecks(id, user) {
       message: `${dup.id} is already the live run for ${periodLabel(run.period)} — this rejected run cannot be revived.`,
     };
   const cfg = getStatutoryConfig();
-  const lines = payrollRoster(run.orgId).map((e) => computePayslip(e, run.period, cfg));
+  const roster = payrollRoster(run.orgId);
+  const missing = roster.filter(
+    (employee) => !hasPayrollAttendanceSnapshot(run.period, employee.id),
+  );
+  if (missing.length)
+    return {
+      ok: false,
+      message: `${isAttendanceLocked(run.period, run.orgId) ? "Locked" : "Monthly"} attendance from the server is missing for ${missing.map((employee) => employee.name).join(", ")}. Refresh the attendance review before calculating payroll.`,
+    };
+  const lines = roster.map((e) => computePayslip(e, run.period, cfg));
   const fresh = runComplianceChecks(lines, run.period, cfg, run.orgId);
   const checks = [
     ...mergeCheckState(fresh, run.checks),
@@ -1371,7 +1384,13 @@ export function runChecks(id, user) {
     })),
   ];
   const errors = checks.filter((c) => c.level === "error" && isOpenCheck(c)).length;
-  const status = errors > 0 && cfg.payroll.blockOnErrors ? "Checks Failed" : "Checks Passed";
+  const attendanceLockFailed = checks.some(
+    (check) => check.code === "ATT-LOCK" && check.level === "error" && isOpenCheck(check),
+  );
+  const status =
+    attendanceLockFailed || (errors > 0 && cfg.payroll.blockOnErrors)
+      ? "Checks Failed"
+      : "Checks Passed";
   update(id, (r) =>
     log(
       {
@@ -1402,7 +1421,7 @@ export function runChecks(id, user) {
 const CHECK_EDITABLE = ["Draft", "Checks Failed", "Checks Passed", "Rejected"];
 
 /** Errors that describe impossible pay data — they must be corrected at source, never overridden. */
-export const NON_OVERRIDABLE_CHECKS = new Set(["NET-NEG", "NCP-DIM", "LOP-GT-WD"]);
+export const NON_OVERRIDABLE_CHECKS = new Set(["NET-NEG", "NCP-DIM", "LOP-GT-WD", "ATT-LOCK"]);
 
 /**
  * Can `user` override / manually verify this check? Warnings and info: anyone working the run. Blocking errors: never
@@ -1586,7 +1605,7 @@ export function submitForApproval(id, user) {
     return { ok: false, message: "Acknowledge all warnings before submitting." };
   const cfg = getStatutoryConfig();
   // Attendance may have been unlocked after the checks passed — LOP could change, so the checks must be re-run.
-  if (cfg.payroll.requireAttendanceLock && !isAttendanceLocked(run.period, run.orgId))
+  if (!isAttendanceLocked(run.period, run.orgId))
     return {
       ok: false,
       message: `Attendance for ${periodLabel(run.period)} was unlocked after the checks — lock it and re-run checks before submitting.`,
@@ -1624,6 +1643,11 @@ export function decideRun(id, user, decision, remarks) {
   if (!run) return { ok: false, message: "Run not found." };
   if (run.status !== "Pending Approval")
     return { ok: false, message: "Run is not awaiting approval." };
+  if (decision === "Approved" && !isAttendanceLocked(run.period, run.orgId))
+    return {
+      ok: false,
+      message: `Attendance for ${periodLabel(run.period)} is not locked. Lock attendance before approving this payroll run.`,
+    };
   const cfg = getStatutoryConfig();
   // Maker–checker applies to every role (the policy text promises "can never approve"); rejection is always allowed.
   if (cfg.payroll.enforceMakerChecker && decision === "Approved" && run.preparedBy.id === user.id) {
@@ -1701,6 +1725,11 @@ export function processRun(id, user) {
   if (!run) return { ok: false, message: "Run not found." };
   if (run.status !== "Approved")
     return { ok: false, message: "Only an approved run can be processed." };
+  if (!isAttendanceLocked(run.period, run.orgId))
+    return {
+      ok: false,
+      message: `Attendance for ${periodLabel(run.period)} is not locked. Lock attendance before processing this payroll run.`,
+    };
   update(id, (r) =>
     log(
       { ...r, status: "Processed", processedOn: now(), processedBy: user.name },

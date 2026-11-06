@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Play,
   Wallet,
@@ -12,9 +12,6 @@ import {
   Download,
   AlertTriangle,
   Info,
-  Lock,
-  Unlock,
-  Eye,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -65,12 +62,7 @@ import {
   usePayrollRuns,
   dueDate,
 } from "@/features/payroll/data/payroll-engine";
-import {
-  attendanceLockStore,
-  lockAttendance,
-  unlockAttendance,
-  useAttendanceLocks,
-} from "@/features/attendance/data/attendance-pattern";
+import { useAttendanceLocks } from "@/features/attendance/data/attendance-pattern";
 import { useStatutoryConfig } from "@/features/payroll/data/statutory-data";
 import { PayslipBreakdown, WorkflowStepper } from "@/features/payroll/components/PayslipBreakdown";
 import {
@@ -80,6 +72,13 @@ import {
 } from "@/features/payroll/components/ComplianceCheckDialog";
 import { employeeCheckState, isOpenCheck } from "@/features/payroll/data/payroll-engine";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
+import { getEmployees } from "@/api/employeeApi";
+import {
+  formatLockTimestamp,
+  verifyPayrollAttendanceLock,
+} from "@/features/payroll/data/attendance-lock-verification";
+import Link from "@/lib/router";
+import { buildHref } from "@/lib/navigation";
 
 function Field({ label, children, required }) {
   return (
@@ -108,8 +107,88 @@ export function PayrollTab() {
   const run = runs.find((r) => r.id === selectedId) ?? runs[0];
   const locks = useAttendanceLocks();
   // The selected run's own entity — in the group view the active entity can differ from the run's company.
-  const allLocks = attendanceLockStore.use();
   const cfg = useStatutoryConfig();
+  const [employees, setEmployees] = useState([]);
+  const [employeesLoading, setEmployeesLoading] = useState(false);
+  const [employeesError, setEmployeesError] = useState("");
+  const [lockVerification, setLockVerification] = useState({
+    loading: true,
+    verified: false,
+    locked: false,
+    period: run?.period,
+  });
+  const fetchEmployees = useCallback(async () => {
+    setEmployeesLoading(true);
+    setEmployeesError("");
+    try {
+      const all = [];
+      let page = 1;
+      let total = Infinity;
+      while (all.length < total) {
+        const response = await getEmployees({ page, limit: 100 });
+        const payload = response?.data ?? response;
+        const items = Array.isArray(payload)
+          ? payload
+          : (payload?.items ??
+            payload?.results ??
+            (Array.isArray(payload?.data) ? payload.data : payload?.data?.items) ??
+            []);
+        if (!Array.isArray(items) || !items.length) break;
+        all.push(...items);
+        const reportedTotal = Number(payload?.total ?? payload?.total_count);
+        if (Number.isFinite(reportedTotal) && reportedTotal >= 0) total = reportedTotal;
+        if (items.length < 100) break;
+        page += 1;
+      }
+      setEmployees(all);
+    } catch (error) {
+      setEmployeesError(
+        error?.response?.data?.detail ?? error?.message ?? "Could not load employees.",
+      );
+    } finally {
+      setEmployeesLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    fetchEmployees();
+  }, [fetchEmployees]);
+
+  const attendanceCompanyId =
+    employees.find((employee) => employee.company_id)?.company_id ??
+    employees.find((employee) => employee.organization_id)?.organization_id ??
+    orgId;
+  const verifySelectedAttendance = useCallback(async () => {
+    if (!run?.period) return null;
+    setLockVerification({ loading: true, verified: false, locked: false, period: run.period });
+    try {
+      const result = await verifyPayrollAttendanceLock({
+        period: run.period,
+        companyId: attendanceCompanyId,
+        payrollOrgId: run.orgId,
+        employees,
+      });
+      const state = { ...result, loading: false, period: run.period };
+      setLockVerification(state);
+      return state;
+    } catch (error) {
+      const state = {
+        loading: false,
+        verified: false,
+        locked: false,
+        period: run.period,
+        error:
+          error?.response?.data?.detail ??
+          error?.message ??
+          "Could not verify the attendance lock.",
+      };
+      setLockVerification(state);
+      return state;
+    }
+  }, [run?.period, run?.orgId, attendanceCompanyId, employees]);
+
+  useEffect(() => {
+    verifySelectedAttendance();
+  }, [verifySelectedAttendance]);
 
   const [open, setOpen] = useState(false);
   const [period, setPeriod] = useState("2026-08");
@@ -127,9 +206,63 @@ export function PayrollTab() {
   const canRun = can(me.role, "payroll.run");
   const canApprove = can(me.role, "payroll.approve");
   const canProcess = can(me.role, "payroll.process");
-  const canLock = can(me.role, "attendance.lock");
 
   const act = (r) => toast[r.ok ? "success" : "error"](r.message);
+  const attendanceReady =
+    lockVerification.period === run?.period &&
+    lockVerification.verified &&
+    lockVerification.locked &&
+    lockVerification.summaryLoaded;
+
+  async function requireLockedAttendance() {
+    const verification = await verifySelectedAttendance();
+    if (!verification?.verified) {
+      toast.error(
+        verification?.error ?? "Could not verify attendance lock status from the server.",
+      );
+      return false;
+    }
+    if (!verification.locked) {
+      toast.error(
+        `Attendance for ${periodLabel(run.period)} is not locked. Payroll cannot continue.`,
+      );
+      return false;
+    }
+    if (!verification.summaryLoaded) {
+      toast.error(
+        `Attendance data for ${periodLabel(run.period)} could not be loaded. Payroll cannot continue.`,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  async function handleRunChecks() {
+    const verification = await verifySelectedAttendance();
+    if (!verification?.verified) {
+      toast.error(
+        verification?.error ?? "Could not verify attendance lock status from the server.",
+      );
+      return;
+    }
+    act(runChecks(run.id, me));
+  }
+
+  async function handleSubmitForApproval() {
+    if (!(await requireLockedAttendance())) return;
+    act(submitForApproval(run.id, me));
+  }
+
+  async function handleApproval() {
+    if (!(await requireLockedAttendance())) return;
+    act(decideRun(run.id, me, "Approved", remarks.trim() || "Approved"));
+    setRemarks("");
+  }
+
+  async function handleProcessRun() {
+    if (!(await requireLockedAttendance())) return;
+    act(processRun(run.id, me));
+  }
 
   function submit() {
     const res = createRun(
@@ -152,23 +285,60 @@ export function PayrollTab() {
   }
 
   const [stateFilter, setStateFilter] = useState("all");
-  const rows = useMemo(
+  const rows = useMemo(() => {
+    const lines = run?.lines ?? [];
+    const byId = new Map();
+    const byName = new Map();
+    lines.forEach((line) => {
+      byId.set(String(line.empId).toLowerCase(), line);
+      byName.set(String(line.name).trim().toLowerCase(), line);
+    });
+    const apiRows = employees.map((employee) => {
+      const name =
+        [employee.first_name, employee.last_name].filter(Boolean).join(" ") ||
+        employee.name ||
+        employee.work_email ||
+        "Employee";
+      const line =
+        [employee.id, employee.employee_id, employee.employee_code]
+          .filter(Boolean)
+          .map((id) => byId.get(String(id).toLowerCase()))
+          .find(Boolean) ?? byName.get(String(name).trim().toLowerCase());
+      return {
+        ...(line ?? {}),
+        empId: line?.empId ?? employee.employee_code ?? employee.employee_id ?? employee.id,
+        name,
+        dept: employee.department || employee.department_name || line?.dept || "—",
+        designation: employee.designation || line?.designation || "—",
+        branch: employee.branch_name || employee.branch || line?.branch || "—",
+        state: employee.state || employee.state_name || line?.state || "—",
+        hasPayslip: Boolean(line),
+      };
+    });
+    const allRows = employees.length
+      ? apiRows
+      : lines.map((line) => ({ ...line, hasPayslip: true }));
+    return allRows.filter(
+      (l) =>
+        `${l.name} ${l.empId} ${l.dept} ${l.state}`.toLowerCase().includes(q.toLowerCase()) &&
+        (stateFilter === "all" || l.state === stateFilter),
+    );
+  }, [run, q, stateFilter, employees]);
+  const states = useMemo(
     () =>
-      (run?.lines ?? []).filter(
-        (l) =>
-          `${l.name} ${l.empId} ${l.dept} ${l.state}`.toLowerCase().includes(q.toLowerCase()) &&
-          (stateFilter === "all" || l.state === stateFilter),
-      ),
-    [run, q, stateFilter],
+      [
+        ...new Set([
+          ...(run?.lines ?? []).map((l) => l.state),
+          ...employees.map((e) => e.state || e.state_name).filter(Boolean),
+        ]),
+      ].sort(),
+    [run, employees],
   );
-  const states = useMemo(() => [...new Set((run?.lines ?? []).map((l) => l.state))].sort(), [run]);
   const t = run?.totals;
   const errors = run?.checks.filter((c) => c.level === "error" && isOpenCheck(c)) ?? [];
   const warnings = run?.checks.filter((c) => c.level === "warning" && isOpenCheck(c)) ?? [];
   const infos = run?.checks.filter((c) => c.level === "info" && isOpenCheck(c)) ?? [];
   const closedChecks = run?.checks.filter((c) => !isOpenCheck(c)) ?? [];
-  const runLock = run ? (allLocks[`${run.orgId}:${run.period}`] ?? allLocks[run.period]) : null;
-  const locked = Boolean(runLock);
   const isMaker = run?.preparedBy.id === me.id;
   const alreadyApproved = Boolean(
     run?.approvals.some((a) => a.decision === "Approved" && a.byId === me.id),
@@ -236,7 +406,15 @@ export function PayrollTab() {
     <div className="space-y-6">
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-4">
         {[
-          { l: "Employees", v: String(t?.employees ?? 0), sub: run ? periodLabel(run.period) : "" },
+          {
+            l: "Employees",
+            v: String(employees.length || t?.employees || 0),
+            sub: employees.length
+              ? `${t?.employees ?? 0} with payslips${run ? ` · ${periodLabel(run.period)}` : ""}`
+              : run
+                ? periodLabel(run.period)
+                : "",
+          },
           {
             l: "Gross earned",
             v: inr(t?.earnedGross ?? 0),
@@ -465,40 +643,13 @@ export function PayrollTab() {
                 <div className="flex items-center gap-2 text-sm font-semibold">
                   <ShieldCheck className="text-primary h-4 w-4" /> Workflow actions
                 </div>
-                <div className="border-border bg-muted/20 flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-xs">
-                  <span className="flex items-center gap-1.5">
-                    {locked ? (
-                      <Lock className="text-primary h-3.5 w-3.5" />
-                    ) : (
-                      <Unlock className="text-destructive h-3.5 w-3.5" />
-                    )}{" "}
-                    Attendance {periodLabel(run.period)}:{" "}
-                    <b>{locked ? `locked by ${runLock.by}` : "not locked"}</b>
-                  </span>
-                  {canLock && ["Draft", "Checks Failed", "Checks Passed"].includes(run.status) && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7 text-xs"
-                      onClick={() => {
-                        if (locked) unlockAttendance(run.period, run.orgId);
-                        else lockAttendance(run.period, me.name, run.orgId);
-                        toast.success(
-                          locked ? "Attendance unlocked" : "Attendance locked for payroll",
-                        );
-                      }}
-                    >
-                      {locked ? "Unlock" : "Lock month"}
-                    </Button>
-                  )}
-                </div>
                 {(run.status === "Draft" ||
                   run.status === "Checks Failed" ||
                   run.status === "Checks Passed") &&
                   canRun && (
                     <Button
                       className="bg-gradient-emerald w-full text-white"
-                      onClick={() => act(runChecks(run.id, me))}
+                      onClick={handleRunChecks}
                     >
                       <ShieldCheck className="h-4 w-4" />{" "}
                       {run.checks.length ? "Re-run compliance checks" : "Run compliance checks"}
@@ -521,8 +672,8 @@ export function PayrollTab() {
                     )}
                     <Button
                       className="bg-gradient-emerald w-full text-white"
-                      disabled={warnings.some((w) => !w.acknowledged)}
-                      onClick={() => act(submitForApproval(run.id, me))}
+                      disabled={warnings.some((w) => !w.acknowledged) || !attendanceReady}
+                      onClick={handleSubmitForApproval}
                     >
                       <Send className="h-4 w-4" /> Submit for {run.approvalLevels[0]} approval
                     </Button>
@@ -561,12 +712,8 @@ export function PayrollTab() {
                             <Button
                               className="bg-gradient-emerald text-white"
                               data-testid="run-approve"
-                              onClick={() => {
-                                act(
-                                  decideRun(run.id, me, "Approved", remarks.trim() || "Approved"),
-                                );
-                                setRemarks("");
-                              }}
+                              disabled={!attendanceReady}
+                              onClick={handleApproval}
                             >
                               <CheckCircle2 className="h-4 w-4" /> Approve
                             </Button>
@@ -609,7 +756,8 @@ export function PayrollTab() {
                 {run.status === "Approved" && canProcess && (
                   <Button
                     className="bg-gradient-emerald w-full text-white"
-                    onClick={() => act(processRun(run.id, me))}
+                    disabled={!attendanceReady}
+                    onClick={handleProcessRun}
                   >
                     <Play className="h-4 w-4" /> Process — generate payslips
                   </Button>
@@ -688,6 +836,94 @@ export function PayrollTab() {
                     ))}
                   </div>
                 </div>
+                {(() => {
+                  const checking =
+                    lockVerification.loading || lockVerification.period !== run.period;
+                  const verified = !checking && lockVerification.verified;
+                  const passed = verified && lockVerification.locked;
+                  const statusLabel = checking ? "CHECKING" : passed ? "PASS" : "ERROR";
+                  return (
+                    <div className="bg-background rounded-lg border p-3">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-semibold">Attendance Lock Verification</div>
+                        <Badge
+                          variant="outline"
+                          className={
+                            checking
+                              ? "border-border bg-muted text-muted-foreground"
+                              : passed
+                                ? "border-primary/30 bg-primary/10 text-primary"
+                                : "border-destructive/30 bg-destructive/10 text-destructive"
+                          }
+                        >
+                          {statusLabel}
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs sm:grid-cols-3">
+                        <div>
+                          <div className="text-muted-foreground">Attendance Month</div>
+                          <div className="font-medium">{periodLabel(run.period)}</div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Lock Status</div>
+                          <div className="font-medium">
+                            {checking
+                              ? "Verifying with server…"
+                              : !verified
+                                ? "Not verified"
+                                : passed
+                                  ? "Locked"
+                                  : "Not Locked"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Locked By</div>
+                          <div className="font-medium">
+                            {passed ? lockVerification.by || "—" : "—"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Lock Date &amp; Time</div>
+                          <div className="font-medium">
+                            {passed ? formatLockTimestamp(lockVerification.on) : "—"}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-muted-foreground">Employees Covered</div>
+                          <div className="font-medium">
+                            {lockVerification.employeesCovered ?? "—"}
+                          </div>
+                        </div>
+                        <div className="flex items-end">
+                          <Link
+                            href={buildHref({ to: "/org/attendance" })}
+                            className="text-primary font-medium underline underline-offset-2"
+                          >
+                            View Attendance Register
+                          </Link>
+                        </div>
+                      </div>
+                      {!checking && !verified && (
+                        <div className="text-destructive mt-2 text-xs">
+                          {lockVerification.error ||
+                            "Attendance lock could not be verified. Payroll approval and processing are blocked."}
+                        </div>
+                      )}
+                      {verified && !lockVerification.summaryLoaded && (
+                        <div className="text-destructive mt-2 text-xs">
+                          Attendance summary could not be loaded. Re-run checks after the register
+                          is available.
+                        </div>
+                      )}
+                      {verified && !passed && (
+                        <div className="text-destructive mt-2 text-xs">
+                          HR must lock attendance for {periodLabel(run.period)} before payroll can
+                          be approved or processed.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
                   {run.checks.length === 0 && (
                     <div className="text-muted-foreground py-6 text-center text-xs">
@@ -791,8 +1027,16 @@ export function PayrollTab() {
                   <div className="font-semibold">Salary Register · {periodLabel(run.period)}</div>
                   <div className="text-muted-foreground text-xs">
                     Attendance pattern → LOP → earned gross → state-aware statutory deductions.
-                    Click a row for the full payslip working.
+                    Click a row for the full payslip working.{" "}
+                    {employeesLoading
+                      ? "Loading employee directory…"
+                      : `${employees.length} employee(s) loaded from API; ${run.lines.length} payslip(s) in this run.`}
                   </div>
+                  {employeesError && (
+                    <div className="text-destructive mt-1 text-xs">
+                      Employee API: {employeesError}
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="border-border bg-muted/40 flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-3 py-1.5 sm:flex-none">
@@ -820,6 +1064,15 @@ export function PayrollTab() {
                   <Button size="sm" variant="outline" onClick={exportRegister}>
                     <Download className="h-4 w-4" /> Export
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={fetchEmployees}
+                    disabled={employeesLoading}
+                    title="Refresh employee directory from the backend"
+                  >
+                    {employeesLoading ? "Loading…" : "Refresh employees"}
+                  </Button>
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -840,7 +1093,6 @@ export function PayrollTab() {
                         "Deductions",
                         "Net",
                         "Checks",
-                        "",
                       ].map((h) => (
                         <th key={h} className="p-3 text-left whitespace-nowrap">
                           {h}
@@ -852,8 +1104,8 @@ export function PayrollTab() {
                     {rows.map((l) => (
                       <tr
                         key={l.empId}
-                        className="hover:bg-muted/30 cursor-pointer"
-                        onClick={() => setSlip(l)}
+                        className={cn(l.hasPayslip && "hover:bg-muted/30 cursor-pointer")}
+                        onClick={() => l.hasPayslip && setSlip(l)}
                       >
                         <td className="p-3 font-medium">
                           {l.name}
@@ -863,71 +1115,87 @@ export function PayrollTab() {
                           </div>
                         </td>
                         <td className="text-muted-foreground p-3">{l.state}</td>
-                        <td className="text-muted-foreground p-3 text-xs">{l.lop.pattern.name}</td>
+                        <td className="text-muted-foreground p-3 text-xs">
+                          {l.lop?.pattern?.name ?? "—"}
+                        </td>
                         <td className="p-3 tabular-nums">
-                          {l.lop.payableDays}{" "}
-                          <span
-                            className={cn(
-                              "text-xs",
-                              l.lop.lopDays
-                                ? "text-destructive font-semibold"
-                                : "text-muted-foreground",
-                            )}
-                          >
-                            / {l.lop.lopDays} LOP
-                          </span>
+                          {l.hasPayslip ? (
+                            <>
+                              {l.lop.payableDays}{" "}
+                              <span
+                                className={cn(
+                                  "text-xs",
+                                  l.lop.lopDays
+                                    ? "text-destructive font-semibold"
+                                    : "text-muted-foreground",
+                                )}
+                              >
+                                / {l.lop.lopDays} LOP
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">No slip in run</span>
+                          )}
                         </td>
                         <td className="text-muted-foreground p-3 tabular-nums">
-                          {inr(l.structureGross)}
+                          {l.hasPayslip ? inr(l.structureGross) : "—"}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {inr(l.earnedGross)}
-                          {l.lop.lopAmount > 0 && (
+                          {l.hasPayslip ? inr(l.earnedGross) : "—"}
+                          {l.hasPayslip && l.lop.lopAmount > 0 && (
                             <div className="text-destructive text-[11px]">
                               − {inr(l.lop.lopAmount)}
                             </div>
                           )}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {l.pf.applicable ? (
+                          {l.hasPayslip && l.pf.applicable ? (
                             inr(l.pf.employee + l.pf.vpf)
-                          ) : (
+                          ) : l.hasPayslip ? (
                             <span className="text-muted-foreground">—</span>
+                          ) : (
+                            "—"
                           )}
-                          {l.pf.vpf > 0 && (
+                          {l.hasPayslip && l.pf.vpf > 0 && (
                             <div className="text-muted-foreground text-[11px]">incl. VPF</div>
                           )}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {l.esi.applicable ? (
+                          {l.hasPayslip && l.esi.applicable ? (
                             inr(l.esi.employee)
-                          ) : (
+                          ) : l.hasPayslip ? (
                             <span className="text-muted-foreground">—</span>
+                          ) : (
+                            "—"
                           )}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {l.pt ? inr(l.pt) : <span className="text-muted-foreground">—</span>}
+                          {l.hasPayslip && l.pt ? inr(l.pt) : "—"}
                         </td>
                         <td className="p-3 tabular-nums">
-                          {l.tds.monthly ? (
+                          {l.hasPayslip && l.tds.monthly ? (
                             inr(l.tds.monthly)
                           ) : (
                             <span className="text-muted-foreground">—</span>
                           )}
                         </td>
                         <td className="text-destructive p-3 tabular-nums">
-                          − {inr(l.totalDeductions)}
+                          {l.hasPayslip ? `− ${inr(l.totalDeductions)}` : "—"}
                         </td>
                         <td
                           className={cn(
                             "p-3 font-semibold tabular-nums",
-                            l.net < 0 ? "text-destructive" : "text-primary",
+                            l.hasPayslip && l.net < 0 ? "text-destructive" : "text-primary",
                           )}
                         >
-                          {inr(l.net)}
+                          {l.hasPayslip ? inr(l.net) : "—"}
                         </td>
                         <td className="p-3">
                           {(() => {
+                            if (!l.hasPayslip)
+                              return (
+                                <span className="text-muted-foreground text-xs">Not in run</span>
+                              );
                             if (!run.checks.length)
                               return <span className="text-muted-foreground text-xs">—</span>;
                             const st = employeeCheckState(run, l.empId);
@@ -957,9 +1225,6 @@ export function PayrollTab() {
                             );
                           })()}
                         </td>
-                        <td className="p-3">
-                          <Eye className="text-muted-foreground h-4 w-4" />
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -985,7 +1250,6 @@ export function PayrollTab() {
                               ? "all clear"
                               : ""}
                         </td>
-                        <td />
                       </tr>
                     </tfoot>
                   )}
