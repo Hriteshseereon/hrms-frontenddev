@@ -56,6 +56,7 @@ export function PunchCorrectionsCard() {
   // A punch already on that day means "correct it"; otherwise the form adds a missed punch.
   useEffect(() => {
     setExisting(null);
+    setNextDay(false);
     if (!empId || !date) return undefined;
     let alive = true;
     attendanceApi
@@ -65,8 +66,13 @@ export function PunchCorrectionsCard() {
         const p = itemsOf(res)[0] ?? null;
         setExisting(p);
         if (p) {
-          setInAt(hhmm(p.in_time) || "09:30");
-          setOutAt(hhmm(p.out_time) || "18:30");
+          const recordedIn = hhmm(p.in_time);
+          const recordedOut = hhmm(p.out_time);
+          setInAt(recordedIn || "09:30");
+          setOutAt(recordedOut || "18:30");
+          // Existing overnight punches already carry their actual out date. Reflect that in the
+          // correction form instead of silently treating them as same-day punches.
+          setNextDay(Boolean(p.out_date && p.out_date > p.date));
         }
       })
       .catch(() => {});
@@ -162,12 +168,16 @@ export function PunchCorrectionsCard() {
                   className="h-8 w-full sm:w-28"
                   aria-label="Out time"
                   value={outs[p.id]?.outAt ?? ""}
-                  onChange={(e) => setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], outAt: e.target.value } }))}
+                  onChange={(e) =>
+                    setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], outAt: e.target.value } }))
+                  }
                 />
                 <label className="flex items-center gap-1">
                   <Checkbox
                     checked={!!outs[p.id]?.nextDay}
-                    onCheckedChange={(v) => setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], nextDay: !!v } }))}
+                    onCheckedChange={(v) =>
+                      setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], nextDay: !!v } }))
+                    }
                   />
                   next day
                 </label>
@@ -175,7 +185,9 @@ export function PunchCorrectionsCard() {
                   className="h-8 min-w-0 flex-1"
                   placeholder="Reason (required)"
                   value={outs[p.id]?.reason ?? ""}
-                  onChange={(e) => setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], reason: e.target.value } }))}
+                  onChange={(e) =>
+                    setOuts((o) => ({ ...o, [p.id]: { ...o[p.id], reason: e.target.value } }))
+                  }
                 />
                 <Button
                   size="sm"
@@ -210,7 +222,12 @@ export function PunchCorrectionsCard() {
           </div>
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-xs">Date</Label>
-            <Input type="date" max={todayIso()} value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input
+              type="date"
+              max={todayIso()}
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
           </div>
           <div className="space-y-1.5">
             <Label className="text-muted-foreground text-xs">In</Label>
