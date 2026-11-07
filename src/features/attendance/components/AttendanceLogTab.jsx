@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Search, CalendarRange, Download } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Search, CalendarRange, Download, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,80 +14,231 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
-import { OFFICES } from "@/features/employees/data/hr-data";
 import {
   currentMonth,
   monthTitle,
   registerMonths,
   todayLocalIso,
-  useLiveAttendance,
-  summarise,
-  pctTone,
-  isWeekend,
   daysInMonth,
   useTeamScope,
 } from "@/features/attendance/data/attendance-live";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import {
+  getAllEmployeeAttendanceDaily,
+  getAllEmployeeAttendanceMonthly,
+  getAllEmployeeAttendanceWeekly,
+} from "@/api/allEmployeeAttendance";
 import { exportCsv, exportReportPdf } from "@/lib/export-utils";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
 import { PunchCorrectionsCard } from "@/features/attendance/components/PunchCorrectionsCard";
 
-/**
- * @typedef {"day" | "week" | "month"} Range
- */
+/** @typedef {"day" | "week" | "month"} Range */
 
 const PAL_STYLES = {
   P: "bg-primary/10 text-primary border-primary/30",
   A: "bg-destructive/10 text-destructive border-destructive/30",
   L: "bg-gold/15 text-gold border-gold/40",
+  WO: "bg-muted text-muted-foreground border-border",
+  H: "bg-blue-500/10 text-blue-700 border-blue-500/30",
+};
+const LABELS = { P: "Present", A: "Absent", L: "Leave", WO: "Week off", H: "Holiday" };
+const HR_ROLES = ["HR", "CHRO", "Admin", "SuperAdmin"];
+
+const statusOf = (employee) => {
+  const raw = String(employee.day_type ?? employee.attendance_status ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[ -]+/g, "_");
+  if (raw.includes("WEEK_OFF") || raw === "WO") return "WO";
+  if (raw.includes("HOLIDAY") || raw === "H") return "H";
+  if (raw.includes("LEAVE") || raw === "L") return "L";
+  if (raw.includes("ABSENT") || raw === "A") return "A";
+  if (raw.includes("PRESENT") || raw === "P" || raw === "HALF_DAY" || raw === "HD") return "P";
+  return "";
 };
 
-const LABELS = { P: "Present", A: "Absent", L: "Leave" };
+const responseParts = (response) => {
+  const body = response?.data ?? response;
+  const payload = body?.data ?? body;
+  return {
+    employees: Array.isArray(payload?.employees) ? payload.employees : [],
+    summary: payload,
+  };
+};
 
-const HR_ROLES = ["HR", "CHRO", "Admin", "SuperAdmin"];
+const reportsForDateRange = (employees, dates) => {
+  const reports = Object.fromEntries(dates.map((date) => [date, { employees: [] }]));
+  employees.forEach((employee) => {
+    (employee.attendance ?? []).forEach((dayRecord) => {
+      if (!reports[dayRecord.date]) return;
+      reports[dayRecord.date].employees.push({
+        ...employee,
+        attendance_date: dayRecord.date,
+        attendance_status: dayRecord.status,
+        day_type: dayRecord.status,
+        working_hours: dayRecord.working_hours,
+      });
+    });
+  });
+  return reports;
+};
 
 export function AttendanceLogTab() {
   const user = useCurrentUser();
-  // The register used to be frozen on the seeded month (2026-07); it now opens on the current month and any month from
-  // the seed onwards can be picked (the seeded July data is still shown when July is selected).
   const [month, setMonth] = useState(currentMonth);
-  const isoFor = (day) => `${month}-${String(day).padStart(2, "0")}`;
-  const MONTH_DAYS = daysInMonth(month);
-  /** Weekly offs are not working days: they are shown as "WO" and never counted as present / absent / leave. */
-  const isOff = (day) => isWeekend(isoFor(day));
-  const [range, setRange] = useState("week");
+  const [range, setRange] = useState("day");
   const [anchor, setAnchor] = useState(() => Number(todayLocalIso().slice(8, 10)));
   const [office, setOffice] = useState("all");
   const [query, setQuery] = useState("");
   const [detail, setDetail] = useState(null);
+  const [dailyReports, setDailyReports] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
+  const monthDays = daysInMonth(month);
+  const isoFor = useCallback((day) => `${month}-${String(day).padStart(2, "0")}`, [month]);
   const days = useMemo(() => {
     if (range === "day") return [anchor];
     if (range === "week") {
-      const start = Math.max(1, anchor - 3);
-      return Array.from({ length: 7 }, (_, i) => start + i).filter((d) => d <= MONTH_DAYS);
+      const weekday = new Date(`${month}-${String(anchor).padStart(2, "0")}T00:00:00`).getDay();
+      const start = Math.max(1, anchor - weekday);
+      return Array.from({ length: 7 }, (_, index) => start + index).filter(
+        (day) => day <= monthDays,
+      );
     }
-    return Array.from({ length: MONTH_DAYS }, (_, i) => i + 1);
-  }, [range, anchor, MONTH_DAYS]);
+    return Array.from({ length: monthDays }, (_, index) => index + 1);
+  }, [range, anchor, monthDays]);
 
-  /**
-   * A Manager only ever sees their own reporting line (everyone under them, plus themselves) and an HOD their
-   * department. HR, Admin and the CXOs see the company.
-   */
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      setLoadError("");
+      try {
+        const next = {};
+        const dates = days.map(isoFor);
+        if (range === "week") {
+          const report = responseParts(
+            await getAllEmployeeAttendanceWeekly(dates[0], dates[dates.length - 1]),
+          );
+          Object.assign(next, reportsForDateRange(report.employees, dates));
+        } else if (range === "month") {
+          const [year, monthNumber] = month.split("-").map(Number);
+          const report = responseParts(await getAllEmployeeAttendanceMonthly(monthNumber, year));
+          Object.assign(next, reportsForDateRange(report.employees, dates));
+        } else {
+          for (let index = 0; index < dates.length; index += 5) {
+            const batch = dates.slice(index, index + 5);
+            const results = await Promise.all(
+              batch.map(async (date) => [
+                date,
+                responseParts(await getAllEmployeeAttendanceDaily(date)),
+              ]),
+            );
+            results.forEach(([date, report]) => {
+              next[date] = report;
+            });
+          }
+        }
+        if (active) setDailyReports(next);
+      } catch (error) {
+        if (active) {
+          setDailyReports({});
+          setLoadError(
+            error?.response?.data?.detail ??
+              error?.response?.data?.message ??
+              error?.message ??
+              "Could not load attendance from the API.",
+          );
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      active = false;
+    };
+  }, [days, isoFor, month, range, reloadKey]);
+
   const teamScope = useTeamScope();
-
-  const liveRows = useLiveAttendance(month);
+  const allRows = useMemo(() => {
+    const byEmployee = new Map();
+    days.forEach((day) => {
+      const date = isoFor(day);
+      const report = dailyReports[date];
+      (report?.employees ?? []).forEach((employee) => {
+        const id = String(employee.employee_id ?? employee.employee_code ?? "");
+        if (!id) return;
+        let row = byEmployee.get(id);
+        if (!row) {
+          row = {
+            empId: id,
+            employeeCode: employee.employee_code ?? id,
+            name: employee.employee_name ?? employee.employee_display ?? "Employee",
+            designation: employee.designation ?? "—",
+            dept: employee.department_name ?? employee.department ?? "—",
+            office: employee.branch_name ?? employee.company_name ?? employee.branch_id ?? "—",
+            shift: employee.shift_name ?? "—",
+            days: {},
+            attendanceByDate: {},
+          };
+          byEmployee.set(id, row);
+        }
+        row.days[date] = statusOf(employee);
+        row.attendanceByDate[date] = employee;
+      });
+    });
+    return [...byEmployee.values()];
+  }, [dailyReports, days, isoFor]);
 
   const rows = useMemo(
     () =>
-      liveRows.filter(
-        (r) =>
-          (!teamScope || teamScope.has(r.empId)) &&
-          (office === "all" || r.office === office) &&
-          (r.name.toLowerCase().includes(query.toLowerCase()) ||
-            r.empId.toLowerCase().includes(query.toLowerCase())),
+      allRows.filter(
+        (row) =>
+          (!teamScope || teamScope.has(row.empId) || teamScope.has(row.employeeCode)) &&
+          (office === "all" || row.office === office) &&
+          `${row.name} ${row.employeeCode} ${row.designation}`
+            .toLowerCase()
+            .includes(query.toLowerCase()),
       ),
-    [liveRows, office, query, teamScope],
+    [allRows, office, query, teamScope],
+  );
+  const offices = useMemo(
+    () =>
+      [
+        ...new Set(allRows.map((row) => row.office).filter((value) => value && value !== "—")),
+      ].sort(),
+    [allRows],
+  );
+
+  const countsFor = useCallback(
+    (row) => {
+      const counts = { P: 0, A: 0, L: 0 };
+      days.forEach((day) => {
+        const status = row.days[isoFor(day)];
+        if (status in counts) counts[status] += 1;
+      });
+      const marked = counts.P + counts.A + counts.L;
+      return { ...counts, marked, pct: marked ? Math.round((counts.P / marked) * 1000) / 10 : 0 };
+    },
+    [days, isoFor],
+  );
+
+  const totals = useMemo(
+    () =>
+      rows.reduce(
+        (total, row) => {
+          const counts = countsFor(row);
+          total.P += counts.P;
+          total.A += counts.A;
+          total.L += counts.L;
+          return total;
+        },
+        { P: 0, A: 0, L: 0 },
+      ),
+    [rows, countsFor],
   );
 
   const exportCols = [
@@ -95,41 +246,27 @@ export function AttendanceLogTab() {
     "Emp ID",
     "Office",
     "Shift",
-    ...days.map((d) => String(d).padStart(2, "0")),
-    "P",
-    "A",
-    "L",
+    ...days.map((day) => isoFor(day)),
+    "Present",
+    "Absent",
+    "Leave",
   ];
-  const exportRows = rows.map((r) => {
-    const c = { P: 0, A: 0, L: 0 };
-    days.forEach((d) => {
-      const m = r.days[isoFor(d)];
-      if (!isOff(d) && m) c[m] += 1;
-    });
+  const exportRows = rows.map((row) => {
+    const counts = countsFor(row);
     return [
-      r.name,
-      r.empId,
-      r.office,
-      r.shift,
-      ...days.map((d) => (isOff(d) ? "WO" : (r.days[isoFor(d)] ?? "—"))),
-      String(c.P),
-      String(c.A),
-      String(c.L),
+      row.name,
+      row.employeeCode,
+      row.office,
+      row.shift,
+      ...days.map((day) => {
+        const status = row.days[isoFor(day)];
+        return status ? (LABELS[status] ?? status) : "Not marked";
+      }),
+      String(counts.P),
+      String(counts.A),
+      String(counts.L),
     ];
   });
-
-  const totals = useMemo(() => {
-    const t = { P: 0, A: 0, L: 0 };
-    rows.forEach((r) =>
-      days.forEach((d) => {
-        const m = r.days[isoFor(d)];
-        if (!isOff(d) && m) t[m] += 1;
-      }),
-    );
-    return t;
-    // isoFor / isOff derive from `month`, which is listed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, days, month]);
 
   return (
     <div className="space-y-6">
@@ -139,7 +276,7 @@ export function AttendanceLogTab() {
             <Search className="text-muted-foreground h-4 w-4" />
             <Input
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(event) => setQuery(event.target.value)}
               placeholder="Search employee…"
               className="h-6 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
             />
@@ -147,24 +284,24 @@ export function AttendanceLogTab() {
 
           <Select
             value={month}
-            onValueChange={(m) => {
-              setMonth(m);
-              setAnchor((a) => Math.min(a, daysInMonth(m)));
+            onValueChange={(value) => {
+              setMonth(value);
+              setAnchor((day) => Math.min(day, daysInMonth(value)));
             }}
           >
             <SelectTrigger className="w-full sm:w-[140px]" aria-label="Month">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {registerMonths().map((m) => (
-                <SelectItem key={m} value={m}>
-                  {monthTitle(m)}
+              {registerMonths().map((value) => (
+                <SelectItem key={value} value={value}>
+                  {monthTitle(value)}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
-          <Tabs value={range} onValueChange={(v) => setRange(v)}>
+          <Tabs value={range} onValueChange={setRange}>
             <TabsList>
               <TabsTrigger value="day">Day</TabsTrigger>
               <TabsTrigger value="week">Week</TabsTrigger>
@@ -180,12 +317,11 @@ export function AttendanceLogTab() {
                 className="h-9 w-full sm:w-[160px]"
                 value={isoFor(anchor)}
                 min={isoFor(1)}
-                max={isoFor(MONTH_DAYS)}
-                onChange={(e) => {
-                  // The register covers one month — ignore dates outside it instead of silently reading only the day.
-                  if (!e.target.value.startsWith(month)) return;
-                  const d = Number(e.target.value.slice(-2));
-                  if (d >= 1 && d <= MONTH_DAYS) setAnchor(d);
+                max={isoFor(monthDays)}
+                onChange={(event) => {
+                  if (!event.target.value.startsWith(month)) return;
+                  const day = Number(event.target.value.slice(-2));
+                  if (day >= 1 && day <= monthDays) setAnchor(day);
                 }}
                 aria-label="Reference date"
               />
@@ -198,24 +334,33 @@ export function AttendanceLogTab() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All offices</SelectItem>
-              {OFFICES.map((o) => (
-                <SelectItem key={o} value={o}>
-                  {o}
+              {offices.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {value}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
           <div className="ml-auto flex flex-wrap items-center gap-2 text-xs">
-            {["P", "A", "L"].map((k) => (
-              <Badge key={k} variant="outline" className={cn("font-medium", PAL_STYLES[k])}>
-                {LABELS[k]} · {totals[k]}
+            <Badge variant="outline">Employees · {rows.length}</Badge>
+            {["P", "A", "L"].map((key) => (
+              <Badge key={key} variant="outline" className={cn("font-medium", PAL_STYLES[key])}>
+                {LABELS[key]} · {totals[key]}
               </Badge>
             ))}
             <Button
               size="sm"
               variant="outline"
-              disabled={!rows.length}
+              onClick={() => setReloadKey((key) => key + 1)}
+              disabled={loading}
+            >
+              <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} /> Refresh
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!rows.length || loading}
               onClick={() => {
                 exportCsv("attendance-register", exportCols, exportRows);
                 toast.success("Attendance register exported as CSV");
@@ -226,13 +371,11 @@ export function AttendanceLogTab() {
             <Button
               size="sm"
               variant="outline"
-              disabled={!rows.length}
+              disabled={!rows.length || loading}
               onClick={() => {
                 const ok = exportReportPdf({
                   title: "Attendance Register",
-                  subtitle: teamScope
-                    ? `${user.name}'s team · ${month}`
-                    : `All employees · ${month}`,
+                  subtitle: `${rows.length} employees · ${days.length} day(s) · ${monthTitle(month)}`,
                   summary: [
                     { label: "Employees", value: String(rows.length) },
                     { label: "Present", value: String(totals.P) },
@@ -255,6 +398,12 @@ export function AttendanceLogTab() {
 
       {HR_ROLES.includes(user.role) && <PunchCorrectionsCard />}
 
+      {loadError && (
+        <div className="border-destructive/30 bg-destructive/5 text-destructive rounded-lg border p-3 text-sm">
+          Could not load attendance: {loadError}
+        </div>
+      )}
+
       <Card className="shadow-card overflow-hidden">
         {teamScope && (
           <div className="border-border bg-muted/30 text-muted-foreground border-b px-4 py-2 text-xs">
@@ -269,9 +418,9 @@ export function AttendanceLogTab() {
                 <th className="bg-muted/40 sticky left-0 p-3 text-left">Employee</th>
                 <th className="p-3 text-left">Office</th>
                 <th className="p-3 text-left">Shift</th>
-                {days.map((d) => (
-                  <th key={d} className="p-2 text-center font-semibold">
-                    {String(d).padStart(2, "0")}
+                {days.map((day) => (
+                  <th key={day} className="p-2 text-center font-semibold">
+                    {String(day).padStart(2, "0")}
                   </th>
                 ))}
                 <th className="p-3 text-center">P / A / L</th>
@@ -279,65 +428,73 @@ export function AttendanceLogTab() {
               </tr>
             </thead>
             <tbody className="divide-border divide-y">
-              {rows.map((r) => {
-                const counts = { P: 0, A: 0, L: 0 };
-                days.forEach((d) => {
-                  const m = r.days[isoFor(d)];
-                  if (!isOff(d) && m) counts[m] += 1;
-                });
-                return (
-                  <tr key={r.empId} className={clickableRow} onClick={() => setDetail(r)}>
-                    <td className="bg-card sticky left-0 p-3">
-                      <div className="font-semibold whitespace-nowrap">{r.name}</div>
-                      <div className="text-muted-foreground text-xs">
-                        {r.empId} · {r.designation}
-                      </div>
-                    </td>
-                    <td className="text-muted-foreground p-3 whitespace-nowrap">{r.office}</td>
-                    <td className="text-muted-foreground p-3 whitespace-nowrap">{r.shift}</td>
-                    {days.map((d) => {
-                      const s = r.days[isoFor(d)];
-                      if (isOff(d) || !s)
+              {loading && (
+                <tr>
+                  <td className="text-muted-foreground p-8 text-center" colSpan={days.length + 5}>
+                    Loading attendance from the server…
+                  </td>
+                </tr>
+              )}
+              {!loading && !loadError && rows.length === 0 && (
+                <tr>
+                  <td className="text-muted-foreground p-8 text-center" colSpan={days.length + 5}>
+                    No employee attendance was returned for this date range.
+                  </td>
+                </tr>
+              )}
+              {!loading &&
+                rows.map((row) => {
+                  const counts = countsFor(row);
+                  return (
+                    <tr key={row.empId} className={clickableRow} onClick={() => setDetail(row)}>
+                      <td className="bg-card sticky left-0 p-3">
+                        <div className="font-semibold whitespace-nowrap">{row.name}</div>
+                        <div className="text-muted-foreground text-xs">
+                          {row.employeeCode} · {row.designation}
+                        </div>
+                      </td>
+                      <td className="text-muted-foreground p-3 whitespace-nowrap">{row.office}</td>
+                      <td className="text-muted-foreground p-3 whitespace-nowrap">{row.shift}</td>
+                      {days.map((day) => {
+                        const date = isoFor(day);
+                        const status = row.days[date];
                         return (
-                          <td key={d} className="p-1.5 text-center">
+                          <td key={day} className="p-1.5 text-center">
                             <span
-                              title={`${isOff(d) ? "Weekly off" : "Not marked"} · ${isoFor(d)}`}
-                              className="border-border bg-muted text-muted-foreground inline-grid h-7 w-7 place-items-center rounded-md border text-[10px] font-semibold"
+                              title={`${status ? (LABELS[status] ?? status) : "Not marked"} · ${date}`}
+                              className={cn(
+                                "inline-grid h-7 min-w-7 place-items-center rounded-md border px-1 text-[10px] font-semibold",
+                                status
+                                  ? (PAL_STYLES[status] ?? PAL_STYLES.P)
+                                  : "border-border bg-muted text-muted-foreground",
+                              )}
                             >
-                              {isOff(d) ? "WO" : "—"}
+                              {status || "—"}
                             </span>
                           </td>
                         );
-                      return (
-                        <td key={d} className="p-1.5 text-center">
-                          <span
-                            title={`${LABELS[s]} · ${isoFor(d)}`}
-                            className={cn(
-                              "inline-grid h-7 w-7 place-items-center rounded-md border text-xs font-bold",
-                              PAL_STYLES[s],
-                            )}
-                          >
-                            {s}
-                          </span>
-                        </td>
-                      );
-                    })}
-                    <td className="p-3 text-center text-xs font-medium whitespace-nowrap">
-                      <span className="text-primary">{counts.P}</span> /{" "}
-                      <span className="text-destructive">{counts.A}</span> /{" "}
-                      <span className="text-gold">{counts.L}</span>
-                    </td>
-                    <td
-                      className={cn(
-                        "p-3 text-center text-xs font-semibold tabular-nums",
-                        pctTone(summarise(r, month).pct),
-                      )}
-                    >
-                      {summarise(r, month).pct} %
-                    </td>
-                  </tr>
-                );
-              })}
+                      })}
+                      <td className="p-3 text-center text-xs font-medium whitespace-nowrap">
+                        <span className="text-primary">{counts.P}</span> /{" "}
+                        <span className="text-destructive">{counts.A}</span> /{" "}
+                        <span className="text-gold">{counts.L}</span>
+                      </td>
+                      <td className="p-3 text-center text-xs font-semibold tabular-nums">
+                        <span
+                          className={cn(
+                            counts.pct >= 95
+                              ? "text-primary"
+                              : counts.pct >= 85
+                                ? "text-gold"
+                                : "text-destructive",
+                          )}
+                        >
+                          {counts.pct} %
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>
@@ -345,51 +502,53 @@ export function AttendanceLogTab() {
 
       {detail &&
         (() => {
-          const s = summarise(detail, month);
-          const dayRows = Object.entries(detail.days)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([date, mark]) => ({
-              date,
-              mark: isWeekend(date) ? "WO · Weekly off" : `${mark} · ${LABELS[mark]}`,
-            }));
+          const counts = countsFor(detail);
+          const attendanceRows = Object.entries(detail.attendanceByDate).sort(([a], [b]) =>
+            a.localeCompare(b),
+          );
           return (
             <RecordDetailDialog
               onClose={() => setDetail(null)}
               title={detail.name}
-              subtitle={`${detail.empId} · ${detail.designation} · ${month}`}
+              subtitle={`${detail.employeeCode} · ${detail.designation} · ${monthTitle(month)}`}
               badges={
-                <Badge variant="outline" className={pctTone(s.pct)}>
-                  {s.pct} % attendance
+                <Badge variant="outline">
+                  {counts.P} present · {counts.A} absent · {counts.L} leave
                 </Badge>
               }
               record={{
-                name: detail.name,
-                empId: detail.empId,
+                employee: detail.name,
+                employeeCode: detail.employeeCode,
                 designation: detail.designation,
-                dept: detail.dept,
+                department: detail.dept,
                 office: detail.office,
                 shift: detail.shift,
-                present: s.present,
-                absent: s.absent,
-                leave: s.leave,
-                working: s.working,
-                dailyMarks: dayRows,
+                dailyAttendance: attendanceRows.map(([date, employee]) => ({
+                  date,
+                  status:
+                    LABELS[statusOf(employee)] ??
+                    employee.day_type ??
+                    employee.attendance_status ??
+                    "Not marked",
+                  punchIn: employee.punch_in ?? "—",
+                  punchOut: employee.punch_out ?? "—",
+                  workingHours: employee.working_hours ?? 0,
+                })),
               }}
-              labels={{
-                dept: "Department",
-                working: "Working days",
-                present: "Present days",
-                absent: "Absent days",
-                leave: "Leave days",
-                dailyMarks: "Daily marks",
-              }}
+              labels={{ dailyAttendance: "Daily attendance" }}
               sections={[
                 {
-                  title: "Employee",
-                  keys: ["name", "empId", "designation", "dept", "office", "shift"],
+                  title: "Employee attendance",
+                  keys: [
+                    "employee",
+                    "employeeCode",
+                    "designation",
+                    "department",
+                    "office",
+                    "shift",
+                    "dailyAttendance",
+                  ],
                 },
-                { title: "Month summary", keys: ["working", "present", "absent", "leave"] },
-                { title: "Daily marks", keys: ["dailyMarks"] },
               ]}
             />
           );

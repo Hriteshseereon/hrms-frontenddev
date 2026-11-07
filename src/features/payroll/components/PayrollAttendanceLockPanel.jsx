@@ -11,6 +11,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { attendanceApi } from "@/api/attendanceApi";
+import {
+  getAllEmployeeAttendanceById,
+  getAllEmployeeAttendanceMonthly,
+  getAllEmployeeAttendanceSummary,
+} from "@/api/allEmployeeAttendance";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -77,6 +82,13 @@ const numeric = (row, ...keys) => {
   const n = Number(value);
   return value === null || value === "" || !Number.isFinite(n) ? null : n;
 };
+const errorMessage = (error) => {
+  const detail = error?.response?.data?.detail ?? error?.response?.data?.message ?? error?.message;
+  if (Array.isArray(detail))
+    return detail.map((item) => item?.msg ?? JSON.stringify(item)).join("; ");
+  if (detail && typeof detail === "object") return detail.message ?? JSON.stringify(detail);
+  return detail || "Could not load attendance from the server.";
+};
 const formatDate = (value) => {
   if (!value) return "—";
   const date = new Date(value);
@@ -116,6 +128,18 @@ const statusLabel = (value) =>
   ] ??
   value ??
   "—";
+const punchesFromEmployeeDetail = (detail) =>
+  (detail?.days ?? []).flatMap((day) =>
+    (day.punches ?? []).map((punch) => ({
+      ...punch,
+      id: punch.punch_id ?? punch.id,
+      date: punch.attendance_date ?? day.date,
+      in_time: punch.punch_in_time ?? punch.in_time ?? day.punch_in,
+      out_time: punch.punch_out_time ?? punch.out_time ?? day.punch_out,
+      worked_hours: punch.working_hours ?? day.working_hours,
+      status: punch.record_status ?? day.status,
+    })),
+  );
 
 export function PayrollAttendanceLockPanel({
   period,
@@ -147,21 +171,52 @@ export function PayrollAttendanceLockPanel({
     setError("");
     setLocks({});
     try {
+      const [year, month] = period.split("-").map(Number);
+      const lastDay = new Date(year, month, 0).getDate();
       const results = await Promise.allSettled([
-        attendanceApi.getPayrollSummary(period),
-        attendanceApi.getPayrollWorkHours(period),
-        attendanceApi.getPayrollRegister(period),
+        getAllEmployeeAttendanceSummary({
+          view: "monthly",
+          start_date: `${period}-01`,
+          end_date: `${period}-${String(lastDay).padStart(2, "0")}`,
+        }),
+        getAllEmployeeAttendanceMonthly(month, year),
         attendanceApi.getLocks(companyId),
       ]);
-      const [reportResult, hoursResult, registerResult, locksResult] = results;
+      const [reportResult, registerResult, locksResult] = results;
       const failures = results.filter((result) => result.status === "rejected");
-      const nextReportRows = reportResult.status === "fulfilled" ? listOf(reportResult.value) : [];
+      const summaryEmployees =
+        reportResult.status === "fulfilled" ? listOf(reportResult.value) : [];
+      const nextRegisterRows =
+        registerResult.status === "fulfilled" ? listOf(registerResult.value) : [];
+      const registerById = new Map(nextRegisterRows.map((row) => [idOf(row).toLowerCase(), row]));
+      const nextReportRows = summaryEmployees.map((row) => {
+        const register =
+          registerById.get(idOf(row).toLowerCase()) ??
+          nextRegisterRows.find(
+            (candidate) =>
+              nameOf(candidate).trim().toLowerCase() === nameOf(row).trim().toLowerCase(),
+          );
+        const attendance = register?.attendance ?? [];
+        const workingDays = attendance.filter((day) =>
+          ["P", "A", "L", "HD", "HALF_DAY", "PRESENT", "ABSENT", "LEAVE"].includes(
+            String(day.status ?? "").toUpperCase(),
+          ),
+        ).length;
+        return {
+          ...row,
+          working_days: row.working_days ?? row.workingDays ?? workingDays,
+        };
+      });
       setReportRows(nextReportRows);
       setPayrollAttendanceSnapshot(period, nextReportRows, employees);
-      if (hoursResult.status === "fulfilled") setWorkHourRows(listOf(hoursResult.value));
-      else setWorkHourRows([]);
-      if (registerResult.status === "fulfilled") setRegisterRows(listOf(registerResult.value));
-      else setRegisterRows([]);
+      setWorkHourRows(
+        nextRegisterRows.map((row) => ({
+          ...row,
+          ...(row.summary ?? {}),
+          days: row.attendance ?? [],
+        })),
+      );
+      setRegisterRows(nextRegisterRows);
       if (locksResult.status === "rejected") {
         setLockStatusUnavailable(true);
         unlockAttendance(period, payrollOrgId);
@@ -185,15 +240,11 @@ export function PayrollAttendanceLockPanel({
         unlockAttendance(period, payrollOrgId);
       }
       if (failures.length) {
-        const reasons = failures
-          .map((result) => result.reason?.response?.data?.detail ?? result.reason?.message)
-          .filter(Boolean);
+        const reasons = failures.map((result) => errorMessage(result.reason)).filter(Boolean);
         setError(reasons.join(" · ") || "Some attendance summaries could not be loaded.");
       }
     } catch (err) {
-      setError(
-        err?.response?.data?.detail ?? err?.message ?? "Could not load attendance from the server.",
-      );
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -280,20 +331,21 @@ export function PayrollAttendanceLockPanel({
   );
   const readyToLock =
     allRows.length > 0 &&
-    allRows.every(({ employee, report, hours, registerEntry }) => {
+    allRows.every(({ employee, report, registerEntry }) => {
       const required = [
         numeric(report, "present", "present_days", "present_count"),
         numeric(report, "absent", "absent_days", "absent_count"),
         numeric(report, "leave", "paidLeave", "leave_days", "leave_count"),
         numeric(report, "working_days", "workingDays", "work_days"),
-        numeric(hours, "half_days", "halfDays", "half_day_count"),
-        numeric(hours, "late_marks", "lateMarks", "late_count"),
-        numeric(hours, "overtime_hours", "overtime", "ot_hours"),
-        numeric(hours, "short_hours", "shortHours"),
       ];
+      const expectedDays = new Date(
+        Number(period.slice(0, 4)),
+        Number(period.slice(5, 7)),
+        0,
+      ).getDate();
       return (
         required.every((value) => value !== null) &&
-        dayRecords(registerEntry ?? report, registerRows, employee, period).length > 0
+        dayRecords(registerEntry ?? report, registerRows, employee, period).length >= expectedDays
       );
     });
 
@@ -326,15 +378,12 @@ export function PayrollAttendanceLockPanel({
     setPunchesLoading(true);
     try {
       const employeeId = idOf(row.employee);
-      const result = await attendanceApi.listPunches({
-        empId: employeeId,
-        month: period,
-        page: 1,
-        pageSize: 500,
-      });
-      setPunches(listOf(result));
+      const detail = await getAllEmployeeAttendanceById(employeeId);
+      const employeeDetail = detail?.data ?? detail;
+      setSelected({ ...row, employeeDetail });
+      setPunches(punchesFromEmployeeDetail(employeeDetail));
     } catch (err) {
-      setPunchError(err?.response?.data?.detail ?? err?.message ?? "Could not load daily punches.");
+      setPunchError(errorMessage(err));
     } finally {
       setPunchesLoading(false);
     }
@@ -495,8 +544,8 @@ export function PayrollAttendanceLockPanel({
 
           {!loading && !locked && allRows.length > 0 && !readyToLock && (
             <div className="border-gold/40 bg-gold/10 rounded-md border p-3 text-xs">
-              Attendance cannot be locked until monthly summary fields and day-wise register records
-              are available for every employee.
+              Attendance cannot be locked until monthly summary and all calendar-day register
+              records are available for every employee.
             </div>
           )}
 
@@ -641,12 +690,22 @@ export function PayrollAttendanceLockPanel({
           </DialogHeader>
           {selected &&
             (() => {
-              const register = dayRecords(
-                selected.registerEntry ?? selected.report,
-                registerRows,
-                selected.employee,
-                period,
-              );
+              const detailDays = selected.employeeDetail?.days;
+              const register = Array.isArray(detailDays)
+                ? detailDays.map((day) => ({
+                    ...day,
+                    attendance_status: day.status,
+                    in_time: day.punch_in,
+                    out_time: day.punch_out,
+                    worked_hours: day.working_hours,
+                  }))
+                : dayRecords(
+                    selected.registerEntry ?? selected.report,
+                    registerRows,
+                    selected.employee,
+                    period,
+                  );
+              const summary = selected.employeeDetail?.summary ?? selected.report;
               register.push(...(Array.isArray(selected.hours.days) ? selected.hours.days : []));
               const byDate = new Map();
               register.forEach((item) => {
@@ -677,15 +736,9 @@ export function PayrollAttendanceLockPanel({
                   )}
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {[
-                      [
-                        "Present",
-                        metric(selected.report, "present", "present_days", "present_count"),
-                      ],
-                      ["Absent", metric(selected.report, "absent", "absent_days", "absent_count")],
-                      [
-                        "Leave",
-                        metric(selected.report, "leave", "paidLeave", "leave_days", "leave_count"),
-                      ],
+                      ["Present", metric(summary, "present", "present_days", "present_count")],
+                      ["Absent", metric(summary, "absent", "absent_days", "absent_count")],
+                      ["Leave", metric(summary, "leave", "paidLeave", "leave_days", "leave_count")],
                       [
                         "Working days",
                         metric(selected.report, "working_days", "workingDays", "work_days"),
@@ -736,14 +789,28 @@ export function PayrollAttendanceLockPanel({
                                   date,
                               );
                             const status = item.status ?? item.attendance_status ?? item.day_status;
+                            const hasPunch = Boolean(
+                              punch ||
+                              item.punch_in ||
+                              item.in_time ||
+                              item.punch_out ||
+                              item.out_time,
+                            );
                             const missingOut =
-                              punch && !(punch.out_time ?? punch.outAt ?? punch.out_time_local);
+                              hasPunch &&
+                              !(
+                                punch?.out_time ??
+                                punch?.outAt ??
+                                punch?.out_time_local ??
+                                item.punch_out ??
+                                item.out_time
+                              );
                             const statusCode = String(status ?? "").toUpperCase();
                             const issue = missingOut
                               ? "Missing punch-out"
-                              : ["P", "PRESENT"].includes(statusCode) && !punch
+                              : ["P", "PRESENT"].includes(statusCode) && !hasPunch
                                 ? "Present without a punch"
-                                : ["A", "ABSENT"].includes(statusCode) && punch
+                                : ["A", "ABSENT"].includes(statusCode) && hasPunch
                                   ? "Absent with a punch"
                                   : "—";
                             const edit = edits[punch?.id] ?? {
@@ -757,8 +824,20 @@ export function PayrollAttendanceLockPanel({
                                 <td className="p-3">
                                   <Badge variant="outline">{statusLabel(status)}</Badge>
                                 </td>
-                                <td className="p-3">{punch?.in_time ?? punch?.inAt ?? "—"}</td>
-                                <td className="p-3">{punch?.out_time ?? punch?.outAt ?? "—"}</td>
+                                <td className="p-3">
+                                  {punch?.in_time ??
+                                    punch?.inAt ??
+                                    item.punch_in ??
+                                    item.in_time ??
+                                    "—"}
+                                </td>
+                                <td className="p-3">
+                                  {punch?.out_time ??
+                                    punch?.outAt ??
+                                    item.punch_out ??
+                                    item.out_time ??
+                                    "—"}
+                                </td>
                                 <td className="p-3">
                                   {item.worked_hours ??
                                     item.workedHours ??
