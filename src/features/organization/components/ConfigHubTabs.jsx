@@ -86,6 +86,7 @@ import {
 } from "@/features/recruitment/data/recruitmentMasterAdapters";
 import {
   useLeaveMaster,
+  leaveMasterStore,
   saveLeaveMasterRow,
   useInsurancePlans,
   saveInsurancePlan,
@@ -1813,6 +1814,8 @@ export function LeaveMasterTab({ section = "both" }) {
   const [leaveOrder, setLeaveOrder] = useState(null); // ids of the leave types loaded from the server
   const [leaveStatus, setLeaveStatus] = useState("loading"); // loading | ready | failed
   const [savingLeave, setSavingLeave] = useState(false);
+  const [viewLeave, setViewLeave] = useState(null); // read-only "View" dialog
+  const [deletingLeaveId, setDeletingLeaveId] = useState(null);
   // Dropdown options (GET /leave-types/credits and /leave-types/approval-chains).
   // The built-in lists are used until (or unless) the server answers.
   const [creditOptions, setCreditOptions] = useState([
@@ -1878,22 +1881,47 @@ export function LeaveMasterTab({ section = "both" }) {
         : [];
 
   // GET /leave-types/{id}: open the leave type with its latest server values.
-  async function openLeaveType(r) {
+  // Used by both View (mode "view") and Edit (mode "edit").
+  const [loadingLeaveId, setLoadingLeaveId] = useState(null);
+  async function openLeaveType(r, mode = "edit") {
+    const open = (record) => (mode === "view" ? setViewLeave(record) : setEdit(record));
+
     if (leaveStatus !== "ready" || !leaveOrder.includes(r.id)) {
-      setEdit(r);
+      open(r);
       return;
     }
 
+    setLoadingLeaveId(r.id);
     try {
       const fresh = await leaveApi.getById(r.id);
-      setEdit(fresh ?? r);
+      open(fresh ?? r);
     } catch (error) {
       console.error("Failed to load leave type:", error);
       toast.error(apiErrorMessage(error, "Unable to load the leave type."));
-      setEdit(r);
+      open(r);
+    } finally {
+      setLoadingLeaveId(null);
     }
   }
-  
+
+  // DELETE /leave-types/{id}, then drop the row from the local leave master store.
+  async function deleteLeaveType(r) {
+    if (!window.confirm(`Delete leave type "${r.name}"?`)) return;
+
+    const fromServer = leaveStatus === "ready" && leaveOrder.includes(r.id);
+    setDeletingLeaveId(r.id);
+    try {
+      if (fromServer) await leaveApi.remove(r.id);
+      leaveMasterStore.set((list) => list.filter((x) => x.id !== r.id));
+      if (fromServer) setLeaveOrder((previous) => (previous ?? []).filter((id) => id !== r.id));
+      toast.success(`${r.name} deleted`);
+    } catch (error) {
+      console.error("Failed to delete leave type:", error);
+      toast.error(apiErrorMessage(error, "Unable to delete the leave type."));
+    } finally {
+      setDeletingLeaveId(null);
+    }
+  }
 
   // POST for a new leave type, PATCH (changed fields only) for an existing one.
   async function submitLeaveType() {
@@ -2065,7 +2093,7 @@ export function LeaveMasterTab({ section = "both" }) {
                       "Approval",
                       "Validity",
                       "Paid",
-                      "",
+                      "Action",
                     ].map((h) => (
                       <th key={h} className="p-2 text-left whitespace-nowrap">
                         {h}
@@ -2096,14 +2124,41 @@ export function LeaveMasterTab({ section = "both" }) {
                       </td>
                       <td className="p-2">{r.paid ? "Yes" : "LOP"}</td>
                       <td className="p-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7"
-                          onClick={() => openLeaveType(r)}
-                        >
-                          Edit
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            title="View"
+                            aria-label={`View leave type ${r.name}`}
+                            disabled={loadingLeaveId === r.id}
+                            onClick={() => openLeaveType(r, "view")}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            title="Edit"
+                            aria-label={`Edit leave type ${r.name}`}
+                            disabled={loadingLeaveId === r.id}
+                            onClick={() => openLeaveType(r, "edit")}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive h-7 w-7"
+                            title="Delete"
+                            aria-label={`Delete leave type ${r.name}`}
+                            disabled={deletingLeaveId === r.id}
+                            onClick={() => deleteLeaveType(r)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -2410,6 +2465,61 @@ export function LeaveMasterTab({ section = "both" }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* View leave type (read-only) */}
+      <Dialog open={!!viewLeave} onOpenChange={(o) => !o && setViewLeave(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{viewLeave?.name}</DialogTitle>
+            <DialogDescription>Leave type detail</DialogDescription>
+          </DialogHeader>
+          {viewLeave && (
+            <dl className="divide-border divide-y text-sm">
+              {[
+                ["Code", viewLeave.code || "—"],
+                ["Annual days", viewLeave.annual],
+                ["Credit", viewLeave.creditFrequency || "—"],
+                ["Carry forward", viewLeave.carryForward ? `≤ ${viewLeave.maxCarry}` : "No"],
+                [
+                  "Encashment",
+                  viewLeave.encashable ? `Year-end on ${viewLeave.encashOn}` : "No",
+                ],
+                ["Clubbable", viewLeave.clubbable ? "Yes" : "No"],
+                ["Max consecutive", viewLeave.maxConsecutive || "—"],
+                [
+                  "Attachment",
+                  viewLeave.needsAttachment ? `> ${viewLeave.attachmentAfterDays} d` : "—",
+                ],
+                ["Approval chain", viewLeave.approvalChain || "—"],
+                ["Validity", viewLeave.validityDays ? `${viewLeave.validityDays} days` : "—"],
+                ["Paid", viewLeave.paid ? "Yes" : "LOP"],
+                ["Applicable to", viewLeave.applicableTo || "All"],
+                ["Status", viewLeave.active === false ? "Inactive" : "Active"],
+              ].map(([k, v]) => (
+                <div key={k} className="grid grid-cols-3 gap-3 py-2">
+                  <dt className="text-muted-foreground text-xs tracking-wide uppercase">{k}</dt>
+                  <dd className="col-span-2">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewLeave(null)}>
+              Close
+            </Button>
+            <Button
+              className="bg-gradient-emerald text-white"
+              onClick={() => {
+                const r = viewLeave;
+                setViewLeave(null);
+                if (r) setEdit(r);
+              }}
+            >
+              <Pencil className="h-4 w-4" /> Edit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!cal} onOpenChange={(o) => !o && setCal(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
