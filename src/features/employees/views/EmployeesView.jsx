@@ -976,14 +976,29 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
         failures.push({ row: index + 2, email: employee.personal_email, message: `Organization "${employee.organization_name}" does not match the active organization.` });
         continue;
       }
-      let companyId = session.companyId || "";
-      if (employee.company_name) {
-        const companyMatches = exactName(companies, employee.company_name).filter((company) => !company.organization_id || !organizationId || company.organization_id === organizationId);
-        if (companyMatches.length !== 1) {
+      let companyId = session.companyId || session.scopeCompanyId || "";
+      // A company-scoped login already supplies the authoritative tenant ID.
+      // Avoid rejecting its uploads because the company-list endpoint omits or
+      // differently scopes the current company in its response.
+      if (employee.company_name && !session.companyId) {
+        const companyMatches = exactName(companies, employee.company_name).filter(
+          (company) =>
+            !company.organization_id ||
+            !organizationId ||
+            String(company.organization_id).trim() === String(organizationId).trim(),
+        );
+        const scopedCompany = companies.find(
+          (company) => String(company.id) === String(companyId),
+        );
+        const scopedCompanyName = scopedCompany?.name || session.companyName || "";
+        const matchesCurrentCompany =
+          companyId &&
+          normalizeOptionName(employee.company_name) === normalizeOptionName(scopedCompanyName);
+        if (companyMatches.length !== 1 && !matchesCurrentCompany) {
           failures.push({ row: index + 2, email: employee.personal_email, message: `Company "${employee.company_name}" must match one configured company in the active organization.` });
           continue;
         }
-        companyId = companyMatches[0].id;
+        if (companyMatches.length === 1) companyId = companyMatches[0].id;
       }
       if (organizationId && isUuid(organizationId)) payload.organization_id = organizationId;
       if (companyId && isUuid(companyId)) payload.company_id = companyId;
