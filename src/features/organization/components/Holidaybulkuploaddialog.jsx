@@ -14,7 +14,7 @@
 import { useState } from "react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
-import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Upload, Download, FileSpreadsheet, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -210,6 +210,21 @@ export async function parseHolidayExcel(file, requiredColumns = EXCEL_COLUMNS) {
   return validateRows(raw);
 }
 
+// Builds and downloads a blank Excel template (headings + two sample rows) that
+// users can fill in and upload again.
+export function downloadHolidayTemplate() {
+  const year = new Date().getFullYear();
+  const rows = [
+    ["National Holidays", "National", year, "Paid", `${year}-01-26`, "Republic Day"],
+    ["National Holidays", "National", year, "Paid", `${year}-08-15`, "Independence Day"],
+  ];
+  const ws = XLSX.utils.aoa_to_sheet([EXCEL_COLUMNS, ...rows]);
+  ws["!cols"] = EXCEL_COLUMNS.map((c) => ({ wch: Math.max(c.length + 4, 18) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Holidays");
+  XLSX.writeFile(wb, "holiday_calendar_template.xlsx");
+}
+
 export function HolidayBulkUploadDialog({ open, onOpenChange, calApi, onDone }) {
   const [file, setFile] = useState(null); // the original Excel file, sent as-is to the API
   const [rows, setRows] = useState([]);
@@ -280,6 +295,20 @@ export function HolidayBulkUploadDialog({ open, onOpenChange, calApi, onDone }) 
         </DialogHeader>
 
         <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-muted-foreground text-xs">
+                No file yet? Download the template, fill in your holidays and upload it.
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={importing}
+                onClick={downloadHolidayTemplate}
+              >
+                <Download className="mr-1 h-4 w-4" /> Export template
+              </Button>
+            </div>
             <label className="border-border hover:bg-muted/30 flex cursor-pointer items-center gap-3 rounded-xl border border-dashed p-4">
               <Upload className="text-primary h-5 w-5 shrink-0" />
               <div className="min-w-0">
