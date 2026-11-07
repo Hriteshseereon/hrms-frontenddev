@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -91,6 +92,16 @@ function Field({ label, children, required }) {
   );
 }
 
+function payrollLineForEmployee(lines, employee, employeeName) {
+  const identifiers = [employee.id, employee.employee_id, employee.employee_code]
+    .filter(Boolean)
+    .map((id) => String(id).toLowerCase());
+  return (
+    lines.find((line) => identifiers.includes(String(line.empId).toLowerCase())) ??
+    lines.find((line) => String(line.name ?? "").trim().toLowerCase() === employeeName.trim().toLowerCase())
+  );
+}
+
 export function PayrollTab() {
   const me = useCurrentUser();
   const orgId = useActiveOrgId();
@@ -111,6 +122,7 @@ export function PayrollTab() {
   const [employees, setEmployees] = useState([]);
   const [employeesLoading, setEmployeesLoading] = useState(false);
   const [employeesError, setEmployeesError] = useState("");
+  const [employeesLoaded, setEmployeesLoaded] = useState(false);
   const [lockVerification, setLockVerification] = useState({
     loading: true,
     verified: false,
@@ -147,6 +159,7 @@ export function PayrollTab() {
       );
     } finally {
       setEmployeesLoading(false);
+      setEmployeesLoaded(true);
     }
   }, []);
   useEffect(() => {
@@ -202,6 +215,7 @@ export function PayrollTab() {
   const [remarks, setRemarks] = useState("");
   const [checkFilter, setCheckFilter] = useState("all");
   const [payRef, setPayRef] = useState("");
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState([]);
 
   const canRun = can(me.role, "payroll.run");
   const canApprove = can(me.role, "payroll.approve");
@@ -238,6 +252,14 @@ export function PayrollTab() {
   }
 
   async function handleRunChecks() {
+    if (!allRunEmployeesSelected) {
+      toast.error("Select all employees in the salary register before running compliance checks.");
+      return;
+    }
+    if (runHasRosterMismatch) {
+      toast.error("This payroll run includes employees outside the current company roster. Rebuild the run from current company payroll profiles before continuing.");
+      return;
+    }
     const verification = await verifySelectedAttendance();
     if (!verification?.verified) {
       toast.error(
@@ -249,17 +271,29 @@ export function PayrollTab() {
   }
 
   async function handleSubmitForApproval() {
+    if (runHasRosterMismatch) {
+      toast.error("This payroll run does not match the current company employee roster.");
+      return;
+    }
     if (!(await requireLockedAttendance())) return;
     act(submitForApproval(run.id, me));
   }
 
   async function handleApproval() {
+    if (runHasRosterMismatch) {
+      toast.error("This payroll run does not match the current company employee roster.");
+      return;
+    }
     if (!(await requireLockedAttendance())) return;
     act(decideRun(run.id, me, "Approved", remarks.trim() || "Approved"));
     setRemarks("");
   }
 
   async function handleProcessRun() {
+    if (runHasRosterMismatch) {
+      toast.error("This payroll run does not match the current company employee roster.");
+      return;
+    }
     if (!(await requireLockedAttendance())) return;
     act(processRun(run.id, me));
   }
@@ -287,23 +321,13 @@ export function PayrollTab() {
   const [stateFilter, setStateFilter] = useState("all");
   const rows = useMemo(() => {
     const lines = run?.lines ?? [];
-    const byId = new Map();
-    const byName = new Map();
-    lines.forEach((line) => {
-      byId.set(String(line.empId).toLowerCase(), line);
-      byName.set(String(line.name).trim().toLowerCase(), line);
-    });
     const apiRows = employees.map((employee) => {
       const name =
         [employee.first_name, employee.last_name].filter(Boolean).join(" ") ||
         employee.name ||
         employee.work_email ||
         "Employee";
-      const line =
-        [employee.id, employee.employee_id, employee.employee_code]
-          .filter(Boolean)
-          .map((id) => byId.get(String(id).toLowerCase()))
-          .find(Boolean) ?? byName.get(String(name).trim().toLowerCase());
+      const line = payrollLineForEmployee(lines, employee, name);
       return {
         ...(line ?? {}),
         empId: line?.empId ?? employee.employee_code ?? employee.employee_id ?? employee.id,
@@ -315,10 +339,7 @@ export function PayrollTab() {
         hasPayslip: Boolean(line),
       };
     });
-    const allRows = employees.length
-      ? apiRows
-      : lines.map((line) => ({ ...line, hasPayslip: true }));
-    return allRows.filter(
+    return apiRows.filter(
       (l) =>
         `${l.name} ${l.empId} ${l.dept} ${l.state}`.toLowerCase().includes(q.toLowerCase()) &&
         (stateFilter === "all" || l.state === stateFilter),
@@ -334,7 +355,68 @@ export function PayrollTab() {
       ].sort(),
     [run, employees],
   );
-  const t = run?.totals;
+  const companyLines = useMemo(
+    () =>
+      employeesLoaded && run
+        ? run.lines.filter((line) =>
+            employees.some((employee) => {
+              const name =
+                [employee.first_name, employee.last_name].filter(Boolean).join(" ") ||
+                employee.name ||
+                employee.work_email ||
+                "Employee";
+              return payrollLineForEmployee([line], employee, name) != null;
+            }),
+          )
+        : [],
+    [employeesLoaded, employees, run],
+  );
+  const runHasRosterMismatch =
+    employeesLoaded && Boolean(run) && companyLines.length !== (run?.lines?.length ?? 0);
+  const runEmployeeIds = useMemo(
+    () => (run?.lines ?? []).map((line) => String(line.empId)),
+    [run?.lines],
+  );
+  const allRunEmployeesSelected =
+    runEmployeeIds.length > 0 && runEmployeeIds.every((id) => selectedEmployeeIds.includes(id));
+  useEffect(() => {
+    setSelectedEmployeeIds([]);
+  }, [run?.id]);
+  const t = useMemo(
+    () =>
+      companyLines.reduce(
+        (totals, line) => ({
+          ...totals,
+          employees: totals.employees + 1,
+          lop: totals.lop + line.lop.lopAmount,
+          lopDays: totals.lopDays + line.lop.lopDays,
+          structureGross: totals.structureGross + line.structureGross,
+          earnedGross: totals.earnedGross + line.earnedGross,
+          pfEmployee: totals.pfEmployee + line.pf.employee,
+          vpf: totals.vpf + line.pf.vpf,
+          esiEmployee: totals.esiEmployee + line.esi.employee,
+          pt: totals.pt + line.pt,
+          tds: totals.tds + line.tds.monthly,
+          deductions: totals.deductions + line.totalDeductions,
+          net: totals.net + line.net,
+        }),
+        {
+          employees: 0,
+          lop: 0,
+          lopDays: 0,
+          structureGross: 0,
+          earnedGross: 0,
+          pfEmployee: 0,
+          vpf: 0,
+          esiEmployee: 0,
+          pt: 0,
+          tds: 0,
+          deductions: 0,
+          net: 0,
+        },
+      ),
+    [companyLines],
+  );
   const errors = run?.checks.filter((c) => c.level === "error" && isOpenCheck(c)) ?? [];
   const warnings = run?.checks.filter((c) => c.level === "warning" && isOpenCheck(c)) ?? [];
   const infos = run?.checks.filter((c) => c.level === "info" && isOpenCheck(c)) ?? [];
@@ -649,6 +731,7 @@ export function PayrollTab() {
                   canRun && (
                     <Button
                       className="bg-gradient-emerald w-full text-white"
+                      disabled={!allRunEmployeesSelected}
                       onClick={handleRunChecks}
                     >
                       <ShieldCheck className="h-4 w-4" />{" "}
@@ -1095,7 +1178,19 @@ export function PayrollTab() {
                         "Checks",
                       ].map((h) => (
                         <th key={h} className="p-3 text-left whitespace-nowrap">
-                          {h}
+                          {h === "Employee" ? (
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                aria-label="Select all employees"
+                                checked={allRunEmployeesSelected}
+                                disabled={!runEmployeeIds.length}
+                                onCheckedChange={(checked) =>
+                                  setSelectedEmployeeIds(checked ? runEmployeeIds : [])
+                                }
+                              />
+                              <span>Employee</span>
+                            </div>
+                          ) : h}
                         </th>
                       ))}
                     </tr>
@@ -1108,10 +1203,27 @@ export function PayrollTab() {
                         onClick={() => l.hasPayslip && setSlip(l)}
                       >
                         <td className="p-3 font-medium">
-                          {l.name}
-                          <div className="text-muted-foreground font-mono text-xs">
-                            {l.empId} · {l.dept}
-                            {l.wageRoll ? " · wage roll" : ""}
+                          <div className="flex items-start gap-2">
+                            <Checkbox
+                              aria-label={`Select ${l.name}`}
+                              checked={selectedEmployeeIds.includes(String(l.empId))}
+                              disabled={!l.hasPayslip}
+                              onClick={(event) => event.stopPropagation()}
+                              onCheckedChange={(checked) =>
+                                setSelectedEmployeeIds((current) =>
+                                  checked
+                                    ? [...new Set([...current, String(l.empId)])]
+                                    : current.filter((id) => id !== String(l.empId)),
+                                )
+                              }
+                            />
+                            <div>
+                              {l.name}
+                              <div className="text-muted-foreground font-mono text-xs">
+                                {l.empId} · {l.dept}
+                                {l.wageRoll ? " · wage roll" : ""}
+                              </div>
+                            </div>
                           </div>
                         </td>
                         <td className="text-muted-foreground p-3">{l.state}</td>
