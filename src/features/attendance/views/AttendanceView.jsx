@@ -9,6 +9,8 @@ import { WorkHoursTab } from "@/features/attendance/components/WorkHoursTab";
 import { DailyWagesTab } from "@/features/attendance/components/DailyWagesTab";
 import { AttendanceReportTab } from "@/features/attendance/components/AttendanceReportTab";
 import { AttendancePayrollLockTab } from "@/features/attendance/components/AttendancePayrollLockTab";
+import { EmployeeAttendanceTab } from "@/features/attendance/components/EmployeeAttendanceTab";
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { can, canOpen, useCurrentUser } from "@/features/auth/data/auth-session";
 
 function AttendancePage() {
@@ -21,6 +23,11 @@ function AttendancePage() {
   const canLockAttendance = can(user.role, "attendance.lock");
   // The Master Data link is only useful to roles that can open /org/masters (HOD / CTO cannot — they would hit Access Denied).
   const canOpenMasters = canOpen(user.role, "/org/masters");
+  // Admin logins read every employee's attendance from the API; everyone else keeps the team register.
+  const apiRole = useSessionStore((s) => (s.isAuthenticated ? s.role : null));
+  const isAdminLogin = ["SUPER_ADMIN", "MASTER_ADMIN", "COMPANY_ADMIN", "BRANCH_ADMIN"].includes(
+    String(apiRole ?? "").toUpperCase(),
+  );
   return (
     <div className="space-y-6">
       <div>
@@ -46,7 +53,7 @@ function AttendancePage() {
           {canConfigure && <TabsTrigger value="workorders">Work Orders</TabsTrigger>}
         </ScrollTabsList>
         <TabsContent value="log" className="pt-4">
-          <AttendanceLogTab />
+          {isAdminLogin ? <EmployeeAttendanceTab /> : <AttendanceLogTab />}
         </TabsContent>
         <TabsContent value="report" className="pt-4">
           <AttendanceReportTab />

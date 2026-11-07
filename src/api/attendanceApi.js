@@ -2,6 +2,38 @@ import axios from "./SuperAdmin_axios";
 
 const BASE = "/attendance";
 
+/** Drops empty filters so the backend only sees the ones the admin actually set. */
+const clean = (params = {}) =>
+  Object.fromEntries(
+    Object.entries(params).filter(([, v]) => v !== "" && v !== null && v !== undefined && v !== "all"),
+  );
+
+/** Admin "Employee Attendance" (all employees in scope): GET /attendance/employee-attendance/* */
+export const employeeAttendanceApi = {
+  daily: async (params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/daily`, { params: clean(params) });
+    return data;
+  },
+  weekly: async (params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/weekly`, { params: clean(params) });
+    return data;
+  },
+  monthly: async (params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/monthly`, { params: clean(params) });
+    return data;
+  },
+  summary: async (params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/summary`, { params: clean(params) });
+    return data;
+  },
+  employee: async (employeeId, params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/employees/${employeeId}`, {
+      params: clean(params),
+    });
+    return data;
+  },
+};
+
 export const attendanceApi = {
   // 1. Mark Punch In
   punchIn: async (
