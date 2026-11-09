@@ -161,20 +161,17 @@ export const attendanceApi = {
     const { data } = await axios.get(`${BASE}/work-hours`, { params });
     return data;
   },
-  getLocks: async (companyId) => {
-    const { data } = await axios.get(`${BASE}/locks`, {
-      params: companyId ? { companyId } : {},
-    });
+  // The company comes from the login (or X-Company-Id for a Super Admin); no scope is sent here.
+  getLocks: async () => {
+    const { data } = await axios.get(`${BASE}/locks`);
     return data;
   },
-  lockPayrollMonth: async (period, companyId) => {
-    const { data } = await axios.post(`${BASE}/locks`, { period, companyId });
+  lockPayrollMonth: async (period) => {
+    const { data } = await axios.post(`${BASE}/locks`, { period });
     return data;
   },
-  unlockPayrollMonth: async (period, companyId) => {
-    const { data } = await axios.delete(`${BASE}/locks/${encodeURIComponent(period)}`, {
-      params: companyId ? { companyId } : {},
-    });
+  unlockPayrollMonth: async (period) => {
+    const { data } = await axios.delete(`${BASE}/locks/${encodeURIComponent(period)}`);
     return data;
   },
 

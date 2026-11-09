@@ -33,7 +33,6 @@ import {
 import { cn } from "@/lib/utils";
 import { payrollRunApi, detailText } from "@/api/payrollRunApi";
 import { useCan } from "@/features/auth/data/module-access";
-import { useCompanyScope, CompanyScopeSelect } from "@/features/organization/components/CompanyScopeSelect";
 
 const STATUS_TONE = {
   Draft: "bg-muted text-muted-foreground border-border",
@@ -201,11 +200,11 @@ function LineDrawer({ runId, employeeId, onClose }) {
   );
 }
 
-function AdjustmentsDialog({ run, company, onClose, onChanged }) {
+function AdjustmentsDialog({ run, onClose, onChanged }) {
   const [items, setItems] = useState([]);
   const [form, setForm] = useState({ employee_id: "", label: "", kind: "earning", amount: "" });
   const [busy, setBusy] = useState(false);
-  const base = { period: run.period, ...(company ? { company_id: company } : {}) };
+  const base = { period: run.period };
 
   const load = useCallback(() => {
     payrollRunApi
@@ -213,7 +212,7 @@ function AdjustmentsDialog({ run, company, onClose, onChanged }) {
       .then((r) => setItems(r.items ?? []))
       .catch((e) => toast.error(detailText(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.period, company]);
+  }, [run.period]);
   useEffect(load, [load]);
 
   const nameOf = (id) => run.lines?.find((l) => l.employee_id === id)?.employee_name ?? id;
@@ -332,7 +331,7 @@ function Stepper({ run }) {
   );
 }
 
-function RunDetail({ runId, company, onBack, onChanged }) {
+function RunDetail({ runId, onBack, onChanged }) {
   const can = useCan();
   const [run, setRun] = useState(null);
   const [error, setError] = useState("");
@@ -725,14 +724,13 @@ function RunDetail({ runId, company, onBack, onChanged }) {
         />
       )}
       {lineId && <LineDrawer runId={run.id} employeeId={lineId} onClose={() => setLineId(null)} />}
-      {adjOpen && <AdjustmentsDialog run={run} company={company} onClose={() => setAdjOpen(false)} onChanged={() => {}} />}
+      {adjOpen && <AdjustmentsDialog run={run} onClose={() => setAdjOpen(false)} onChanged={() => {}} />}
     </div>
   );
 }
 
 export function PayrollRunsTab() {
   const can = useCan();
-  const scope = useCompanyScope();
   const [status, setStatus] = useState("");
   const [period, setPeriod] = useState("");
   const [page, setPage] = useState(1);
@@ -743,29 +741,24 @@ export function PayrollRunsTab() {
   const [create, setCreate] = useState({ period: currentPeriod(), pay_date: lastDayOf(currentPeriod()) });
   const [creating, setCreating] = useState(false);
 
-  const company = scope.isSuper ? scope.companyId : "";
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
     payrollRunApi
-      .list({ status, period, page, limit: 20, company_id: company })
+      .list({ status, period, page, limit: 20 })
       .then((d) => alive && setData(d))
       .catch((e) => alive && (setData({ items: [], total: 0 }), toast.error(detailText(e))))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [status, period, page, company, version]);
+  }, [status, period, page, version]);
 
   const createRun = async () => {
-    if (scope.isSuper && !company) {
-      toast.error("Select a company first.");
-      return;
-    }
     setCreating(true);
     try {
-      const run = await payrollRunApi.create({ ...create, company_id: company });
+      const run = await payrollRunApi.create(create);
       toast.success(`Payroll run for ${run.period} created`);
       setVersion((v) => v + 1);
       setSelected(run.id);
@@ -782,7 +775,6 @@ export function PayrollRunsTab() {
     return (
       <RunDetail
         runId={selected}
-        company={company}
         onBack={() => {
           setSelected(null);
           setVersion((v) => v + 1);
@@ -796,7 +788,6 @@ export function PayrollRunsTab() {
       {can("payroll.run") && (
         <Card className="shadow-card">
           <CardContent className="flex flex-wrap items-end gap-3 p-4">
-            <CompanyScopeSelect scope={scope} allowAll={false} />
             <label className="text-xs">
               <span className="text-muted-foreground block font-medium">Period</span>
               <Input

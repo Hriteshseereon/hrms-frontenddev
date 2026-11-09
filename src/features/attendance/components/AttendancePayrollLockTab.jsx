@@ -69,14 +69,6 @@ export function AttendancePayrollLockTab() {
     };
   }, []);
 
-  const companyId = useMemo(
-    () =>
-      employees.find((employee) => employee.company_id)?.company_id ??
-      employees.find((employee) => employee.organization_id)?.organization_id ??
-      orgId,
-    [employees, orgId],
-  );
-
   return (
     <div className="space-y-4">
       <Card className="shadow-card">
@@ -103,7 +95,6 @@ export function AttendancePayrollLockTab() {
       </Card>
       <PayrollAttendanceLockPanel
         period={period}
-        companyId={companyId}
         payrollOrgId={orgId}
         canLock={canLock}
         actorName={user.name}

@@ -120,7 +120,6 @@ const statusLabel = (value) =>
 
 export function PayrollAttendanceLockPanel({
   period,
-  companyId,
   payrollOrgId,
   canLock,
   actorName,
@@ -152,7 +151,7 @@ export function PayrollAttendanceLockPanel({
         attendanceApi.getPayrollSummary(period),
         attendanceApi.getPayrollWorkHours(period),
         attendanceApi.getPayrollRegister(period),
-        attendanceApi.getLocks(companyId),
+        attendanceApi.getLocks(),
       ]);
       const [reportResult, hoursResult, registerResult, locksResult] = results;
       const failures = results.filter((result) => result.status === "rejected");
@@ -212,7 +211,7 @@ export function PayrollAttendanceLockPanel({
     } finally {
       setLoading(false);
     }
-  }, [period, companyId, payrollOrgId, employees]);
+  }, [period, payrollOrgId, employees]);
 
   useEffect(() => {
     loadAttendance();
@@ -407,7 +406,7 @@ export function PayrollAttendanceLockPanel({
   const lockMonth = async () => {
     setSavingLock(true);
     try {
-      const response = await attendanceApi.lockPayrollMonth(period, companyId);
+      const response = await attendanceApi.lockPayrollMonth(period);
       lockAttendance(period, actorName, payrollOrgId);
       setLocks((previous) => {
         const record = response?.lock ?? response ?? { by: actorName };
@@ -428,7 +427,7 @@ export function PayrollAttendanceLockPanel({
   const unlockMonth = async () => {
     setSavingLock(true);
     try {
-      await attendanceApi.unlockPayrollMonth(period, companyId);
+      await attendanceApi.unlockPayrollMonth(period);
       unlockAttendance(period, payrollOrgId);
       toast.success(`${periodName(period)} attendance unlocked`);
       await loadAttendance();

@@ -126,7 +126,6 @@ const baseParams = (f, scope) => ({
   office: f.office,
   shift: f.shift.trim(),
   empId: f.empId.trim(),
-  companyId: scope.isSuper ? scope.companyId : "",
 });
 
 const EMPTY = { month: currentMonth(), office: "", dept: "", shift: "", empId: "", band: "", sort: "" };
