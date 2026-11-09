@@ -357,15 +357,6 @@ export function PayrollTab() {
         (stateFilter === "all" || l.state === stateFilter),
     );
   }, [run, q, stateFilter, employees]);
-  const states = useMemo(
-    () =>
-      registerLines.filter(
-        (l) =>
-          `${l.name} ${l.empId} ${l.dept} ${l.state}`.toLowerCase().includes(q.toLowerCase()) &&
-          (stateFilter === "all" || l.state === stateFilter),
-      ),
-    [registerLines, q, stateFilter],
-  );
   const states = useMemo(() => [...new Set(registerLines.map((l) => l.state))].sort(), [registerLines]);
   const t = run?.lines.length ? run.totals : null;
   const errors = run?.checks.filter((c) => c.level === "error" && isOpenCheck(c)) ?? [];
