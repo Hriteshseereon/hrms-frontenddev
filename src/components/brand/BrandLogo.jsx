@@ -1,16 +1,14 @@
 
-import { useResolvedBrand } from "@/features/administration/data/brand-config";
-import { activeOrgStore } from "@/features/organization/data/group-data";
+import { BRAND_LOGO_URL, BRAND_NAME } from "@/config/brand";
 
 export function BrandLogo({ variant = "light" }) {
   const isDark = variant === "dark";
-  const brand = useResolvedBrand(activeOrgStore.use());
 
   return (
     <div className="flex items-center gap-2.5">
       <img
-        src={brand.logo}
-        alt="WCS HRMS logo"
+        src={BRAND_LOGO_URL}
+        alt={`${BRAND_NAME} logo`}
         className="shadow-premium ring-gold/40 h-9 w-9 rounded-xl bg-white object-contain p-0.5 ring-1"
       />
 

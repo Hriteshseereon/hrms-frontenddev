@@ -4,6 +4,7 @@
 // fallback, so a payslip or letter generated inside an org always carries that
 // org's logo, name, address and footer. UI-only store.
 import { createPersistentStore } from "@/lib/persist";
+import { BRAND_LOGO_URL } from "@/config/brand";
 import { SEEREON_LOGO_DATA_URL } from "@/features/administration/data/brand-logo";
 
 /**
@@ -65,6 +66,8 @@ export const orgBrandStore = createPersistentStore("seereon.brand.orgs.v1", {
  */
 const safeBrand = (b) => ({
   ...b,
+  // One logo for the whole product (src/config/brand.js): exported PDFs and letters use it too.
+  logo: BRAND_LOGO_URL,
   accent: /^#[0-9a-f]{3,8}$/i.test(String(b.accent ?? "").trim()) ? b.accent.trim() : "#0f766e",
 });
 
