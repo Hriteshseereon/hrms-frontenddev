@@ -4,6 +4,7 @@ import { getEmployees } from "@/api/employeeApi";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { useCurrentUser, can } from "@/features/auth/data/auth-session";
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import { PayrollAttendanceLockPanel } from "@/features/payroll/components/PayrollAttendanceLockPanel";
 
@@ -29,7 +30,10 @@ export function AttendancePayrollLockTab() {
   const [period, setPeriod] = useState(currentPeriod);
   const [employees, setEmployees] = useState([]);
   const [employeeError, setEmployeeError] = useState("");
-  const canLock = can(user.role, "attendance.lock");
+  const apiLock = useSessionStore(
+    (s) => s.isAuthenticated && (s.permissions ?? []).includes("attendance.lock"),
+  );
+  const canLock = can(user.role, "attendance.lock") || apiLock;
 
   useEffect(() => {
     let cancelled = false;

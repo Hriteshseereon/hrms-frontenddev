@@ -2,10 +2,22 @@ import { DollarSign, FileText, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollTabsList } from "@/components/common/ScrollTabs";
 import { PayrollTab } from "@/features/payroll/components/PayrollTab";
+import { PayrollRunsTab } from "@/features/payroll/components/PayrollRunsTab";
 import { PayslipsTab } from "@/features/payroll/components/PayslipsTab";
 import { LoansTab } from "@/features/payroll/components/LoansTab";
+import { useSessionStore } from "@/features/auth/data/session-store";
+import { canDo } from "@/features/auth/data/module-access";
 
 function FinancePage() {
+  // Signed in through the API: payroll runs come from the server and need a payroll.* permission.
+  const apiSession = useSessionStore((s) => s.isAuthenticated);
+  const permissions = useSessionStore((s) => s.permissions);
+  const role = useSessionStore((s) => s.role);
+  const canSeePayroll =
+    !apiSession ||
+    canDo("payroll.view", { isAuthenticated: apiSession, role, permissions }) ||
+    (permissions ?? []).some((p) => String(p).startsWith("payroll."));
+
   return (
     <div className="space-y-6">
       <div>
@@ -31,7 +43,16 @@ function FinancePage() {
           </TabsTrigger>
         </ScrollTabsList>
         <TabsContent value="payroll" className="pt-4">
-          <PayrollTab />
+          {!apiSession ? (
+            <PayrollTab />
+          ) : canSeePayroll ? (
+            <PayrollRunsTab />
+          ) : (
+            <div className="text-muted-foreground rounded-md border p-10 text-center text-sm">
+              <div className="text-foreground text-base font-semibold">No access</div>
+              You do not have permission to open payroll. Ask your administrator if you need it.
+            </div>
+          )}
         </TabsContent>
         <TabsContent value="payslips" className="pt-4">
           <PayslipsTab />

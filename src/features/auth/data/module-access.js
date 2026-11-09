@@ -81,10 +81,16 @@ export function useModuleAccess() {
       .then((me) => useSessionStore.getState().applyMe(me))
       .catch(() => {});
   }, [apiSession]);
+  const role = useSessionStore((s) => s.role);
+  const permissions = useSessionStore((s) => s.permissions);
   const keys = new Set(keysOf(permitted));
   return (to) => {
     if (!apiSession) return true; // mock / signed-out preview: no API session to gate by
     const key = moduleOfRoute(to);
-    return !key || keys.has(key);
+    if (key && !keys.has(key)) return false;
+    // Payroll also needs a payroll.* permission (admins hold everything in their scope).
+    if (key === "payroll" && !isAdminRole(role))
+      return (permissions ?? []).some((p) => String(p).startsWith("payroll."));
+    return true;
   };
 }

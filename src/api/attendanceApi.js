@@ -144,6 +144,11 @@ export const attendanceApi = {
     const { data } = await axios.get(`${BASE}/report`, { params: { month } });
     return data;
   },
+  /** GET /attendance/report with the screen filters (dept, office, shift, empId, band, sort, companyId). */
+  getReport: async (params) => {
+    const { data } = await axios.get(`${BASE}/report`, { params: clean(params) });
+    return data;
+  },
   getPayrollRegister: async (month) => {
     const { data } = await axios.get(`${BASE}/register`, {
       params: { month, view: "month" },
@@ -151,7 +156,9 @@ export const attendanceApi = {
     return data;
   },
   getPayrollWorkHours: async (month) => {
-    const { data } = await axios.get(`${BASE}/work-hours`, { params: { month } });
+    // A string is the month alone (lock panel); an object carries the screen filters too.
+    const params = typeof month === "string" ? { month } : clean(month);
+    const { data } = await axios.get(`${BASE}/work-hours`, { params });
     return data;
   },
   getLocks: async (companyId) => {
