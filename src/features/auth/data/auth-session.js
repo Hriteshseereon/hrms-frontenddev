@@ -779,6 +779,8 @@ export const ROLE_NAV = {
   ],
   // Finance office — money, compliance and finance clearance on exits only.
   CFO: ["/org/asset-rollup", ...COMMON_ORG, ...FINANCE, ...PAYROLL_REPORTS, "/org/archive"],
+  "Payroll Admin": ["/org/finance", "/org/payroll-reports"],
+  Accountant: ["/org/finance", "/org/payroll-reports"],
   // Technology office — delivery, projects and engineering people operations.
   CTO: [
     ...COMMON_ORG,
@@ -1015,6 +1017,8 @@ export const ROLE_ACTIONS = {
     "filing.approve",
     "filing.file",
   ],
+  "Payroll Admin": ["payroll.run", "payroll.approve"],
+  Accountant: ["payroll.process"],
   CTO: [
     "exit.submit",
     "exit.manager.decide",
@@ -1136,7 +1140,7 @@ export const ROLE_ACTIONS = {
  * Access roles a person may give a new hire. The hire dialog offered CHRO / CFO / COO / CTO to anyone who could open it,
  * so a Branch Admin or HR could create a login more powerful than their own.
  */
-const HIRE_ALL = ["Employee", "Manager", "HOD", "HR", "CTO", "CFO", "COO", "CHRO"];
+const HIRE_ALL = ["Employee", "Manager", "HOD", "HR", "Payroll Admin", "Accountant", "CTO", "CFO", "COO", "CHRO"];
 export function hireableRoles(actorRole) {
   if (["SuperAdmin", "Admin", "CEO", "CHRO"].includes(actorRole)) return HIRE_ALL;
   if (actorRole === "BranchAdmin") return ["Employee", "Manager", "HOD"];
@@ -1177,6 +1181,14 @@ export const ROLE_SUMMARY = {
   CFO: {
     description: "Full control of finance, payroll, tax, claims and exit finance clearance.",
     scope: "Finance · Payroll · Tax · Claims",
+  },
+  "Payroll Admin": {
+    description: "Creates payroll runs, checks employee calculations and submits compliant payroll for approval.",
+    scope: "Payroll runs · Employee corrections · Payroll Admin approval",
+  },
+  Accountant: {
+    description: "Finalizes approved payroll, generates payslips and records salary transfer references.",
+    scope: "Payroll processing · Salary payment records",
   },
   CTO: {
     description:

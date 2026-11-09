@@ -35,7 +35,7 @@ import {
 import { PayslipBreakdown } from "@/features/payroll/components/PayslipBreakdown";
 import { createPersistentStore } from "@/lib/persist";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
-import { getEmployees } from "@/api/employeeApi";
+import { useActiveOrgId } from "@/features/organization/data/group-data";
 
 const payslipConfigStore = createPersistentStore(
   "seereon.payroll.payslip-config",
@@ -109,53 +109,19 @@ export function payslipExportOpts(slip, status, cfg = payslipConfigStore.get()) 
 
 export function PayslipsTab() {
   const inScope = useScopeMatch();
-  const [employees, setEmployees] = useState([]);
-  const [employeesLoading, setEmployeesLoading] = useState(true);
-  const [employeesError, setEmployeesError] = useState("");
-  useEffect(() => {
-    let cancelled = false;
-    async function loadEmployees() {
-      setEmployeesLoading(true);
-      setEmployeesError("");
-      try {
-        const all = [];
-        let page = 1;
-        let total = Infinity;
-        while (all.length < total) {
-          const response = await getEmployees({ page, limit: 100 });
-          const payload = response?.data ?? response;
-          const items = Array.isArray(payload)
-            ? payload
-            : payload?.items ??
-              payload?.results ??
-              (Array.isArray(payload?.data) ? payload.data : payload?.data?.items) ??
-              [];
-          if (!Array.isArray(items) || !items.length) break;
-          all.push(...items);
-          const reportedTotal = Number(payload?.total ?? payload?.total_count);
-          if (Number.isFinite(reportedTotal) && reportedTotal >= 0) total = reportedTotal;
-          if (items.length < 100) break;
-          page += 1;
-        }
-        if (!cancelled) setEmployees(all);
-      } catch (error) {
-        if (!cancelled) {
-          setEmployeesError(
-            error?.response?.data?.detail ?? error?.message ?? "Could not load employees.",
-          );
-        }
-      } finally {
-        if (!cancelled) setEmployeesLoading(false);
-      }
-    }
-    loadEmployees();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  const runs = usePayrollRuns()
-    .filter((r) => inScope(r.orgId) && (r.status === "Processed" || r.status === "Paid"))
-    .sort((a, b) => (a.period < b.period ? 1 : -1));
+  const orgId = useActiveOrgId();
+  const allRuns = usePayrollRuns();
+  const runs = useMemo(
+    () =>
+      allRuns
+        .filter(
+          (r) =>
+            (inScope(r.orgId) || r.orgId === orgId) &&
+            (r.status === "Processed" || r.status === "Paid"),
+        )
+        .sort((a, b) => (a.period < b.period ? 1 : -1)),
+    [allRuns, inScope, orgId],
+  );
   const config = payslipConfigStore.use();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(config);
@@ -205,10 +171,7 @@ export function PayslipsTab() {
                   {config.title} — {config.brandName}
                 </div>
                 <div className="text-muted-foreground text-xs">
-                  Payslips exist only for processed payroll runs · {runs.length} run(s) available ·
-                  {employeesLoading
-                    ? " Loading employee directory…"
-                    : ` ${employees.length} employee(s) loaded from the employee API ·`}{" "}
+                  Available for processed or paid payroll runs · {runs.length} run(s) available ·
                   Logo: {config.brandLogo || "—"}
                 </div>
                 {employeesError && (
@@ -471,8 +434,7 @@ export function PayslipsTab() {
       ) : (
         <Card className="shadow-card">
           <CardContent className="text-muted-foreground p-10 text-center">
-            No processed payroll run yet — payslips are generated when a run is processed on the
-            Payroll tab.
+            No processed or paid payroll runs are available for this organisation yet. Payslips are generated after final payroll is run.
           </CardContent>
         </Card>
       )}

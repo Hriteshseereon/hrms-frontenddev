@@ -334,7 +334,7 @@ export function labourWelfareFund(state, calendarMonth) {
  * @property {{ enabled: boolean, employeeRate: number, employerRate: number, epsRate: number, edliRate: number, adminRate: number, wageCeiling: number, restrictToCeiling: boolean, employerOnActual: boolean, remittanceDueDay: number, ecrVersion: "2.0" }} pf
  * @property {{ enabled: boolean, employeeRate: number, employerRate: number, wageThreshold: number, disabledThreshold: number, remittanceDueDay: number, lockMembershipToPeriod: boolean }} esi
  * @property {{ defaultRegime: TaxRegime, standardDeductionNew: number, cessRate: number, rebate87aLimitNew: number, rebate87aMaxNew: number, remittanceDueDay: number, quarterlyReturnForm: "24Q", npsEmployerDeductionCapNewPct: number }} tds
- * @property {{ approvalLevels: ("Payroll Admin" | "HR Manager" | "Finance" | "CFO")[], enforceMakerChecker: boolean, blockOnErrors: boolean, requireAttendanceLock: boolean, payDay: number }} payroll
+ * @property {{ approvalLevels: ("Payroll Admin" | "HR Manager" | "Finance" | "CFO")[], enforceMakerChecker: boolean, blockOnErrors: boolean, payDay: number }} payroll
  * @property {string} updatedOn
  * @property {string} updatedBy
  */
@@ -381,10 +381,9 @@ export const DEFAULT_STATUTORY_CONFIG = {
     npsEmployerDeductionCapNewPct: 14,
   },
   payroll: {
-    approvalLevels: ["Payroll Admin", "Finance"],
+    approvalLevels: ["Payroll Admin"],
     enforceMakerChecker: true,
     blockOnErrors: true,
-    requireAttendanceLock: true,
     payDay: 1,
   },
   updatedOn: "2026-04-01",

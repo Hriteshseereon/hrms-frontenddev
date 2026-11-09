@@ -37,11 +37,7 @@ import {
   NEW_REGIME_SLABS,
   policyForState,
 } from "@/features/payroll/data/statutory-data";
-import {
-  computeLop,
-  hasPayrollAttendanceSnapshot,
-  isAttendanceLocked,
-} from "@/features/attendance/data/attendance-pattern";
+import { computeLop } from "@/features/attendance/data/attendance-pattern";
 import {
   monthlyNps,
   monthlyVpf,
@@ -224,6 +220,13 @@ export function payrollRoster(orgId = ORGANIZATION.id) {
     ...WAGE_ROLL.filter((w) => w.orgId === orgId).map(withStatutoryFix),
   ];
 }
+
+const rosterForRun = (run) => {
+  const roster = payrollRoster(run.orgId);
+  return Array.isArray(run.employeeIds)
+    ? roster.filter((employee) => run.employeeIds.includes(employee.id))
+    : roster;
+};
 
 export const rosterEmployee = (empId) => {
   const dir = findEmployee(empId);
@@ -717,15 +720,6 @@ export const computePayslipFor = (empId, period) => {
  */
 
 export const CHECK_GUIDE = {
-  "ATT-LOCK": {
-    title: "Attendance month not locked",
-    area: "Attendance",
-    owner: "HR / Attendance admin",
-    cause:
-      "Payroll policy requires the attendance register to be frozen before LOP is computed, so late punches or regularisations cannot change pay after checks.",
-    fix: "Lock the month from the Workflow actions card (or Attendance → Payroll Sync) and re-run checks.",
-    hrFixable: true,
-  },
   "NET-NEG": {
     title: "Negative net pay",
     area: "Payroll",
@@ -896,18 +890,9 @@ export function runComplianceChecks(
   lines,
   period,
   cfg = getStatutoryConfig(),
-  /** The run's entity — the attendance lock is per company, not whichever entity is active on screen. */
-  orgId,
 ) {
   const out = [];
   const dim = new Date(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0).getDate();
-  if (!isAttendanceLocked(period, orgId)) {
-    out.push({
-      code: "ATT-LOCK",
-      level: "error",
-      message: `Attendance for ${periodLabel(period)} is not locked. Lock it on the Attendance → Payroll Attendance Lock tab before running payroll.`,
-    });
-  }
   for (const l of lines) {
     const tag = { empId: l.empId, employee: l.name };
     if (l.net < 0)
@@ -1175,117 +1160,32 @@ function buildRun(partial) {
   const cfg = getStatutoryConfig();
   const preparedOn = partial.preparedOn ?? now();
   // Employees serving notice are still paid until their last working day.
-  const lines = payrollRoster(partial.orgId).map((e) => computePayslip(e, partial.period, cfg));
+  const roster = payrollRoster(partial.orgId);
+  const employeeIds = partial.employeeIds ?? roster.map((e) => e.id);
+  const lines = roster
+    .filter((employee) => employeeIds.includes(employee.id))
+    .map((e) => computePayslip(e, partial.period, cfg));
   return {
     ...partial,
+    employeeIds,
     frequency: partial.frequency ?? "Monthly",
     status: partial.status ?? "Draft",
     preparedOn,
     checks: [],
     approvals: [],
-    approvalLevels: cfg.payroll.approvalLevels,
+    approvalLevels: partial.approvalLevels ?? cfg.payroll.approvalLevels,
     lines,
     totals: totalsOf(lines),
     history: [{ at: preparedOn, by: partial.preparedBy.name, action: "Payroll run created" }],
   };
 }
 
-/** Seed: two completed months and the current month as a draft, so every workflow state is visible on first load. */
-function seedRuns() {
-  const hr = { id: "SRN-0004", name: "Varen Mishra" };
-  const mk = (period, status, extra = {}) => {
-    const run = buildRun({
-      id: `PR-${period.replace("-", "")}`,
-      orgId: ORGANIZATION.id,
-      title: `${periodLabel(period)} Salary`,
-      period,
-      payDate: dueDate(period, 1),
-      bankAccount: "HDFC Bank — Payroll ••4821",
-      preparedBy: hr,
-      status,
-      // Seeds must be deterministic (same on server and client) — never stamp them with today's date.
-      preparedOn: `${period}-28`,
-    });
-    return { ...run, ...extra };
-  };
-  const done = (period, checkedOn, approvedOn, processedOn, paidOn) =>
-    mk(period, "Paid", {
-      preparedOn: checkedOn,
-      checkedOn,
-      checks: [
-        {
-          id: "PT-STATE:RUN",
-          code: "PT-STATE",
-          level: "info",
-          status: "Open",
-          message: "Odisha / Maharashtra / Tamil Nadu Professional Tax applied.",
-        },
-      ],
-      approvals: [
-        {
-          level: "Payroll Admin",
-          by: "Varen Mishra",
-          byId: "SRN-0004",
-          on: checkedOn,
-          decision: "Approved",
-          remarks: "Register reconciled with attendance.",
-        },
-        {
-          level: "Finance",
-          by: "Saras Venkatesh",
-          byId: "SRN-0002",
-          on: approvedOn,
-          decision: "Approved",
-          remarks: "Bank file authorised.",
-        },
-      ],
-      processedOn,
-      processedBy: "Varen Mishra",
-      paidOn,
-      paymentRef: `NEFT-BULK-${period.replace("-", "")}`,
-      history: [
-        { at: checkedOn, by: "Varen Mishra", action: "Run created & compliance checks passed" },
-        { at: approvedOn, by: "Saras Venkatesh", action: "Approved at Finance level" },
-        { at: processedOn, by: "Varen Mishra", action: "Processed — payslips generated" },
-        { at: paidOn, by: "Saras Venkatesh", action: "Bank transfer confirmed" },
-      ],
-    });
-  // July is left at "Checks Failed" so the drill-down (resolve here / send to concerned person) is visible on first load.
-  const july = mk("2026-07", "Draft");
-  let julyChecks = [];
-  try {
-    julyChecks = runComplianceChecks(july.lines, "2026-07", getStatutoryConfig()).filter(
-      (c) => c.code !== "ATT-LOCK",
-    );
-  } catch {
-    julyChecks = [];
-  }
-  const julyErrors = julyChecks.filter((c) => c.level === "error").length;
-  const julyRun = {
-    ...july,
-    checks: julyChecks,
-    checkedOn: julyChecks.length ? "2026-07-28 10:12" : undefined,
-    status: julyChecks.length ? (julyErrors ? "Checks Failed" : "Checks Passed") : "Draft",
-    history: julyChecks.length
-      ? [
-          ...july.history,
-          {
-            at: "2026-07-28 10:12",
-            by: hr.name,
-            action: `Compliance checks run — ${julyErrors} open error(s), ${julyChecks.filter((c) => c.level === "warning").length} warning(s)`,
-          },
-        ]
-      : july.history,
-  };
-  return [
-    julyRun,
-    done("2026-06", "2026-06-29", "2026-06-30", "2026-06-30", "2026-07-01"),
-    done("2026-05", "2026-05-29", "2026-05-30", "2026-05-30", "2026-06-01"),
-    done("2026-04", "2026-04-29", "2026-04-30", "2026-04-30", "2026-05-01"),
-  ];
+const DEMO_RUN_IDS = new Set(["PR-202607", "PR-202606", "PR-202605", "PR-202604"]);
+export const payrollRunStore = createPersistentStore("seereon.payroll.runs.v3", []);
+// Remove only the old built-in payroll examples, keeping any runs created by the user.
+if (typeof window !== "undefined") {
+  payrollRunStore.set((list) => list.filter((run) => !DEMO_RUN_IDS.has(run.id)));
 }
-
-export const payrollRunStore = createPersistentStore("seereon.payroll.runs.v3", seedRuns());
 runStoreRef = payrollRunStore;
 export const usePayrollRuns = () => payrollRunStore.use();
 export const runById = (id) => payrollRunStore.get().find((r) => r.id === id) ?? null;
@@ -1297,6 +1197,69 @@ const log = (r, by, action) => ({
   ...r,
   history: [...r.history, { at: now(), by, action }],
 });
+
+export function setRunEmployees(id, employeeIds, user) {
+  const run = runById(id);
+  if (!run) return { ok: false, message: "Run not found." };
+  if (!["Draft", "Checks Failed", "Checks Passed"].includes(run.status))
+    return { ok: false, message: "Employee selection is locked after payroll is submitted." };
+  const availableIds = new Set(payrollRoster(run.orgId).map((employee) => employee.id));
+  const selectedIds = [...new Set(employeeIds)].filter((empId) => availableIds.has(empId));
+  if (selectedIds.length === 0)
+    return { ok: false, message: "Select at least one employee before running payroll." };
+  const cfg = getStatutoryConfig();
+  const lines = payrollRoster(run.orgId)
+    .filter((employee) => selectedIds.includes(employee.id))
+    .map((employee) => computePayslip(employee, run.period, cfg));
+  update(id, (current) =>
+    log(
+      {
+        ...current,
+        employeeIds: selectedIds,
+        lines,
+        totals: totalsOf(lines),
+        status: "Draft",
+        checks: [],
+        approvals: [],
+      },
+      user.name,
+      `Payroll register prepared for ${lines.length} employee(s)`,
+    ),
+  );
+  return { ok: true, message: `Register prepared for ${lines.length} employee(s).` };
+}
+
+export function restartRunForNewFlow(id, user) {
+  const run = runById(id);
+  if (!run) return { ok: false, message: "Run not found." };
+  if (!["Pending Approval", "Approved"].includes(run.status))
+    return { ok: false, message: "Only an unprocessed approval-stage run can move to the new flow." };
+  const cfg = getStatutoryConfig();
+  const roster = payrollRoster(run.orgId);
+  const employeeIds = roster.map((employee) => employee.id);
+  const lines = roster.map((employee) => computePayslip(employee, run.period, cfg));
+  update(id, (current) =>
+    log(
+      {
+        ...current,
+        employeeIds,
+        lines,
+        totals: totalsOf(lines),
+        checks: [],
+        approvals: [],
+        approvalLevels: ["Payroll Admin"],
+        status: "Draft",
+      },
+      user.name,
+      "Moved to the employee-selection payroll flow",
+    ),
+  );
+  return {
+    ok: true,
+    employeeIds,
+    message: "Run moved to the new flow. Select employees and run payroll.",
+  };
+}
 
 /**
  * @typedef {Object} WorkflowResult
@@ -1318,17 +1281,22 @@ export function createRun(input, user) {
   if (exists)
     return {
       ok: false,
-      message: `A payroll run for ${periodLabel(input.period)} already exists (${exists.id} · ${exists.status}). Reject or complete it before creating another.`,
+      code: "DUPLICATE_PERIOD",
+      existingRun: exists,
+      message: `A payroll run for ${periodLabel(input.period)} already exists (${exists.id} · ${exists.status}).`,
     };
   const run = buildRun({
     id: `PR-${input.period.replace("-", "")}-${Math.floor(100 + Math.random() * 899)}`,
     ...input,
+    employeeIds: [],
+    approvalLevels: ["Payroll Admin"],
     preparedBy: { id: user.id, name: user.name },
   });
   payrollRunStore.set((p) => [run, ...p]);
   return {
     ok: true,
-    message: `${run.id} created with ${run.lines.length} employees — run compliance checks next.`,
+    run,
+    message: `${run.id} created. Open the employee register to select employees and run payroll.`,
   };
 }
 
@@ -1357,17 +1325,8 @@ export function runChecks(id, user) {
       message: `${dup.id} is already the live run for ${periodLabel(run.period)} — this rejected run cannot be revived.`,
     };
   const cfg = getStatutoryConfig();
-  const roster = payrollRoster(run.orgId);
-  const missing = roster.filter(
-    (employee) => !hasPayrollAttendanceSnapshot(run.period, employee.id),
-  );
-  if (missing.length)
-    return {
-      ok: false,
-      message: `${isAttendanceLocked(run.period, run.orgId) ? "Locked" : "Monthly"} attendance from the server is missing for ${missing.map((employee) => employee.name).join(", ")}. Refresh the attendance review before calculating payroll.`,
-    };
-  const lines = roster.map((e) => computePayslip(e, run.period, cfg));
-  const fresh = runComplianceChecks(lines, run.period, cfg, run.orgId);
+  const lines = rosterForRun(run).map((e) => computePayslip(e, run.period, cfg));
+  const fresh = runComplianceChecks(lines, run.period, cfg);
   const checks = [
     ...mergeCheckState(fresh, run.checks),
     ...resolvedSince(run.checks, fresh).map((c) => ({
@@ -1400,7 +1359,7 @@ export function runChecks(id, user) {
         checks,
         checkedOn: now(),
         status,
-        approvalLevels: cfg.payroll.approvalLevels,
+        approvalLevels: run.approvalLevels ?? cfg.payroll.approvalLevels,
         // A rejected / sent-back run starts the approval chain afresh — earlier "Approved" decisions must not let it
         // skip levels after the register is recomputed.
         approvals: r.status === "Rejected" || r.status === "Draft" ? [] : r.approvals,
@@ -1469,8 +1428,8 @@ export function resolveCheck(runId, checkId, user, input) {
       };
     updateStatutoryIds(check.empId, { [guide.field]: value });
     const cfg = getStatutoryConfig();
-    const lines = payrollRoster(run.orgId).map((e) => computePayslip(e, run.period, cfg));
-    const fresh = runComplianceChecks(lines, run.period, cfg, run.orgId);
+    const lines = rosterForRun(run).map((e) => computePayslip(e, run.period, cfg));
+    const fresh = runComplianceChecks(lines, run.period, cfg);
     if (fresh.some((c) => c.id === checkId))
       return {
         ok: false,
@@ -1596,6 +1555,8 @@ export function acknowledgeWarnings(id, user) {
 export function submitForApproval(id, user) {
   const run = runById(id);
   if (!run) return { ok: false, message: "Run not found." };
+  if (!user || !can(user.role, "payroll.run"))
+    return { ok: false, message: "You do not have permission to submit payroll for approval." };
   if (run.status !== "Checks Passed")
     return {
       ok: false,
@@ -1604,12 +1565,6 @@ export function submitForApproval(id, user) {
   if (run.checks.some((c) => c.level === "warning" && !c.acknowledged && isOpenCheck(c)))
     return { ok: false, message: "Acknowledge all warnings before submitting." };
   const cfg = getStatutoryConfig();
-  // Attendance may have been unlocked after the checks passed — LOP could change, so the checks must be re-run.
-  if (!isAttendanceLocked(run.period, run.orgId))
-    return {
-      ok: false,
-      message: `Attendance for ${periodLabel(run.period)} was unlocked after the checks — lock it and re-run checks before submitting.`,
-    };
   if (!run.approvalLevels.length)
     return {
       ok: false,
@@ -1628,7 +1583,7 @@ export function submitForApproval(id, user) {
 
 /** Roles allowed to sign each approval level (SuperAdmin may stand in, but never for two levels of one run). */
 export const LEVEL_ROLES = {
-  "Payroll Admin": ["SuperAdmin", "Admin", "CHRO", "HR"],
+  "Payroll Admin": ["Payroll Admin", "SuperAdmin", "Admin", "CHRO", "HR"],
   "HR Manager": ["SuperAdmin", "Admin", "CHRO", "HR"],
   Finance: ["CFO", "SuperAdmin"],
   CFO: ["CFO", "SuperAdmin"],
@@ -1721,15 +1676,14 @@ export function sendBackRun(id, user, remarks) {
 }
 
 export function processRun(id, user) {
+  if (!user || !can(user.role, "payroll.process"))
+    return { ok: false, message: "You do not have permission to finalize payroll." };
   const run = runById(id);
   if (!run) return { ok: false, message: "Run not found." };
   if (run.status !== "Approved")
-    return { ok: false, message: "Only an approved run can be processed." };
-  if (!isAttendanceLocked(run.period, run.orgId))
-    return {
-      ok: false,
-      message: `Attendance for ${periodLabel(run.period)} is not locked. Lock attendance before processing this payroll run.`,
-    };
+    return { ok: false, message: "Payroll Admin approval is required before finalizing payroll." };
+  if (run.checks.some((check) => check.level === "warning" && !check.acknowledged && isOpenCheck(check)))
+    return { ok: false, message: "Acknowledge all payroll warnings before finalizing." };
   update(id, (r) =>
     log(
       { ...r, status: "Processed", processedOn: now(), processedBy: user.name },
@@ -1744,6 +1698,10 @@ export function processRun(id, user) {
 }
 
 export function markPaid(id, user, paymentRef) {
+  if (!user || !["Accountant", "CFO", "Admin", "SuperAdmin"].includes(user.role))
+    return { ok: false, message: "Only an Accountant or authorized finance administrator can record salary payment." };
+  if (!String(paymentRef ?? "").trim())
+    return { ok: false, message: "Enter the salary transfer reference before recording payment." };
   const run = runById(id);
   if (!run) return { ok: false, message: "Run not found." };
   if (run.status !== "Processed")
@@ -1799,15 +1757,20 @@ export const runTone = (s) =>
         : "border-border bg-muted text-muted-foreground";
 
 export const RUN_STEPS = [
-  "Draft",
-  "Checks Passed",
-  "Pending Approval",
-  "Approved",
-  "Processed",
-  "Paid",
+  "Create payroll",
+  "Select employees",
+  "Compliance checks",
+  "Payroll Admin approval",
+  "Final payroll run",
+  "Record payment",
 ];
 export const runStepIndex = (s) => {
-  if (s === "Checks Failed") return 0;
-  if (s === "Rejected") return 2;
-  return RUN_STEPS.indexOf(s);
+  if (s === "Paid") return 6;
+  if (s === "Processed") return 5;
+  if (s === "Approved") return 4;
+  if (s === "Pending Approval") return 3;
+  if (s === "Checks Passed") return 3;
+  if (s === "Checks Failed") return 2;
+  if (s === "Draft") return 1;
+  return 0;
 };

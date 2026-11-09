@@ -534,7 +534,6 @@ export function StatutoryConfigTab() {
   const pctOk = (n) => Number.isFinite(n) && n >= 0 && n <= 100;
   const dayOk = (n) => Number.isInteger(n) && n >= 1 && n <= 28;
   const errors = [
-    !d.payroll.approvalLevels.length && "Choose at least one approval level.",
     ![
       d.pf.employeeRate,
       d.pf.employerRate,
@@ -673,42 +672,17 @@ export function StatutoryConfigTab() {
 
         <Card className="shadow-card">
           <CardContent className="space-y-4 p-6">
-            <div className="font-semibold">Payroll approval policy</div>
-            <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs font-medium">
-                Approval chain (in order)
-              </Label>
-              <div className="flex flex-wrap gap-2">
-                {["Payroll Admin", "HR Manager", "Finance", "CFO"].map((lvl) => {
-                  const on = d.payroll.approvalLevels.includes(lvl);
-                  return (
-                    <Button
-                      key={lvl}
-                      size="sm"
-                      variant={on ? "default" : "outline"}
-                      disabled={!editable}
-                      className={on ? "bg-gradient-emerald text-white" : ""}
-                      onClick={() =>
-                        set("payroll", {
-                          approvalLevels: on
-                            ? d.payroll.approvalLevels.filter((x) => x !== lvl)
-                            : [...d.payroll.approvalLevels, lvl],
-                        })
-                      }
-                    >
-                      {on ? `${d.payroll.approvalLevels.indexOf(lvl) + 1}. ` : ""}
-                      {lvl}
-                    </Button>
-                  );
-                })}
-              </div>
-              <div className="text-muted-foreground text-xs">
-                Current chain: {d.payroll.approvalLevels.join(" → ") || "none (not recommended)"}
-              </div>
+            <div className="font-semibold">Payroll processing flow</div>
+            <div className="border-border bg-muted/30 rounded-lg border p-3">
+              <div className="text-sm font-medium">Create payroll → Select employees → Compliance checks → Payroll Admin approval → Final payroll run → Record payment</div>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Create a run, select employees, resolve compliance issues and submit for approval.
+                After Payroll Admin approval, an Accountant finalizes payroll and generates payslips.
+              </p>
             </div>
             <Tog
-              label="Enforce maker–checker"
-              hint="The user who prepared a run or filing can never approve it."
+              label="Enforce maker–checker on statutory filings"
+              hint="The user who generated or verified a statutory filing cannot approve the same filing."
               checked={d.payroll.enforceMakerChecker}
               disabled={!editable}
               onChange={(v) => set("payroll", { enforceMakerChecker: v })}
@@ -716,18 +690,10 @@ export function StatutoryConfigTab() {
 
             <Tog
               label="Block processing on errors"
-              hint="Runs with compliance errors cannot be submitted; warnings need acknowledgement."
+              hint="Payroll cannot be run while compliance errors remain; acknowledge warnings before finalizing."
               checked={d.payroll.blockOnErrors}
               disabled={!editable}
               onChange={(v) => set("payroll", { blockOnErrors: v })}
-            />
-
-            <Tog
-              label="Require attendance lock"
-              hint="HR must lock the month's attendance before payroll checks can pass."
-              checked={d.payroll.requireAttendanceLock}
-              disabled={!editable}
-              onChange={(v) => set("payroll", { requireAttendanceLock: v })}
             />
 
             <Num
