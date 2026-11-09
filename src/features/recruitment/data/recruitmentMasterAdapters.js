@@ -237,89 +237,96 @@ export function createEvaluationParamApi(organizationId) {
   };
 }
 
+// ============================================================================
+// REPLACE IN  src/features/recruitment/data/recruitmentMasterAdapters.js
+// Delete everything from the comment
+//     /* ---------- holiday calendars ----------
+// down to the closing brace of `export function createHolidayCalendarApi(...) { ... }`
+// and paste this block in its place. Nothing else in that file changes.
+// (`clean` and `SuperAdmin_holidayCalendar` are already defined/imported there.)
+// ============================================================================
+
 /* ---------- holiday calendars ----------
    UI name      <-> API holiday_title
-   UI appliesTo <-> API applies_to_branches (UI: "A, B" string | API: ["A", "B"])
+   UI type      <-> API type            ("National" <-> "NATIONAL", ...)
+   UI payType   <-> API leave_category  ("Paid" <-> "PAID", "Unpaid" <-> "UNPAID")
    UI holidays  <-> API holidays [{ holiday_date, holiday_name }]
+   Excel upload <-> POST /attendance/holiday-calendars/upload (multipart, field "file")
    Scope IDs are query params only. */
 const HOLIDAY_LIST_PAGE_SIZE = 100;
+
+const HOLIDAY_TYPE_TO_API = {
+  National: "NATIONAL",
+  "Regional / State": "REGIONAL_STATE",
+  "Optional / Restricted": "OPTIONAL_RESTRICTED",
+};
+const HOLIDAY_TYPE_FROM_API = Object.fromEntries(
+  Object.entries(HOLIDAY_TYPE_TO_API).map(([ui, api]) => [api, ui]),
+);
+
+const LEAVE_CATEGORY_TO_API = { Paid: "PAID", Unpaid: "UNPAID" };
+const LEAVE_CATEGORY_FROM_API = { PAID: "Paid", UNPAID: "Unpaid" };
 
 export function createHolidayCalendarApi(organizationId) {
   const service = SuperAdmin_holidayCalendar;
   const scope = organizationId ? { organization_id: organizationId } : undefined;
 
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
   const fromApi = (r) => ({
     id: r.id,
     _apiId: r.id,
     name: r.holiday_title ?? "",
-    type: r.type ?? "",
+    // Unknown / older values are shown as they come.
+    type: HOLIDAY_TYPE_FROM_API[String(r.type ?? "").toUpperCase()] ?? r.type ?? "",
     year: Number(r.year ?? new Date().getFullYear()),
-    appliesTo: (Array.isArray(r.applies_to_branches) ? r.applies_to_branches : [])
-      .map((b) => (typeof b === "string" ? b : (b?.name ?? "")))
-      .filter(Boolean)
-      .join(", "),
+    payType: LEAVE_CATEGORY_FROM_API[String(r.leave_category ?? "").toUpperCase()] ?? "Paid",
     holidays: (Array.isArray(r.holidays) ? r.holidays : []).map((h) => ({
       date: h.holiday_date ?? "",
       name: h.holiday_name ?? "",
     })),
     uploadedFile: r.csv_file_name ?? "",
+    fileUrl: r.csv_storage_key ?? "",
     active: true,
   });
 
-  // Turns typed branch names/codes into branch IDs
-  const resolveBranchIds = async (appliesTo) => {
-    const tokens = clean(appliesTo)
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!tokens.length) return [];
-    if (tokens.every((t) => UUID_RE.test(t))) return tokens;
-
-    const res = await SuperAdmin_branchLookup.getAll();
-    const data = res?.data;
-    const branches = Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
-
-    return tokens.map((t) => {
-      if (UUID_RE.test(t)) return t;
-      const key = t.toLowerCase();
-      const hit = branches.find(
-        (b) =>
-          String(b.name ?? "").toLowerCase() === key ||
-          String(b.code ?? "").toLowerCase() === key,
-      );
-      if (!hit) {
-        const msg = `Branch "${t}" not found. Use the exact branch name or code.`;
-        const err = new Error(msg);
-        err.response = { data: { detail: msg } };
-        throw err;
-      }
-      return hit.id;
-    });
-  };
-
-  const toPayload = async (cal) => ({
+  const toPayload = (cal) => ({
     holiday_title: clean(cal.name),
-    type: cal.type,
+    type: HOLIDAY_TYPE_TO_API[cal.type] ?? cal.type,
+    // type: cal.type,
     year: Number(cal.year),
-    applies_to_branches: await resolveBranchIds(cal.appliesTo),
+    leave_category: LEAVE_CATEGORY_TO_API[cal.payType] ?? "PAID",
     holidays: (cal.holidays ?? []).map((h) => ({
       holiday_date: h.date,
       holiday_name: clean(h.name),
     })),
   });
 
+  // The upload API returns an array of calendars (one per Holiday Title + Year).
+  const listFrom = (res) => {
+    const data = res?.data;
+    const items = Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
+    return items.map(fromApi);
+  };
+
+  const fileForm = (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return formData;
+  };
+
   return {
-    list: async () => {
-      const res = await service.getAll({ ...scope, page: 1, page_size: HOLIDAY_LIST_PAGE_SIZE });
-      const data = res?.data;
-      const items = Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
-      return items.map(fromApi);
-    },
-    create: async (cal) => service.create(await toPayload(cal), scope),
-    update: async (id, cal) => service.update(id, await toPayload(cal), scope),
+    list: async () =>
+      listFrom(await service.getAll({ ...scope, page: 1, page_size: HOLIDAY_LIST_PAGE_SIZE })),
+    getById: async (id) => fromApi((await service.getById(id, scope))?.data ?? {}),
+    create: (cal) => service.create(toPayload(cal), scope),
+    update: (id, cal) => service.update(id, toPayload(cal), scope),
     remove: (id) => service.remove(id, scope),
+    // POST /attendance/holiday-calendars/upload → created calendars (UI shape)
+    upload: async (file) => listFrom(await service.createWithFile(fileForm(file), scope)),
+    // PUT /attendance/holiday-calendars/{id}/upload → replaces one calendar from a file
+    uploadReplace: async (id, file) => {
+      const res = await service.updateWithFile(id, fileForm(file), scope);
+      return fromApi(res?.data ?? {});
+    },
   };
 }
 
@@ -543,13 +550,15 @@ export function createShiftApi(organizationId) {
   };
 }
 
-/* ---------- workday configuration ----------
-   UI days ["Monday", "Friday"]  <->  API { monday: true, ..., sunday: false }
-   At least one day must be enabled. Scope IDs are query params only.
-   POST creates the configuration; PATCH updates only the days that changed. */
-const WORKDAY_LIST_PAGE_SIZE = 100;
+/* ---------- workday configuration (weekday × 5-week matrix) ----------
+   UI matrix { Monday: [b,b,b,b,b], ..., Sunday: [...] }
+     <->  API working_rules { monday: [b,b,b,b,b], ..., sunday: [...] }
+   Index 0..4 = 1st..5th occurrence of that weekday in a month.
+   POST is an upsert (creates or updates the configuration for the scope).
+   At least one day must be enabled. Scope IDs are query params only. */
+const WORKDAY_WEEKS = 5;
 
-// UI day name <-> API boolean field
+// UI day name <-> API working_rules key
 const WORKDAY_DAYS = [
   ["Monday", "monday"],
   ["Tuesday", "tuesday"],
@@ -560,63 +569,114 @@ const WORKDAY_DAYS = [
   ["Sunday", "sunday"],
 ];
 
+// API working_rules -> UI matrix. A single value applies to all five weeks;
+// otherwise missing weeks are treated as holidays.
+const workdayRulesToMatrix = (rules) =>
+  Object.fromEntries(
+    WORKDAY_DAYS.map(([label, key]) => {
+      const arr = Array.isArray(rules?.[key]) ? rules[key] : [];
+      const weeks =
+        arr.length === 1
+          ? Array(WORKDAY_WEEKS).fill(Boolean(arr[0]))
+          : Array.from({ length: WORKDAY_WEEKS }, (_, i) => Boolean(arr[i]));
+      return [label, weeks];
+    }),
+  );
+
+// UI matrix -> API working_rules (always 7 days × 5 booleans)
+const workdayMatrixToRules = (matrix) =>
+  Object.fromEntries(
+    WORKDAY_DAYS.map(([label, key]) => [
+      key,
+      Array.from({ length: WORKDAY_WEEKS }, (_, i) => Boolean(matrix?.[label]?.[i])),
+    ]),
+  );
+
 export function createWorkdayConfigApi(organizationId) {
   const service = SuperAdmin_workdayConfiguration;
   const scope = organizationId ? { organization_id: organizationId } : undefined;
 
-  const fromApi = (r) => ({
-    id: r.id,
-    days: WORKDAY_DAYS.filter(([, key]) => r[key] === true).map(([label]) => label),
-  });
-
-  // All seven days, as booleans
-  const toBody = (days) =>
-    Object.fromEntries(WORKDAY_DAYS.map(([label, key]) => [key, days.includes(label)]));
-
-  // Only the days whose on/off state changed
-  const toPatchBody = (days, savedDays) => {
-    const patch = {};
-    WORKDAY_DAYS.forEach(([label, key]) => {
-      const next = days.includes(label);
-      if (next !== savedDays.includes(label)) patch[key] = next;
-    });
-    return patch;
+  const unwrap = (res) => {
+    const body = res?.data;
+    return body?.data && !Array.isArray(body.data) ? body.data : body;
   };
 
   const readItems = (res) => {
     const data = res?.data;
-    return Array.isArray(data) ? data : (data?.items ?? data?.data ?? []);
+    return Array.isArray(data) ? data : (data?.items ?? data?.results ?? data?.data ?? []);
   };
 
   const stamp = (r) => Date.parse(r.updated_at ?? r.created_at ?? "") || 0;
 
+  // API record -> { id, matrix, workingDaysPerWeek }
+  const fromApi = (r) => ({
+    id: r.id,
+    matrix: workdayRulesToMatrix(r.working_rules),
+    workingDaysPerWeek: Number(r.working_days_per_week ?? 0),
+  });
+
+  // Use the server record when it comes back, otherwise what was sent.
+  const fromResponse = (res, id, matrix) => {
+    const data = unwrap(res);
+    return data && data.id != null
+      ? fromApi(data)
+      : { id: id ?? null, matrix, workingDaysPerWeek: 0 };
+  };
+
+  const toBody = (matrix) => ({ working_rules: workdayMatrixToRules(matrix) });
+
+  // Same rule as the backend: at least one day must be enabled.
+  const ensureWorkday = (matrix) => {
+    const ok = WORKDAY_DAYS.some(([label]) => (matrix?.[label] ?? []).some(Boolean));
+    if (!ok) {
+      const msg = "At least one working day must be enabled.";
+      const err = new Error(msg);
+      err.response = { data: { detail: msg } };
+      throw err;
+    }
+  };
+
   return {
-    // Returns the most recently updated configuration as { id, days }, or null if none exists.
+    // GET /attendance/workday-configurations
+    // Returns the most recently updated configuration, or null when nothing is saved.
     load: async () => {
-      const res = await service.getAll({ ...scope, page: 1, page_size: WORKDAY_LIST_PAGE_SIZE });
+      // The list endpoint takes only the optional scope params (no page / page_size).
+      const res = await service.getAll(scope);
       const items = readItems(res).filter((r) => r && typeof r === "object");
       if (!items.length) return null;
       const latest = [...items].sort((a, b) => stamp(b) - stamp(a))[0];
       return fromApi(latest);
     },
 
-    getById: (id) => service.getById(id, scope),
-
-    // First save -> POST. Later saves -> PATCH with only the changed days.
-    save: async ({ id, days, savedDays = [] }) => {
-      if (!id) {
-        const res = await service.create(toBody(days), scope);
-        return { id: res?.data?.id ?? null };
-      }
-
-      const patch = toPatchBody(days, savedDays);
-      if (!Object.keys(patch).length) return { id };
-
-      const res = await service.patch(id, patch, scope);
-      return { id: res?.data?.id ?? id };
+    // GET /attendance/workday-configurations/{configuration_id}
+    getById: async (id) => {
+      const res = await service.getById(id, scope);
+      const data = unwrap(res);
+      return data && data.id != null ? fromApi(data) : null;
     },
 
-    // Full replace (all seven days) via PUT.
-    replace: async (id, days) => service.update(id, toBody(days), scope),
+    // POST /attendance/workday-configurations (upsert)
+    save: async (matrix) => {
+      ensureWorkday(matrix);
+      const res = await service.create(toBody(matrix), scope);
+      return fromResponse(res, null, matrix);
+    },
+
+    // PUT /attendance/workday-configurations/{configuration_id}
+    update: async (id, matrix) => {
+      ensureWorkday(matrix);
+      const res = await service.update(id, toBody(matrix), scope);
+      return fromResponse(res, id, matrix);
+    },
+
+    // PATCH /attendance/workday-configurations/{configuration_id}
+    patch: async (id, matrix) => {
+      ensureWorkday(matrix);
+      const res = await service.patch(id, toBody(matrix), scope);
+      return fromResponse(res, id, matrix);
+    },
+
+    // DELETE /attendance/workday-configurations/{configuration_id}
+    remove: (id) => service.remove(id, scope),
   };
 }

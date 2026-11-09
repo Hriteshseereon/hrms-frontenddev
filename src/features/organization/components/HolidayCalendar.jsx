@@ -34,15 +34,20 @@ const addDays = (d, n) => {
 };
 const startOfWeek = (d) => addDays(d, -((d.getDay() + 6) % 7));
 
-export const typeTone = (t) =>
-  /public|national/i.test(t)
-    ? "border-primary/30 bg-primary/10 text-primary"
-    : /festival/i.test(t)
-      ? "border-gold/40 bg-gold/15 text-gold"
-      : /optional|restricted/i.test(t)
-        ? "border-border bg-muted text-muted-foreground"
-        : "border-primary/20 bg-primary/5 text-primary";
+export const typeTone = (t) => {
+  const type = String(t || "").toLowerCase().trim();
 
+  if (/national|public/.test(type))
+    return "border-green-500/40 bg-green-500/15 text-green-700 dark:text-green-400";
+
+  if (/regional|state/.test(type))
+    return "border-orange-500/40 bg-orange-500/15 text-orange-700 dark:text-orange-400";
+
+  if (/optional|restricted/.test(type))
+    return "border-red-500/40 bg-red-500/15 text-red-700 dark:text-red-400";
+
+  return "border-border bg-muted text-muted-foreground";
+};
 /** Month / Week / Year holiday calendar. */
 export function HolidayCalendar({ holidays }) {
   const [view, setView] = useState("month");
@@ -129,23 +134,63 @@ export function HolidayCalendar({ holidays }) {
   );
 }
 
+// function DayCell({ date, items, muted }) {
+//   return (
+//     <div
+//       className={cn(
+//         "min-h-[64px] min-w-0 overflow-hidden rounded-lg border p-1 text-left sm:min-h-[92px] sm:p-2",
+//         items.length ? "border-primary/30 bg-primary/5" : "border-border",
+//         muted && "opacity-40",
+//       )}
+//     >
+//       <div className="text-xs font-semibold">{date.getDate()}</div>
+//       <div className="mt-1 space-y-1">
+//         {items.map((h) => (
+//           <div
+//             key={h.id + iso(date)}
+//             title={h.name}
+//             className={cn(
+//               "line-clamp-3 rounded border px-1 py-0.5 text-[9px] leading-tight break-words sm:px-1.5 sm:text-[10px]",
+//               typeTone(h.type),
+//             )}
+//           >
+//             {h.name}
+//           </div>
+//         ))}
+//       </div>
+//     </div>
+//   );
+// }
 function DayCell({ date, items, muted }) {
+  const holiday = items[0];
+
+ const dayColor = holiday
+  ? /national|public/i.test(holiday.type)
+    ? "border-green-500/60 bg-green-500/20"
+    : /regional|state/i.test(holiday.type)
+      ? "border-orange-500/60 bg-orange-500/20"
+      : /optional|restricted/i.test(holiday.type)
+        ? "border-red-500/60 bg-red-500/20"
+        : "border-border bg-muted"
+  : "border-border";
+
   return (
     <div
       className={cn(
         "min-h-[64px] min-w-0 overflow-hidden rounded-lg border p-1 text-left sm:min-h-[92px] sm:p-2",
-        items.length ? "border-primary/30 bg-primary/5" : "border-border",
+        dayColor,
         muted && "opacity-40",
       )}
     >
       <div className="text-xs font-semibold">{date.getDate()}</div>
+
       <div className="mt-1 space-y-1">
         {items.map((h) => (
           <div
             key={h.id + iso(date)}
             title={h.name}
             className={cn(
-              "line-clamp-3 rounded border px-1 py-0.5 text-[9px] leading-tight break-words sm:px-1.5 sm:text-[10px]",
+              "line-clamp-3 rounded px-1 py-0.5 text-[9px] leading-tight break-words sm:px-1.5 sm:text-[10px]",
               typeTone(h.type),
             )}
           >

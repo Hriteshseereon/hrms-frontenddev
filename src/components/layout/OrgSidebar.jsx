@@ -46,11 +46,11 @@ import {
   KeyRound,
   SlidersHorizontal,
   Eye,
-  Building2,
-  ContactRound,
 } from "lucide-react";
+
 import { BrandLogo } from "@/components/brand/BrandLogo";
 import { cn } from "@/lib/utils";
+
 import {
   ORGANIZATION,
   ROLE_NAV,
@@ -59,19 +59,33 @@ import {
   signOut,
   useCurrentUser,
 } from "@/features/auth/data/auth-session";
+
 import {
   OPEN_STATUSES,
   agentDepartments,
   useTickets,
 } from "@/features/helpdesk/data/helpdesk-data";
-import { leaveOrgOf, useLeaveApplications } from "@/features/leave/data/leave-engine";
+
+import {
+  leaveOrgOf,
+  useLeaveApplications,
+} from "@/features/leave/data/leave-engine";
+
 import { usePayrollRuns } from "@/features/payroll/data/payroll-engine";
-import { useScope, useScopeMatch, workspaceLoginPath } from "@/features/organization/data/tenancy";
+
+import {
+  useScope,
+  useScopeMatch,
+  workspaceLoginPath,
+} from "@/features/organization/data/tenancy";
+
+// Company/branch scope dropdown disabled.
 // import { ScopeSwitcher } from "@/components/layout/ScopeSwitcher";
+
+import { useModuleAccess } from "@/features/auth/data/module-access";
 
 export const ORG_NAV_GROUPS = [
   {
-    // What every admin needs first: the dashboard and every master / configuration in one place.
     label: "Overview",
     items: [
       { to: "/org/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -81,7 +95,6 @@ export const ORG_NAV_GROUPS = [
     ],
   },
   {
-    // Administration sits right below Overview — roles, logins, delegation, archive and settings.
     label: "Administration",
     items: [
       { to: "/org/roles", label: "Roles & Permissions", icon: ShieldCheck },
@@ -92,7 +105,6 @@ export const ORG_NAV_GROUPS = [
     ],
   },
   {
-    // Super Admin only — the organisation above its companies and branches.
     label: "Organisation",
     items: [
       {
@@ -101,7 +113,12 @@ export const ORG_NAV_GROUPS = [
         icon: Settings2,
         superOnly: true,
       },
-      { to: "/org/groups", label: "Companies & Branches", icon: Network, superOnly: true },
+      {
+        to: "/org/groups",
+        label: "Companies & Branches",
+        icon: Network,
+        superOnly: true,
+      },
       {
         to: "/org/configuration",
         label: "Configuration",
@@ -118,20 +135,20 @@ export const ORG_NAV_GROUPS = [
     ],
   },
   {
-  label: "Company Configuration",
-  items: [
-    {
-      to: "/org/departments",
-      label: "Department",
-      icon: Building,
-    },
-    {
-      to: "/org/designations",
-      label: "Designation",
-      icon: FileBadge,
-    },
-  ],
-},
+    label: "Company Configuration",
+    items: [
+      {
+        to: "/org/departments",
+        label: "Department",
+        icon: Building,
+      },
+      {
+        to: "/org/designations",
+        label: "Designation",
+        icon: FileBadge,
+      },
+    ],
+  },
   {
     label: "People",
     items: [
@@ -142,7 +159,6 @@ export const ORG_NAV_GROUPS = [
       { to: "/org/training", label: "Training", icon: GraduationCap },
     ],
   },
-
   {
     label: "Time & Leave",
     items: [
@@ -186,7 +202,6 @@ export const ORG_NAV_GROUPS = [
     ],
   },
   {
-    // Every org user is also an employee — their own self-service screens.
     label: "My Workspace",
     items: [
       { to: "/emp/dashboard", label: "My Self-Service", icon: UserCircle },
@@ -203,19 +218,18 @@ export const ORG_NAV_GROUPS = [
 ];
 
 /**
- * One visibility rule for org navigation (sidebar, module explorer, global search). Group screens are for the Super Admin
- * and for roles explicitly granted them in ROLE_NAV (CFO → asset rollup, CHRO → groups & rollup): those roles could open
- * the screens but never saw them in the menu, while the dashboard module explorer ignored `superOnly` and listed them
- * for everyone with "*".
+ * One visibility rule for org navigation.
  */
 export function orgNavVisible(role, item) {
   if (!canOpen(role, item.to)) return false;
+
   if (!item.superOnly || role === "SuperAdmin") return true;
+
   const nav = ROLE_NAV[role];
   return nav !== "*" && nav.includes(item.to);
 }
 
-/** Groups that hold transactional modules — collapsed in the Super Admin's collective view, where they are read-only. */
+/** Groups that hold transactional modules. */
 const MODULE_GROUPS = new Set([
   "People",
   "Time & Leave",
@@ -223,32 +237,47 @@ const MODULE_GROUPS = new Set([
   "Performance",
   "Work & Assets",
 ]);
-/** In the collective view the Super Admin starts from insights: dashboards, reports and the group itself. */
+
 const COLLECTIVE_ORDER = ["Overview", "Reports", "Group", "Administration"];
 
-export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = false, onClose }) {
-  // The icon-only rail is a desktop layout: the mobile drawer is always full width with labels and the scope chip
-  // (tapping the collapse chevron inside the drawer used to leave an unlabeled rail with no way back).
+export function OrgSidebar({
+  collapsed: collapsedPref,
+  onToggle,
+  mobileOpen = false,
+  onClose,
+}) {
   const collapsed = collapsedPref && !mobileOpen;
-  const pathname = usePathname();
-  // Recruitment's steps (postings, candidates, interviews, offers) are child routes of the one nav entry, so it
-  // stays highlighted (and its group open) on every step — it used to match only the pipeline board.
-  const isActive = (to) => pathname === to || pathname.startsWith(to + "/");
 
-  const [closed, setClosed] = useState({ "Work & Assets": true });
-  const toggleGroup = (label, wasClosed) => setClosed((p) => ({ ...p, [label]: !wasClosed }));
+  const pathname = usePathname();
+
+  const isActive = (to) =>
+    pathname === to || pathname.startsWith(to + "/");
+
+  const [closed, setClosed] = useState({
+    "Work & Assets": true,
+  });
+
+  const toggleGroup = (label, wasClosed) =>
+    setClosed((p) => ({
+      ...p,
+      [label]: !wasClosed,
+    }));
 
   const me = useCurrentUser();
+  const moduleOn = useModuleAccess();
   const scope = useScope();
   const inScope = useScopeMatch();
+
   const activeOrg = scope.company;
   const collective = scope.readOnly;
   const isGroupTenant = scope.tenant?.kind === "group";
-  // Live work-queue badges: unattended tickets, pending leave, payroll runs awaiting approval.
+
+  // Live work-queue badges.
   const tickets = useTickets();
   const myDesks = agentDepartments(me);
   const [leaveApps] = useLeaveApplications();
   const runs = usePayrollRuns();
+
   const badges = {
     "/helpdesk": tickets.filter(
       (t) =>
@@ -257,29 +286,55 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
           ? t.assigneeId === me.id || t.status === "New"
           : t.requesterId === me.id),
     ).length,
-    // Working scope (collective / company / branch) — the badge counted every entity's pending leave.
-    "/org/leave": leaveApps.filter((l) => l.status === "Pending" && inScope(leaveOrgOf(l), l.empId))
-      .length,
-    "/org/finance": runs.filter((r) => inScope(r.orgId) && r.status === "Pending Approval").length,
+
+    "/org/leave": leaveApps.filter(
+      (l) =>
+        l.status === "Pending" &&
+        inScope(leaveOrgOf(l), l.empId),
+    ).length,
+
+    "/org/finance": runs.filter(
+      (r) =>
+        inScope(r.orgId) &&
+        r.status === "Pending Approval",
+    ).length,
   };
-  // Role-based navigation: only screens this role is permitted to open are rendered.
+
   const visibleGroups = ORG_NAV_GROUPS.map((g) => ({
     ...g,
     readOnly: collective && MODULE_GROUPS.has(g.label),
     items: g.items
-      .filter((i) => orgNavVisible(me.role, i) && (!i.groupOnly || isGroupTenant))
-      .map((i) => ({ ...i, badge: badges[i.to] ? String(badges[i.to]) : i.badge })),
+      .filter(
+        (i) =>
+          orgNavVisible(me.role, i) &&
+          moduleOn(i.to) &&
+          (!i.groupOnly || isGroupTenant),
+      )
+      .map((i) => ({
+        ...i,
+        badge: badges[i.to]
+          ? String(badges[i.to])
+          : i.badge,
+      })),
   }))
     .filter((g) => g.items.length > 0)
     .sort((a, b) => {
       if (!collective) return 0;
+
       const rank = (g) => {
         const i = COLLECTIVE_ORDER.indexOf(g.label);
-        return i === -1 ? COLLECTIVE_ORDER.length + (g.label === "My Workspace" ? 1 : 0) : i;
+
+        return i === -1
+          ? COLLECTIVE_ORDER.length +
+              (g.label === "My Workspace" ? 1 : 0)
+          : i;
       };
+
       return rank(a) - rank(b);
     });
-  const isClosed = (g) => (g.label in closed ? closed[g.label] : g.readOnly);
+
+  const isClosed = (g) =>
+    g.label in closed ? closed[g.label] : g.readOnly;
 
   return (
     <>
@@ -290,14 +345,18 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
           aria-hidden
         />
       )}
+
       <aside
         className={cn(
           "bg-sidebar text-sidebar-foreground border-sidebar-border glass-sidebar fixed inset-y-0 left-0 z-50 flex flex-col border-r transition-all duration-300",
           "w-[260px] lg:w-auto",
           collapsed ? "lg:w-[76px]" : "lg:w-[260px]",
-          mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full lg:translate-x-0",
+          mobileOpen
+            ? "translate-x-0 shadow-2xl"
+            : "-translate-x-full lg:translate-x-0",
         )}
       >
+        {/* Brand */}
         <div className="border-sidebar-border/60 flex h-16 items-center justify-between border-b px-4">
           {!collapsed ? (
             <BrandLogo variant="dark" />
@@ -306,6 +365,7 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
               <Sparkles className="text-gold h-4 w-4" />
             </div>
           )}
+
           {!collapsed && (
             <button
               onClick={onToggle}
@@ -316,8 +376,9 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
             </button>
           )}
         </div>
+
+        {/* Collapsed sidebar expand button */}
         {collapsed && (
-          // Collapsed rail: the expand toggle is always reachable, and the working scope stays switchable.
           <div className="border-sidebar-border/60 flex flex-col items-center gap-2 border-b py-3">
             <button
               onClick={onToggle}
@@ -327,72 +388,84 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
             >
               <ChevronRight className="h-4 w-4" />
             </button>
-              {/*
-      TEMPORARILY DISABLED: Company/branch scope dropdown.
-      Uncomment this line when the dropdown is needed again.
 
-      <ScopeSwitcher inSidebar compact />
-    */}
+            {/*
+              TEMPORARILY DISABLED:
+              Company/branch scope dropdown.
+              <ScopeSwitcher inSidebar compact />
+            */}
           </div>
         )}
 
         <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-4">
-          {!collapsed && (
-            <div className="border-sidebar-border/60 bg-sidebar-accent/40 mb-2 rounded-xl border px-3 py-2.5">
-              <div className="flex items-center gap-2.5">
-                <div className="bg-gold/20 text-gold ring-gold/40 grid h-8 w-8 place-items-center rounded-lg text-[11px] font-bold ring-1">
-                  {roleInitials(me.name)}
-                </div>
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-semibold text-white">{me.name}</div>
-                  <div className="text-gold truncate text-[10px] tracking-widest uppercase">
-                    {me.role === "SuperAdmin"
-                      ? "Super Admin"
-                      : me.role === "BranchAdmin"
-                        ? "Branch Admin"
-                        : me.role}{" "}
-                    ·{" "}
-                    {collective
-                      ? (scope.tenant?.name ?? "All companies")
-                      : (activeOrg?.name ?? ORGANIZATION.name)}
+
+          {/*
+            TEMPORARILY DISABLED:
+            User profile card.
+
+            {!collapsed && (
+              <div className="border-sidebar-border/60 bg-sidebar-accent/40 mb-2 rounded-xl border px-3 py-2.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="bg-gold/20 text-gold ring-gold/40 grid h-8 w-8 place-items-center rounded-lg text-[11px] font-bold ring-1">
+                    {roleInitials(me.name)}
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-semibold text-white">
+                      {me.name}
+                    </div>
+
+                    <div className="text-gold truncate text-[10px] tracking-widest uppercase">
+                      {me.role === "SuperAdmin"
+                        ? "Admin"
+                        : me.role === "BranchAdmin"
+                          ? "Branch Admin"
+                          : me.role}{" "}
+                      ·{" "}
+                      {collective
+                        ? (scope.tenant?.name ?? "All companies")
+                        : (activeOrg?.name ?? ORGANIZATION.name)}
+                    </div>
                   </div>
                 </div>
               </div>
-              {/* The working scope (company › branch) is chosen here — the header stays clean. */}
-              
-{/*
-  TEMPORARILY DISABLED: Company/branch scope dropdown.
-  Uncomment the JSX below when the dropdown is needed again.
+            )}
+          */}
 
-  <div className="mt-2 [&>div]:flex [&>span]:flex">
-    <ScopeSwitcher inSidebar />
-  </div>
-*/}
-
-            </div>
-          )}
           {!collapsed && collective && (
             <div className="border-gold/30 bg-gold/10 text-sidebar-foreground/80 rounded-lg border px-3 py-2 text-[11px] leading-snug">
               Collective view of all companies. Module screens show combined data and are view-only
               — pick a company in the scope chip to add or change records.
             </div>
           )}
+
+          {/* Navigation groups */}
           {visibleGroups.map((g) => {
             const groupActive = g.items.some((i) => isActive(i.to));
             const open = collapsed || !isClosed(g) || groupActive;
+
             return (
               <div key={g.label} className="space-y-0.5">
                 {!collapsed && (
                   <button
                     type="button"
-                    onClick={() => toggleGroup(g.label, isClosed(g))}
+                    onClick={() =>
+                      toggleGroup(g.label, isClosed(g))
+                    }
                     aria-expanded={open}
                     className="text-sidebar-foreground/50 hover:text-sidebar-foreground/80 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-[10px] font-semibold tracking-widest uppercase transition"
                   >
-                    <span className="flex-1 truncate text-left">{g.label}</span>
+                    <span className="flex-1 truncate text-left">
+                      {g.label}
+                    </span>
+
                     {g.readOnly && (
-                      <Eye className="h-3 w-3 shrink-0" aria-label="View only in collective view" />
+                      <Eye
+                        className="h-3 w-3 shrink-0"
+                        aria-label="View only in collective view"
+                      />
                     )}
+
                     <ChevronDown
                       className={cn(
                         "h-3.5 w-3.5 shrink-0 transition-transform",
@@ -401,10 +474,12 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
                     />
                   </button>
                 )}
+
                 {open &&
                   g.items.map((item) => {
                     const active = isActive(item.to);
                     const Icon = item.icon;
+
                     return (
                       <Link
                         href={item.to}
@@ -418,8 +493,19 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
                         )}
                         title={collapsed ? item.label : undefined}
                       >
-                        <Icon className={cn("h-[18px] w-[18px] shrink-0", active && "text-gold")} />
-                        {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+                        <Icon
+                          className={cn(
+                            "h-[18px] w-[18px] shrink-0",
+                            active && "text-gold",
+                          )}
+                        />
+
+                        {!collapsed && (
+                          <span className="flex-1 truncate">
+                            {item.label}
+                          </span>
+                        )}
+
                         {!collapsed && item.badge && (
                           <span className="bg-gold/90 ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold text-[oklch(0.2_0.02_85)]">
                             {item.badge}
@@ -433,6 +519,7 @@ export function OrgSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
           })}
         </nav>
 
+        {/* Logout */}
         <div className="border-sidebar-border/60 border-t p-3">
           <Link
             href={workspaceLoginPath(me)}

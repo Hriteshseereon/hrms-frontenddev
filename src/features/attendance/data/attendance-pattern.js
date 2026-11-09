@@ -1,5 +1,5 @@
 // -----------------------------------------------------------------------------
-// Attendance patterns & pay-as-you-go payroll linkage (UI-only).
+// Attendance patterns & payroll linkage. Local pattern preferences coexist with server-backed attendance locks/snapshots.
 //
 // A pattern says how many days a month an employee is expected to work and how
 // many of their absences are paid before Loss of Pay kicks in. Payroll reads
@@ -220,6 +220,77 @@ export const useAttendanceLocks = () => {
 };
 export const isAttendanceLocked = (period, orgId = activeOrgStore.get()) =>
   Boolean(locksFor(attendanceLockStore.get(), orgId)[period]);
+const payrollAttendanceSnapshots = new Map();
+const attendanceRowId = (row) =>
+  String(
+    row?.employee_id ??
+      row?.employeeId ??
+      row?.emp_id ??
+      row?.empId ??
+      row?.employee?.id ??
+      row?.id ??
+      "",
+  );
+const attendanceRowName = (row) =>
+  String(
+    row?.employee_name ??
+      row?.name ??
+      row?.employee?.name ??
+      [row?.first_name, row?.last_name].filter(Boolean).join(" ") ??
+      "",
+  )
+    .trim()
+    .toLowerCase();
+/** Store the server report in memory so payroll calculations can use the locked database snapshot. */
+export function setPayrollAttendanceSnapshot(period, reportRows, employees = []) {
+  const byId = new Map();
+  const byName = new Map();
+  for (const row of reportRows) {
+    const keys = [row.employee_id, row.employeeId, row.emp_id, row.empId, row.employee_code, row.id]
+      .filter(Boolean)
+      .map(String);
+    keys.forEach((key) => byId.set(key.toLowerCase(), row));
+    const name = attendanceRowName(row);
+    if (name) byName.set(name, row);
+  }
+  for (const employee of employees) {
+    const id = attendanceRowId(employee);
+    const report =
+      byId.get(id.toLowerCase()) ??
+      byId.get(String(employee.employee_code ?? "").toLowerCase()) ??
+      byName.get(attendanceRowName(employee));
+    if (!report) continue;
+    [employee.id, employee.employee_id, employee.employee_code, employee.employeeId]
+      .filter(Boolean)
+      .forEach((key) => byId.set(String(key).toLowerCase(), report));
+  }
+  for (const localEmployee of EMPLOYEES) {
+    const localName = attendanceRowName(localEmployee);
+    const apiEmployee = employees.find((employee) => attendanceRowName(employee) === localName);
+    const report =
+      byName.get(localName) ??
+      (apiEmployee
+        ? (byId.get(attendanceRowId(apiEmployee).toLowerCase()) ??
+          byId.get(String(apiEmployee.employee_code ?? "").toLowerCase()))
+        : null);
+    if (report) byId.set(String(localEmployee.id).toLowerCase(), report);
+  }
+  payrollAttendanceSnapshots.set(period, byId);
+}
+export function hasPayrollAttendanceSnapshot(period, empId) {
+  const report = payrollAttendanceSnapshots.get(period)?.get(String(empId).toLowerCase());
+  const summary = report?.attendance ?? report?.summary ?? report;
+  const has = (...keys) =>
+    keys.some((key) => {
+      const value = summary?.[key];
+      return value !== undefined && value !== null && value !== "" && Number.isFinite(Number(value));
+    });
+  return (
+    has("present", "present_days", "present_count") &&
+    has("leave", "paidLeave", "leave_days", "leave_count") &&
+    has("absent", "absent_days", "absent_count")
+  );
+}
 export const lockAttendance = (period, by, orgId = activeOrgStore.get()) =>
   attendanceLockStore.set((p) => ({
     ...p,
@@ -295,6 +366,34 @@ export function attendanceForPeriod(empId, period) {
   }
   const holidays = m === 8 ? 1 : m === 10 ? 2 : m === 1 ? 1 : 0;
   const locked = isAttendanceLocked(period, orgOfEmployee(empId));
+
+  const report = payrollAttendanceSnapshots.get(period)?.get(String(empId).toLowerCase());
+  const summary = report?.attendance ?? report?.summary ?? report;
+  if (summary) {
+    const read = (...keys) => {
+      const value = keys
+        .map((key) => summary[key])
+        .find((candidate) => candidate !== undefined && candidate !== null);
+      if (value === undefined || value === "") return null;
+      const n = Number(value);
+      return Number.isFinite(n) ? n : null;
+    };
+    const present = read("present", "present_days", "present_count");
+    const paidLeave = read("leave", "paidLeave", "leave_days", "leave_count");
+    const absent = read("absent", "absent_days", "absent_count");
+    if (present !== null && paidLeave !== null && absent !== null)
+      return {
+        period,
+        daysInMonth: dim,
+        present,
+        paidLeave,
+        absent,
+        weeklyOffs: read("weekly_offs", "weeklyOffs") ?? weeklyOffs,
+        holidays: read("holidays", "holiday_days") ?? holidays,
+        source: locked ? "Locked attendance API" : "Attendance API",
+        locked,
+      };
+  }
 
   const reg = ATTENDANCE.find((a) => a.empId === empId);
   if (reg && period === ATTENDANCE_MONTH) {

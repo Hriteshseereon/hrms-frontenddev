@@ -28,6 +28,7 @@ import { RBAC_MODULES, PERMISSION_ACTIONS, screenId } from "@/features/auth/data
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
 import { AccessDenied } from "@/components/common/AccessDenied";
 import { useRoles, saveRole } from "@/features/auth/data/rbac-store";
+import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import { rbacApi, extractErrorMessage } from "@/api/rbacApi";
 
 const STEPS = ["Role Details", "Permissions Matrix", "Review & Submit"];
@@ -104,12 +105,15 @@ function RoleWizard({ existing }) {
   const router = useRouter();
   const me = useCurrentUser();
   const allRoles = useRoles();
+  const scope = useCompanyScope();
 
   const [step, setStep] = useState(0);
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
   const [perms, setPerms] = useState(() => existing?.permissions ?? {});
   const [submitting, setSubmitting] = useState(false);
+  // Holders of an "Admin portal access" role land in the org portal after login.
+  const [isAdminPortal, setIsAdminPortal] = useState(Boolean(existing?.is_admin_portal));
 
   const isBuiltIn = Boolean(existing?.built_in || existing?.builtIn);
 
@@ -172,6 +176,11 @@ function RoleWizard({ existing }) {
         : true;
 
   const submit = async () => {
+    if (scope.isSuper && !existing && !scope.companyId) {
+      toast.error("Select the company this role belongs to");
+      return;
+    }
+
     try {
       setSubmitting(true);
 
@@ -202,6 +211,8 @@ function RoleWizard({ existing }) {
         description: description.trim(),
         permissions: normalizedPermissions,
         status: existing?.status || "Active",
+        is_admin_portal: isAdminPortal,
+        ...(scope.isSuper && !existing ? { company_id: scope.companyId } : {}),
       };
 
       let savedId = existing?.id;
@@ -214,6 +225,8 @@ function RoleWizard({ existing }) {
           savedId = res?.id || res?.data?.id;
         }
       } catch (apiErr) {
+        // 4xx = the backend refused (duplicate name, module not enabled, wrong company): show it, do not save locally.
+        if (apiErr?.response?.status >= 400 && apiErr.response.status < 500) throw apiErr;
         console.warn("Backend API sync notice:", apiErr);
       }
 
@@ -300,6 +313,7 @@ function RoleWizard({ existing }) {
       {step === 0 && (
         <Card className="shadow-card">
           <CardContent className="max-w-2xl space-y-4 p-6">
+            {!existing && <CompanyScopeSelect scope={scope} allowAll={false} />}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label className="text-muted-foreground text-xs font-medium">
@@ -337,6 +351,19 @@ function RoleWizard({ existing }) {
                 placeholder="Describe what responsibilities and scope this role blueprint covers..."
               />
             </div>
+            <label className="border-border flex cursor-pointer items-start gap-3 rounded-lg border p-3">
+              <Checkbox
+                checked={isAdminPortal}
+                onCheckedChange={(v) => setIsAdminPortal(Boolean(v))}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="text-sm font-medium">Admin portal access</span>
+                <span className="text-muted-foreground block text-xs">
+                  People with this role open the admin portal after login instead of the employee portal.
+                </span>
+              </span>
+            </label>
           </CardContent>
         </Card>
       )}

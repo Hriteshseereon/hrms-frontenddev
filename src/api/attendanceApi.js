@@ -107,6 +107,38 @@ export const attendanceApi = {
     return data;
   },
 
+  // Payroll attendance review — reads the persisted monthly register and lock state.
+  getPayrollSummary: async (month) => {
+    const { data } = await axios.get(`${BASE}/report`, { params: { month } });
+    return data;
+  },
+  getPayrollRegister: async (month) => {
+    const { data } = await axios.get(`${BASE}/register`, {
+      params: { month, view: "month" },
+    });
+    return data;
+  },
+  getPayrollWorkHours: async (month) => {
+    const { data } = await axios.get(`${BASE}/work-hours`, { params: { month } });
+    return data;
+  },
+  getLocks: async (companyId) => {
+    const { data } = await axios.get(`${BASE}/locks`, {
+      params: companyId ? { companyId } : {},
+    });
+    return data;
+  },
+  lockPayrollMonth: async (period, companyId) => {
+    const { data } = await axios.post(`${BASE}/locks`, { period, companyId });
+    return data;
+  },
+  unlockPayrollMonth: async (period, companyId) => {
+    const { data } = await axios.delete(`${BASE}/locks/${encodeURIComponent(period)}`, {
+      params: companyId ? { companyId } : {},
+    });
+    return data;
+  },
+
   // 8. Delete Today's Punch (Mistake correction)
   deleteTodayPunch: async (punchId) => {
     const { data } = await axios.delete(`${BASE}/punches/${punchId}`);

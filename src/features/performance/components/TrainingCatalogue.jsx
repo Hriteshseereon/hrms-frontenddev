@@ -5,6 +5,18 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -20,6 +32,9 @@ import {
 } from "@/features/performance/data/training-assign";
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
 import { toast } from "sonner";
+import { TRAINING_TYPE_NAMES, TRAINER_NAMES } from "@/features/performance/data/training-data";
+import { OFFICES } from "@/features/employees/data/hr-data";
+import { TRAINING_MODES, TRAINING_PURPOSES, addProgramme } from "@/features/performance/data/training-assign";
 
 const tone = {
   Completed: "border-primary/30 bg-primary/10 text-primary",
@@ -34,6 +49,25 @@ export function TrainingCatalogueTab() {
   const assignments = useAssignments();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [form, setForm] = useState({
+    title: "",
+    type: TRAINING_TYPE_NAMES[0] ?? "",
+    description: "",
+    purpose: TRAINING_PURPOSES[0] ?? "",
+    trainer: TRAINER_NAMES[0] ?? "",
+    mode: TRAINING_MODES[0] ?? "Online (self-paced)",
+    start: "",
+    end: "",
+    deadline: "",
+    durationHours: "8",
+    branch: OFFICES[0] ?? "",
+    location: "Online",
+    skills: "",
+    links: "",
+    mandatory: false,
+    includeInGoals: false,
+  });
   const rows = catalog.filter(
     (t) =>
       (status === "all" || t.status === status) &&
@@ -45,6 +79,36 @@ export function TrainingCatalogueTab() {
   );
   // Programme status is catalogue administration (HR / people office) — managers see it read-only.
   const canEdit = can(me.role, "employee.manage") && me.role !== "Manager";
+  const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const createTraining = () => {
+    if (!form.title.trim()) return toast.error("Training title is required.");
+    if (!form.start || !form.end || !form.deadline) return toast.error("Start, end and deadline dates are required.");
+    if (form.end < form.start) return toast.error("End date cannot be before the start date.");
+    if (form.deadline < form.start) return toast.error("Deadline cannot be before the start date.");
+    if (!(Number(form.durationHours) > 0)) return toast.error("Duration must be more than 0 hours.");
+    const links = form.links
+      .split("\n")
+      .map((url) => url.trim())
+      .filter(Boolean)
+      .map((url) => ({ label: url, url }));
+    if (links.some((link) => !/^https?:\/\/\S+$/i.test(link.url)))
+      return toast.error("Training links must start with https:// or http://");
+    const row = addProgramme(
+      {
+        ...form,
+        title: form.title.trim(),
+        durationHours: Number(form.durationHours),
+        skills: form.skills.split(",").map((skill) => skill.trim()).filter(Boolean),
+        links,
+        status: "Planned",
+        materials: [],
+      },
+      me,
+    );
+    toast.success(`${row.title} added to the training catalogue.`);
+    setCreateOpen(false);
+    setForm((current) => ({ ...current, title: "", description: "", skills: "", links: "" }));
+  };
   const setStatusOf = (id, st) => {
     trainingCatalogStore.set((l) => l.map((t) => (t.id === id ? { ...t, status: st } : t)));
     toast.success(`Status → ${st}`);
@@ -75,7 +139,7 @@ export function TrainingCatalogueTab() {
               ))}
             </SelectContent>
           </Select>
-          <div className="ml-auto flex gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               variant="outline"
@@ -121,10 +185,96 @@ export function TrainingCatalogueTab() {
             >
               <Download className="h-4 w-4" /> Catalogue report
             </Button>
-            <span className="text-muted-foreground inline-flex items-center gap-1 self-center text-xs">
-              <Plus className="h-3.5 w-3.5" /> Add new trainings from “Assign Training → Add a new
-              training”.
-            </span>
+            {canEdit && (
+              <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm" className="bg-gradient-emerald text-white">
+                    <Plus className="h-4 w-4" /> Create training
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
+                  <DialogHeader>
+                    <DialogTitle>Create training</DialogTitle>
+                    <DialogDescription>
+                      Add a programme to the catalogue. You can assign it to employees later.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label htmlFor="training-title">Training title *</Label>
+                      <Input id="training-title" value={form.title} onChange={(e) => setField("title", e.target.value)} placeholder="e.g. Leadership essentials" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Training type</Label>
+                      <Select value={form.type} onValueChange={(value) => setField("type", value)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>{TRAINING_TYPE_NAMES.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Trainer</Label>
+                      <Select value={form.trainer} onValueChange={(value) => setField("trainer", value)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>{TRAINER_NAMES.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label htmlFor="training-description">Description</Label>
+                      <Textarea id="training-description" value={form.description} onChange={(e) => setField("description", e.target.value)} rows={3} placeholder="What will participants learn?" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Purpose</Label>
+                      <Select value={form.purpose} onValueChange={(value) => setField("purpose", value)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>{TRAINING_PURPOSES.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Delivery mode</Label>
+                      <Select value={form.mode} onValueChange={(value) => setField("mode", value)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>{TRAINING_MODES.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    {[ ["start", "Start date"], ["end", "End date"], ["deadline", "Deadline"] ].map(([key, label]) => (
+                      <div className="space-y-1.5" key={key}>
+                        <Label htmlFor={`training-${key}`}>{label} *</Label>
+                        <Input id={`training-${key}`} type="date" value={form[key]} onChange={(e) => setField(key, e.target.value)} />
+                      </div>
+                    ))}
+                    <div className="space-y-1.5">
+                      <Label htmlFor="training-hours">Duration (hours) *</Label>
+                      <Input id="training-hours" type="number" min="1" value={form.durationHours} onChange={(e) => setField("durationHours", e.target.value)} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Branch</Label>
+                      <Select value={form.branch} onValueChange={(value) => setField("branch", value)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>{OFFICES.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="training-location">Location</Label>
+                      <Input id="training-location" value={form.location} onChange={(e) => setField("location", e.target.value)} placeholder="Room or online link" />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label htmlFor="training-skills">Skills</Label>
+                      <Input id="training-skills" value={form.skills} onChange={(e) => setField("skills", e.target.value)} placeholder="Comma-separated skills" />
+                    </div>
+                    <div className="space-y-1.5 sm:col-span-2">
+                      <Label htmlFor="training-links">Course links</Label>
+                      <Textarea id="training-links" value={form.links} onChange={(e) => setField("links", e.target.value)} rows={2} placeholder="One https:// link per line" />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm"><Checkbox checked={form.mandatory} onCheckedChange={(value) => setField("mandatory", value === true)} /> Mandatory training</label>
+                    <label className="flex items-center gap-2 text-sm"><Checkbox checked={form.includeInGoals} onCheckedChange={(value) => setField("includeInGoals", value === true)} /> Include in goals</label>
+                  </div>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+                    <Button className="bg-gradient-emerald text-white" onClick={createTraining}>Create training</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            )}
           </div>
         </CardContent>
       </Card>

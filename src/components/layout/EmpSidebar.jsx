@@ -39,6 +39,9 @@ import { BrandLogo } from "@/components/brand/BrandLogo";
 import { SEEREON_LOGO_DATA_URL } from "@/features/administration/data/brand-logo";
 import { cn } from "@/lib/utils";
 import { canOpen, signOut, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useModuleAccess, grantedModules, moduleOfRoute } from "@/features/auth/data/module-access";
+import { useSessionStore } from "@/features/auth/data/session-store";
+import { ORG_NAV_GROUPS } from "@/components/layout/OrgSidebar";
 import { workspaceLoginPath } from "@/features/organization/data/tenancy";
 
 /**
@@ -118,9 +121,33 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
   const collapsed = collapsedPref && !mobileOpen;
   const pathname = usePathname();
   const me = useCurrentUser();
-  const visible = EMP_NAV_ITEMS.map((i) =>
-    "children" in i ? { ...i, children: i.children.filter((c) => canOpen(me.role, c.to)) } : i,
-  ).filter((i) => ("children" in i ? i.children.length > 0 : canOpen(me.role, i.to)));
+  const moduleOn = useModuleAccess();
+  const permittedModules = useSessionStore((s) => s.permittedModules);
+  const permissions = useSessionStore((s) => s.permissions);
+  const apiSession = useSessionStore((s) => s.isAuthenticated);
+  // Org screens of the modules this employee's role grants (e.g. an HR role with the Employee module).
+  const granted = grantedModules({ permissions });
+  const assigned =
+    apiSession && me.role === "Employee"
+      ? ORG_NAV_GROUPS.flatMap((g) => g.items).filter((i) => {
+          const key = moduleOfRoute(i.to);
+          return (
+            i.to.startsWith("/org") &&
+            !i.superOnly &&
+            key &&
+            granted.has(key) &&
+            permittedModules.includes(key)
+          );
+        })
+      : [];
+  const navItems = assigned.length
+    ? [...EMP_NAV_ITEMS, { label: "Assigned modules", icon: Building2, children: assigned }]
+    : EMP_NAV_ITEMS;
+  const visible = navItems.map((i) =>
+    "children" in i
+      ? { ...i, children: i.children.filter((c) => canOpen(me.role, c.to) && moduleOn(c.to)) }
+      : i,
+  ).filter((i) => ("children" in i ? i.children.length > 0 : canOpen(me.role, i.to) && moduleOn(i.to)));
 
   const isActive = (to) => pathname === to || pathname.startsWith(to + "/");
   const [open, setOpen] = useState({});

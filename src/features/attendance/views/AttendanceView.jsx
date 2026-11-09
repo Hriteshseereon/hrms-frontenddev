@@ -8,7 +8,8 @@ import { WorkOrdersTab } from "@/features/attendance/components/WorkOrdersTab";
 import { WorkHoursTab } from "@/features/attendance/components/WorkHoursTab";
 import { DailyWagesTab } from "@/features/attendance/components/DailyWagesTab";
 import { AttendanceReportTab } from "@/features/attendance/components/AttendanceReportTab";
-import { canOpen, useCurrentUser } from "@/features/auth/data/auth-session";
+import { AttendancePayrollLockTab } from "@/features/attendance/components/AttendancePayrollLockTab";
+import { can, canOpen, useCurrentUser } from "@/features/auth/data/auth-session";
 
 function AttendancePage() {
   // Shift and penalty configuration is platform administration — Managers only
@@ -17,6 +18,7 @@ function AttendancePage() {
   // Work orders carry billing / PO data — only entity administrators, operations and HR maintain them
   // (HOD, CTO and CFO used to get the full work-order console because the check only excluded Managers).
   const canConfigure = ["SuperAdmin", "Admin", "CEO", "COO", "CHRO", "HR"].includes(user.role);
+  const canLockAttendance = can(user.role, "attendance.lock");
   // The Master Data link is only useful to roles that can open /org/masters (HOD / CTO cannot — they would hit Access Denied).
   const canOpenMasters = canOpen(user.role, "/org/masters");
   return (
@@ -38,6 +40,9 @@ function AttendancePage() {
           <TabsTrigger value="report">Attendance Report</TabsTrigger>
           <TabsTrigger value="hours">Work Hours & Overtime</TabsTrigger>
           <TabsTrigger value="wages">Daily Wages</TabsTrigger>
+          {canLockAttendance && (
+            <TabsTrigger value="payroll-lock">Payroll Attendance Lock</TabsTrigger>
+          )}
           {canConfigure && <TabsTrigger value="workorders">Work Orders</TabsTrigger>}
         </ScrollTabsList>
         <TabsContent value="log" className="pt-4">
@@ -52,12 +57,17 @@ function AttendancePage() {
         <TabsContent value="wages" className="pt-4">
           <DailyWagesTab />
         </TabsContent>
+        {canLockAttendance && (
+          <TabsContent value="payroll-lock" className="pt-4">
+            <AttendancePayrollLockTab />
+          </TabsContent>
+        )}
         {canConfigure && (
           <TabsContent value="workorders" className="pt-4">
             <WorkOrdersTab />
           </TabsContent>
         )}
-        {canOpenMasters && (
+        {/* {canOpenMasters && (
           <div className="text-muted-foreground pt-3 text-xs">
             Shift management and penalty / overtime rules are configured under{" "}
             <Link
@@ -68,7 +78,7 @@ function AttendancePage() {
             </Link>
             .
           </div>
-        )}
+        )} */}
       </Tabs>
     </div>
   );

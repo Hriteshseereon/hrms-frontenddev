@@ -1,3 +1,6 @@
+import {
+  createLeaveTypeApi,
+} from "@/features/leave/data/leaveMasterAdapters";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { companiesOf, useCurrentTenant } from "@/features/organization/data/tenancy";
 import { useOrgs, useActiveOrgId } from "@/features/organization/data/group-data";
@@ -19,7 +22,14 @@ import {
   Upload,
   Trash2,
   Calculator,
+  Pencil,
+  FileSpreadsheet,
 } from "lucide-react";
+import {
+  HolidayBulkUploadDialog,
+  HOLIDAY_PAY_TYPES,
+  parseHolidayExcel,
+} from "@/features/organization/components/HolidayBulkUploadDialog";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -76,6 +86,7 @@ import {
 } from "@/features/recruitment/data/recruitmentMasterAdapters";
 import {
   useLeaveMaster,
+  leaveMasterStore,
   saveLeaveMasterRow,
   useInsurancePlans,
   saveInsurancePlan,
@@ -1780,20 +1791,180 @@ function calendarError(c) {
     return `All dates must fall in ${c.year}.`;
   if (new Set(c.holidays.map((h) => h.date)).size !== c.holidays.length)
     return "The same date is listed twice.";
-    if (c.type === "Optional / Restricted" && !c.appliesTo.trim())
-    return "Assign at least one branch for an Optional / Restricted calendar.";
+  if (!HOLIDAY_PAY_TYPES.includes(c.payType ?? "Paid"))
+    return "Select whether the calendar is Paid or Unpaid.";
   return null;
 }
 
 export function LeaveMasterTab({ section = "both" }) {
-  const rows = useLeaveMaster();
+  const storeRows = useLeaveMaster();
   const orgId = useActiveOrgId();
   const calApi = useMemo(() => createHolidayCalendarApi(orgId), [orgId]);
+  const leaveApi = useMemo(() => createLeaveTypeApi(orgId), [orgId]);
   const [cals, setCals] = useState([]);
   const [edit, setEdit] = useState(null);
   const [cal, setCal] = useState(null);
+  const [viewCal, setViewCal] = useState(null); // read-only "View" dialog
+  const [bulkOpen, setBulkOpen] = useState(false); // Excel / CSV mass upload dialog
   const showLeave = section !== "holidays";
   const showHol = section !== "leave";
+
+  // Leave types come from the API (GET /leave-types). They are also written into the local
+  // leave master store so leave applications and balances keep resolving them.
+  const [leaveOrder, setLeaveOrder] = useState(null); // ids of the leave types loaded from the server
+  const [leaveStatus, setLeaveStatus] = useState("loading"); // loading | ready | failed
+  const [savingLeave, setSavingLeave] = useState(false);
+  const [viewLeave, setViewLeave] = useState(null); // read-only "View" dialog
+  const [deletingLeaveId, setDeletingLeaveId] = useState(null);
+  // Dropdown options (GET /leave-types/credits and /leave-types/approval-chains).
+  // The built-in lists are used until (or unless) the server answers.
+  const [creditOptions, setCreditOptions] = useState([
+    "Quarterly pro-rata",
+    "Monthly pro-rata",
+    "Annual upfront",
+    "On event",
+  ]);
+  const [chainOptions, setChainOptions] = useState([
+    "Manager",
+    "Manager → HR",
+    "HOD",
+    "HOD → HR",
+    "Manager → HOD → HR",
+  ]);
+
+  useEffect(() => {
+    if (!showLeave) return undefined;
+
+    let active = true;
+
+    leaveApi
+      .list()
+      .then((items) => {
+        if (!active) return;
+        items.forEach((item) => saveLeaveMasterRow(item));
+        setLeaveOrder(items.map((item) => item.id));
+        setLeaveStatus("ready");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setLeaveStatus("failed");
+        console.error("Failed to load leave types:", error);
+        toast.error(apiErrorMessage(error, "Unable to load leave types."));
+      });
+
+    leaveApi
+      .loadCredits()
+      .then((names) => {
+        if (active && names.length) setCreditOptions(names);
+      })
+      .catch(() => {});
+
+    leaveApi
+      .loadApprovalChains()
+      .then((names) => {
+        if (active && names.length) setChainOptions(names);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [showLeave, leaveApi]);
+
+  // Shown in the table: the server's leave types once loaded, the previous local list if the
+  // server could not be reached.
+  const rows =
+    leaveStatus === "ready"
+      ? leaveOrder.map((id) => storeRows.find((r) => r.id === id)).filter(Boolean)
+      : leaveStatus === "failed"
+        ? storeRows
+        : [];
+
+  // GET /leave-types/{id}: open the leave type with its latest server values.
+  // Used by both View (mode "view") and Edit (mode "edit").
+  const [loadingLeaveId, setLoadingLeaveId] = useState(null);
+  async function openLeaveType(r, mode = "edit") {
+    const open = (record) => (mode === "view" ? setViewLeave(record) : setEdit(record));
+
+    if (leaveStatus !== "ready" || !leaveOrder.includes(r.id)) {
+      open(r);
+      return;
+    }
+
+    setLoadingLeaveId(r.id);
+    try {
+      const fresh = await leaveApi.getById(r.id);
+      open(fresh ?? r);
+    } catch (error) {
+      console.error("Failed to load leave type:", error);
+      toast.error(apiErrorMessage(error, "Unable to load the leave type."));
+      open(r);
+    } finally {
+      setLoadingLeaveId(null);
+    }
+  }
+
+  // DELETE /leave-types/{id}, then drop the row from the local leave master store.
+  async function deleteLeaveType(r) {
+    if (!window.confirm(`Delete leave type "${r.name}"?`)) return;
+
+    const fromServer = leaveStatus === "ready" && leaveOrder.includes(r.id);
+    setDeletingLeaveId(r.id);
+    try {
+      if (fromServer) await leaveApi.remove(r.id);
+      leaveMasterStore.set((list) => list.filter((x) => x.id !== r.id));
+      if (fromServer) setLeaveOrder((previous) => (previous ?? []).filter((id) => id !== r.id));
+      toast.success(`${r.name} deleted`);
+    } catch (error) {
+      console.error("Failed to delete leave type:", error);
+      toast.error(apiErrorMessage(error, "Unable to delete the leave type."));
+    } finally {
+      setDeletingLeaveId(null);
+    }
+  }
+
+  // POST for a new leave type, PATCH (changed fields only) for an existing one.
+  async function submitLeaveType() {
+    if (!edit) return;
+
+    if (leaveStatus === "loading") {
+      toast.error("Leave types are still loading. Please try again in a moment.");
+      return;
+    }
+
+    // Server unreachable: keep the previous local-only behaviour.
+    if (leaveStatus === "failed") {
+      saveLeaveMasterRow({ ...edit, code: edit.code.trim() });
+      setEdit(null);
+      toast.success("Leave type saved");
+      return;
+    }
+
+    setSavingLeave(true);
+
+    try {
+      const form = { ...edit, code: edit.code.trim() };
+      const saved = leaveOrder.includes(edit.id)
+        ? await leaveApi.patch(
+            edit.id,
+            form,
+            storeRows.find((r) => r.id === edit.id),
+          )
+        : await leaveApi.create(form);
+
+      saveLeaveMasterRow(saved);
+      setLeaveOrder((previous) =>
+        (previous ?? []).includes(saved.id) ? previous : [...(previous ?? []), saved.id],
+      );
+      setEdit(null);
+      toast.success("Leave type saved");
+    } catch (error) {
+      console.error("Failed to save leave type:", error);
+      toast.error(apiErrorMessage(error, "Unable to save the leave type."));
+    } finally {
+      setSavingLeave(false);
+    }
+  }
 
   // GET /attendance/holiday-calendars
   const reloadCals = useCallback(async () => {
@@ -1815,7 +1986,7 @@ export function LeaveMasterTab({ section = "both" }) {
       if (cal._apiId) await calApi.update(cal._apiId, cal);
       else await calApi.create(cal);
       setCal(null);
-      toast.success("Calendar saved — visible on Holidays for the assigned branches");
+      toast.success("Calendar saved — visible on Holidays for employees");
       await reloadCals();
     } catch (error) {
       console.error("Failed to save holiday calendar:", error);
@@ -1823,6 +1994,32 @@ export function LeaveMasterTab({ section = "both" }) {
     }
   };
   // DELETE /attendance/holiday-calendars/{id}
+  // GET /attendance/holiday-calendars/{id}: load the latest copy before View / Edit.
+  // If the request fails, the card's own data is used so the dialog still opens.
+  const [loadingCalId, setLoadingCalId] = useState(null);
+  const openCalendar = async (c, mode) => {
+    const open = (record) =>
+      mode === "edit"
+        ? setCal({ ...record, payType: record.payType ?? "Paid" })
+        : setViewCal(record);
+
+    if (!c._apiId) {
+      open(c);
+      return;
+    }
+    setLoadingCalId(c.id);
+    try {
+      const fresh = await calApi.getById(c._apiId);
+      open(fresh?._apiId ? fresh : c);
+    } catch (error) {
+      console.error("Failed to load holiday calendar:", error);
+      toast.error(apiErrorMessage(error, "Unable to load the holiday calendar."));
+      open(c);
+    } finally {
+      setLoadingCalId(null);
+    }
+  };
+
   const handleDeleteCalendar = async (c) => {
     if (!window.confirm(`Delete holiday calendar "${c.name}"?`)) return;
     try {
@@ -1896,7 +2093,7 @@ export function LeaveMasterTab({ section = "both" }) {
                       "Approval",
                       "Validity",
                       "Paid",
-                      "",
+                      "Action",
                     ].map((h) => (
                       <th key={h} className="p-2 text-left whitespace-nowrap">
                         {h}
@@ -1927,14 +2124,41 @@ export function LeaveMasterTab({ section = "both" }) {
                       </td>
                       <td className="p-2">{r.paid ? "Yes" : "LOP"}</td>
                       <td className="p-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7"
-                          onClick={() => setEdit(r)}
-                        >
-                          Edit
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            title="View"
+                            aria-label={`View leave type ${r.name}`}
+                            disabled={loadingLeaveId === r.id}
+                            onClick={() => openLeaveType(r, "view")}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            title="Edit"
+                            aria-label={`Edit leave type ${r.name}`}
+                            disabled={loadingLeaveId === r.id}
+                            onClick={() => openLeaveType(r, "edit")}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive h-7 w-7"
+                            title="Delete"
+                            aria-label={`Delete leave type ${r.name}`}
+                            disabled={deletingLeaveId === r.id}
+                            onClick={() => deleteLeaveType(r)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -1952,58 +2176,100 @@ export function LeaveMasterTab({ section = "both" }) {
                 <div className="text-sm font-semibold">Holiday calendars (3 types)</div>
                 <div className="text-muted-foreground text-xs">
                   National, state/regional and optional/restricted — each uploaded separately and
-                  assigned by branch.
+                  marked paid or unpaid.
                 </div>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="ml-auto"
-                onClick={() =>
-                  setCal({
-                    id: `HC-${Date.now().toString(36).toUpperCase()}`,
-                    name: "",
-                    type: "Regional / State",
-                    year: 2026,
-                    appliesTo: "",
-                    holidays: [],
-                    uploadedFile: "",
-                    active: true,
-                  })
-                }
-              >
-                <Plus className="h-4 w-4" /> Calendar
-              </Button>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
+                  <FileSpreadsheet className="h-4 w-4" /> Bulk upload
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    setCal({
+                      id: `HC-${Date.now().toString(36).toUpperCase()}`,
+                      name: "",
+                      type: "Regional / State",
+                      year: 2026,
+                      payType: "Paid",
+                      holidays: [],
+                      uploadedFile: "",
+                      active: true,
+                    })
+                  }
+                >
+                  <Plus className="h-4 w-4" /> Calendar
+                </Button>
+              </div>
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              {cals.map((c) => (
-                <div key={c.id} className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setCal(c)}
-                    className="border-border hover:bg-muted/30 w-full rounded-xl border p-4 text-left"
+              {cals.map((c) => {
+                const payType = c.payType ?? "Paid";
+                return (
+                  <div
+                    key={c.id}
+                    className="border-border hover:bg-muted/30 flex min-w-0 flex-col rounded-xl border p-4"
                   >
-                    <Badge variant="outline" className="mb-2">
-                      {c.type}
-                    </Badge>
-                    <div className="text-sm font-semibold">{c.name}</div>
-                    <div className="text-muted-foreground text-xs">
-                      {c.year} · {c.holidays.length} holidays · {c.appliesTo || "all branches"}
+                    <div className="mb-2 flex flex-wrap gap-1">
+                      <Badge variant="outline">{c.type}</Badge>
+                      <Badge
+                        variant="outline"
+                        className={
+                          payType === "Paid"
+                            ? "border-primary/30 bg-primary/10 text-primary"
+                            : "border-destructive/30 bg-destructive/10 text-destructive"
+                        }
+                      >
+                        {payType}
+                      </Badge>
                     </div>
-                    <div className="text-muted-foreground mt-1 text-[11px]">
+                    <div className="text-sm font-semibold break-words">{c.name}</div>
+                    <div className="text-muted-foreground text-xs">
+                      {c.year} · {c.holidays.length} holidays · {payType}
+                    </div>
+                    <div className="text-muted-foreground mt-1 truncate text-[11px]">
                       {c.uploadedFile ? `Uploaded: ${c.uploadedFile}` : "Not uploaded"}
                     </div>
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={`Delete holiday calendar ${c.name}`}
-                    className="text-destructive hover:text-destructive/80 absolute top-3 right-3 rounded p-1"
-                    onClick={() => handleDeleteCalendar(c)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
+                    <div className="mt-auto pt-3">
+                      <div className="flex justify-center gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          title="View"
+                          aria-label={`View holiday calendar ${c.name}`}
+                          disabled={loadingCalId === c.id}
+                          onClick={() => openCalendar(c, "view")}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          title="Edit"
+                          aria-label={`Edit holiday calendar ${c.name}`}
+                          disabled={loadingCalId === c.id}
+                          onClick={() => openCalendar(c, "edit")}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive h-7 w-7"
+                          title="Delete"
+                          aria-label={`Delete holiday calendar ${c.name}`}
+                          onClick={() => handleDeleteCalendar(c)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -2051,13 +2317,14 @@ export function LeaveMasterTab({ section = "both" }) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["Quarterly pro-rata", "Monthly pro-rata", "Annual upfront", "On event"].map(
-                      (o) => (
-                        <SelectItem key={o} value={o}>
-                          {o}
-                        </SelectItem>
-                      ),
-                    )}
+                    {(creditOptions.includes(edit.creditFrequency)
+                      ? creditOptions
+                      : [...creditOptions, edit.creditFrequency].filter(Boolean)
+                    ).map((o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -2071,13 +2338,14 @@ export function LeaveMasterTab({ section = "both" }) {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["Manager", "Manager → HR", "HOD", "HOD → HR", "Manager → HOD → HR"].map(
-                      (o) => (
-                        <SelectItem key={o} value={o}>
-                          {o}
-                        </SelectItem>
-                      ),
-                    )}
+                    {(chainOptions.includes(edit.approvalChain)
+                      ? chainOptions
+                      : [...chainOptions, edit.approvalChain].filter(Boolean)
+                    ).map((o) => (
+                      <SelectItem key={o} value={o}>
+                        {o}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -2187,24 +2455,78 @@ export function LeaveMasterTab({ section = "both" }) {
                   edit.validityDays,
                   edit.attachmentAfterDays,
                   edit.maxCarry,
-                ].some((n) => n < 0)
+                ].some((n) => n < 0) ||
+                savingLeave
               }
-              onClick={() => {
-                saveLeaveMasterRow({ ...edit, code: edit.code.trim() });
-                setEdit(null);
-                toast.success("Leave type saved");
-              }}
+              onClick={submitLeaveType}
             >
               Save
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* View leave type (read-only) */}
+      <Dialog open={!!viewLeave} onOpenChange={(o) => !o && setViewLeave(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{viewLeave?.name}</DialogTitle>
+            <DialogDescription>Leave type detail</DialogDescription>
+          </DialogHeader>
+          {viewLeave && (
+            <dl className="divide-border divide-y text-sm">
+              {[
+                ["Code", viewLeave.code || "—"],
+                ["Annual days", viewLeave.annual],
+                ["Credit", viewLeave.creditFrequency || "—"],
+                ["Carry forward", viewLeave.carryForward ? `≤ ${viewLeave.maxCarry}` : "No"],
+                [
+                  "Encashment",
+                  viewLeave.encashable ? `Year-end on ${viewLeave.encashOn}` : "No",
+                ],
+                ["Clubbable", viewLeave.clubbable ? "Yes" : "No"],
+                ["Max consecutive", viewLeave.maxConsecutive || "—"],
+                [
+                  "Attachment",
+                  viewLeave.needsAttachment ? `> ${viewLeave.attachmentAfterDays} d` : "—",
+                ],
+                ["Approval chain", viewLeave.approvalChain || "—"],
+                ["Validity", viewLeave.validityDays ? `${viewLeave.validityDays} days` : "—"],
+                ["Paid", viewLeave.paid ? "Yes" : "LOP"],
+                ["Applicable to", viewLeave.applicableTo || "All"],
+                ["Status", viewLeave.active === false ? "Inactive" : "Active"],
+              ].map(([k, v]) => (
+                <div key={k} className="grid grid-cols-3 gap-3 py-2">
+                  <dt className="text-muted-foreground text-xs tracking-wide uppercase">{k}</dt>
+                  <dd className="col-span-2">{v}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewLeave(null)}>
+              Close
+            </Button>
+            <Button
+              className="bg-gradient-emerald text-white"
+              onClick={() => {
+                const r = viewLeave;
+                setViewLeave(null);
+                if (r) setEdit(r);
+              }}
+            >
+              <Pencil className="h-4 w-4" /> Edit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!cal} onOpenChange={(o) => !o && setCal(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Holiday calendar</DialogTitle>
-            <DialogDescription>Upload a CSV (date, name) or add holidays inline.</DialogDescription>
+            <DialogTitle>{cal?._apiId ? `Edit ${cal.name}` : "Holiday calendar"}</DialogTitle>
+            <DialogDescription>
+              Upload an Excel file (Holiday Date, Holiday Name) or add holidays inline.
+            </DialogDescription>
           </DialogHeader>
           {cal && (
             <div className="space-y-3">
@@ -2242,37 +2564,50 @@ export function LeaveMasterTab({ section = "both" }) {
                   />
                 </div>
                 <div className="space-y-1 sm:col-span-2">
-                  <Label className="text-xs">Applies to (branches)</Label>
-                  <Input
-                    className="h-8"
-                    value={cal.appliesTo}
-                    onChange={(e) => setCal({ ...cal, appliesTo: e.target.value })}
-                    placeholder="Bhubaneswar HQ, Kolkata Office"
-                  />
+                  <Label className="text-xs">Holiday Category</Label>
+                  <Select
+                    value={cal.payType ?? "Paid"}
+                    onValueChange={(v) => setCal({ ...cal, payType: v })}
+                  >
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {HOLIDAY_PAY_TYPES.map((o) => (
+                        <SelectItem key={o} value={o}>
+                          {o}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-1 sm:col-span-2">
-                  <Label className="text-xs">Upload CSV</Label>
+                  <Label className="text-xs">Upload Excel</Label>
                   <Input
                     className="h-8"
                     type="file"
-                    accept=".csv"
-                    onChange={(e) => {
+                    accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                    onChange={async (e) => {
                       captureFiles(e.target.files);
                       const f = e.target.files?.[0];
+                      e.currentTarget.value = "";
                       if (!f) return;
-                      f.text().then((txt) => {
-                        const rows = txt
-                          .split(/\r?\n/)
-                          .map((l) => l.split(","))
-                          .filter((r) => r[0] && /\d{4}-\d{2}-\d{2}/.test(r[0]))
-                          .map((r) => ({ date: r[0].trim(), name: (r[1] ?? "Holiday").trim() }));
-                        setCal({
-                          ...cal,
+                      try {
+                        // Only the date + name columns are needed here; the form already has
+                        // the title, type, year and category.
+                        const parsed = await parseHolidayExcel(f, ["Holiday Date", "Holiday Name"]);
+                        const rows = parsed
+                          .filter((r) => r.date && r.name)
+                          .map((r) => ({ date: r.date, name: r.name }));
+                        setCal((prev) => ({
+                          ...prev,
                           uploadedFile: f.name,
-                          holidays: rows.length ? rows : cal.holidays,
-                        });
-                        toast.success(`${rows.length} holidays parsed`);
-                      });
+                          holidays: rows.length ? rows : prev.holidays,
+                        }));
+                        toast.success(`${rows.length} holidays read from ${f.name}`);
+                      } catch (error) {
+                        toast.error(error?.message || "Unable to read this Excel file");
+                      }
                     }}
                   />
                 </div>
@@ -2344,6 +2679,95 @@ export function LeaveMasterTab({ section = "both" }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* View holiday calendar (read-only) */}
+      <Dialog open={!!viewCal} onOpenChange={(o) => !o && setViewCal(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{viewCal?.name}</DialogTitle>
+            <DialogDescription>Holiday calendar detail</DialogDescription>
+          </DialogHeader>
+          {viewCal && (
+            <div className="space-y-4">
+              <dl className="divide-border divide-y text-sm">
+                {[
+                  ["Type", viewCal.type],
+                  ["Year", viewCal.year],
+                  ["Paid / Unpaid", viewCal.payType ?? "Paid"],
+                  ["Holidays", viewCal.holidays.length],
+                  ["Uploaded file", viewCal.uploadedFile || "Not uploaded"],
+                  ["Status", viewCal.active === false ? "Inactive" : "Active"],
+                ].map(([k, v]) => (
+                  <div key={k} className="grid grid-cols-3 gap-3 py-2">
+                    <dt className="text-muted-foreground text-xs tracking-wide uppercase">{k}</dt>
+                    <dd className="col-span-2">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="border-border overflow-hidden rounded-lg border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
+                    <tr>
+                      <th className="p-2 text-left">Date</th>
+                      <th className="p-2 text-left">Day</th>
+                      <th className="p-2 text-left">Holiday</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-border divide-y">
+                    {viewCal.holidays.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="text-muted-foreground p-4 text-center">
+                          No holidays added yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      [...viewCal.holidays]
+                        .sort((a, b) => a.date.localeCompare(b.date))
+                        .map((h) => (
+                          <tr key={h.date}>
+                            <td className="p-2 whitespace-nowrap">{h.date}</td>
+                            <td className="text-muted-foreground p-2">
+                              {new Date(`${h.date}T00:00:00`).toLocaleDateString("en-IN", {
+                                weekday: "short",
+                              })}
+                            </td>
+                            <td className="p-2">{h.name}</td>
+                          </tr>
+                        ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewCal(null)}>
+              Close
+            </Button>
+            <Button
+              className="bg-gradient-emerald text-white"
+              onClick={() => {
+                const c = viewCal;
+                setViewCal(null);
+                if (c) setCal({ ...c, payType: c.payType ?? "Paid" });
+              }}
+            >
+              <Pencil className="h-4 w-4" /> Edit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk upload holiday calendars from Excel / CSV */}
+      {showHol && (
+        <HolidayBulkUploadDialog
+          open={bulkOpen}
+          onOpenChange={setBulkOpen}
+          calendars={cals}
+          calApi={calApi}
+          onDone={reloadCals}
+        />
+      )}
     </div>
   );
 }

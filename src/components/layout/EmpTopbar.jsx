@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { initials } from "@/features/employees/data/employee-directory";
 import { useCurrentEmployee, useEmployeeAvatar } from "@/features/auth/data/emp-session";
 import { signOut, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { workspaceLoginPath } from "@/features/organization/data/tenancy";
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
@@ -99,6 +100,8 @@ function Breadcrumbs() {
 export function EmpTopbar({ onMenu }) {
   const me = useCurrentEmployee();
   const user = useCurrentUser();
+  const companyName = useSessionStore((s) => s.companyName);
+  const branchName = useSessionStore((s) => s.branchName);
   const avatar = useEmployeeAvatar();
   const router = useRouter();
 
@@ -117,7 +120,7 @@ export function EmpTopbar({ onMenu }) {
         className="border-border bg-muted/40 hidden max-w-[200px] min-w-0 shrink truncate font-medium xl:inline-flex"
         title={`${me.branch} · ${me.id}`}
       >
-        {me.branch || me.dept}
+        {companyName ? `${companyName}${branchName ? ` · ${branchName}` : ""}` : me.branch || me.dept}
       </Badge>
       <div className="flex-1" />
       <GlobalSearch portal="emp" />

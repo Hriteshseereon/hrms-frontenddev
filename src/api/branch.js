@@ -30,6 +30,16 @@ const Branch_api = {
     return SuperAdmin_axios.put(`/super-admin/branches/${branchId}`, data);
   },
 
+  // POST: create or replace the Branch Admin (the old one is deactivated)
+  setBranchAdmin(branchId, data) {
+    return SuperAdmin_axios.post(`/super-admin/branches/${branchId}/admin`, data);
+  },
+
+  // POST: new temporary password for the Branch Admin (shown once)
+  resetBranchAdminPassword(branchId) {
+    return SuperAdmin_axios.post(`/super-admin/branches/${branchId}/admin/reset-password`);
+  },
+
   // DELETE: Delete branch
   deleteBranch(branchId) {
     return SuperAdmin_axios.delete(`/super-admin/branches/${branchId}`);

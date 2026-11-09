@@ -78,14 +78,23 @@ const useToggles = (orgId) => ({ ...DEFAULT_TOGGLES, ...(togglesStore.use()[orgI
 const setToggle = (orgId, patch) =>
   togglesStore.set((p) => ({ ...p, [orgId]: { ...(p[orgId] ?? {}), ...patch } }));
 
-function Row({ label, hint, children }) {
+/**
+ * Settings row. `stack` puts the label/hint on top and the control on its own full-width line
+ * (used for long text fields so they never get clipped or overflow the card).
+ */
+function Row({ label, hint, children, stack = false }) {
   return (
-    <div className="border-border flex flex-wrap items-start justify-between gap-4 border-b py-4 last:border-0">
-      <div className="min-w-[200px]">
+    <div
+      className={cn(
+        "border-border flex flex-wrap items-start justify-between gap-4 border-b py-4 last:border-0",
+        stack && "flex-col",
+      )}
+    >
+      <div className={stack ? "w-full" : "min-w-[200px]"}>
         <div className="text-sm font-medium">{label}</div>
         {hint && <div className="text-muted-foreground mt-0.5 text-xs">{hint}</div>}
       </div>
-      <div>{children}</div>
+      <div className={cn("min-w-0 max-w-full", stack && "w-full")}>{children}</div>
     </div>
   );
 }
@@ -129,34 +138,40 @@ export function OrgSettings() {
   }, [seedKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const set = (p) => setProfile((v) => ({ ...v, ...p }));
   return (
-    <div className="space-y-6">
+    <div className="w-full min-w-0 space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
           <Settings className="text-primary h-6 w-6" /> Workspace Settings
         </h1>
-        <p className="text-muted-foreground mt-1 text-sm">
+        {/* <p className="text-muted-foreground mt-1 text-sm">
           Organisation profile, branding & colours (applied system-wide), security and notification
           channels{org ? ` — ${org.name}` : ""}.
-        </p>
+        </p> */}
+        <p className="text-muted-foreground mt-1 text-sm">
+  Branding & colours (applied system-wide) and notification channels
+  {org ? ` — ${org.name}` : ""}.
+</p>
       </div>
 
-      <Tabs defaultValue="brand">
+      <Tabs defaultValue="brand" className="w-full min-w-0">
         <ScrollTabsList>
-          <TabsTrigger value="general">
-            <Building2 className="h-4 w-4" /> Organization
-          </TabsTrigger>
+         {/*
+<TabsTrigger value="general">
+  <Building2 className="h-4 w-4" /> Organization
+</TabsTrigger>
+*/}
           <TabsTrigger value="brand">
             <Palette className="h-4 w-4" /> Branding & colours
           </TabsTrigger>
-          <TabsTrigger value="security">
+          {/* <TabsTrigger value="security">
             <ShieldCheck className="h-4 w-4" /> Security
-          </TabsTrigger>
+          </TabsTrigger> */}
           <TabsTrigger value="notify">
             <Bell className="h-4 w-4" /> Notifications
           </TabsTrigger>
         </ScrollTabsList>
 
-        <TabsContent value="general" className="pt-4">
+        {/* <TabsContent value="general" className="pt-4">
           <Card className="shadow-card">
             <CardHeader>
               <CardTitle className="text-base">Organization Profile</CardTitle>
@@ -243,14 +258,14 @@ export function OrgSettings() {
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent> */}
 
         {/* Keyed by entity so the colour draft never carries one company's palette into another. */}
         <TabsContent value="brand" className="pt-4">
           <BrandingTab key={activeOrgId} orgId={activeOrgId} />
         </TabsContent>
 
-        <TabsContent value="security" className="pt-4">
+        {/* <TabsContent value="security" className="pt-4">
           <Card className="shadow-card">
             <CardHeader>
               <CardTitle className="text-base">Security</CardTitle>
@@ -310,7 +325,7 @@ export function OrgSettings() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
+        </TabsContent> */}
 
         <TabsContent value="notify" className="pt-4">
           <Card className="shadow-card">
@@ -394,8 +409,8 @@ function BrandingTab({ orgId }) {
   const applyPreset = (p) =>
     update({ primary: p.primary, primaryDark: p.primaryDark, gold: p.gold });
   const swatch = (label, key, hint) => (
-    <div className="border-border space-y-2 rounded-xl border p-3">
-      <div className="flex items-center gap-3">
+    <div className="border-border min-w-0 space-y-2 rounded-xl border p-3">
+      <div className="flex flex-wrap items-center gap-3">
         <input
           type="color"
           value={isValidHex(draft[key]) ? draft[key] : "#000000"}
@@ -404,7 +419,7 @@ function BrandingTab({ orgId }) {
           className="border-border h-10 w-12 cursor-pointer rounded-lg border bg-transparent p-0.5"
           aria-label={label}
         />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[110px] flex-1">
           <div className="text-sm font-medium">{label}</div>
           <div className="text-muted-foreground text-[11px]">{hint}</div>
         </div>
@@ -435,8 +450,8 @@ function BrandingTab({ orgId }) {
   );
 
   return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_340px]">
-      <div className="space-y-4">
+    <div className="grid w-full min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="min-w-0 space-y-4">
         <Card className="shadow-card">
           <CardContent className="space-y-4 p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -454,7 +469,7 @@ function BrandingTab({ orgId }) {
                 <Switch checked={live} onCheckedChange={setLive} disabled={!canEdit} /> Live preview
               </label>
             </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 2xl:grid-cols-3">
               {swatch("Primary", "primary", "Buttons, links, active states")}
               {swatch("Primary (dark)", "primaryDark", "Sidebar, gradient end")}
               {swatch("Accent", "gold", "Badges, highlights, callouts")}
@@ -539,6 +554,7 @@ function BrandingTab({ orgId }) {
         <Card className="shadow-card">
           <CardContent className="p-5">
             <Row
+              stack
               label="Company logo"
               hint="Shown in the sidebar, letters, payslips and reports. PNG / SVG / JPG, square works best."
             >
@@ -581,24 +597,30 @@ function BrandingTab({ orgId }) {
                 </Button>
               </div>
             </Row>
-            <Row label="Tagline" hint="Printed under the company name on documents.">
-              <Input
+            <Row stack label="Tagline" hint="Printed under the company name on documents.">
+              <textarea
                 key={`tag-${orgId}-${brand.tagline}`}
                 defaultValue={brand.tagline}
                 disabled={!canEdit}
-                className="w-72 max-w-full"
+                rows={2}
+                className="border-input bg-background placeholder:text-muted-foreground focus-visible:ring-ring w-full min-w-0 resize-y rounded-md border px-3 py-2 text-sm break-words focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 onBlur={(e) => {
                   if (orgId === "ORG-SEEREON") setBrand({ tagline: e.target.value });
                   else setOrgBrand(orgId, { tagline: e.target.value });
                 }}
               />
             </Row>
-            <Row label="Document footer" hint="Legal line at the bottom of every generated PDF.">
-              <Input
+            <Row
+              stack
+              label="Document footer"
+              hint="Legal line at the bottom of every generated PDF."
+            >
+              <textarea
                 key={`foot-${orgId}-${brand.footer}`}
                 defaultValue={brand.footer}
                 disabled={!canEdit}
-                className="w-72 max-w-full"
+                rows={3}
+                className="border-input bg-background placeholder:text-muted-foreground focus-visible:ring-ring w-full min-w-0 resize-y rounded-md border px-3 py-2 text-sm break-words focus-visible:ring-1 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 onBlur={(e) => {
                   if (orgId === "ORG-SEEREON") setBrand({ footer: e.target.value });
                   else setOrgBrand(orgId, { footer: e.target.value });

@@ -1,4 +1,3 @@
-
 import { useEffect, useMemo, useState } from "react";
 import {
   Plus,
@@ -11,6 +10,7 @@ import {
   LoaderCircle,
   Download,
 } from "lucide-react";
+import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import designationApi from "@/api/designationApi";
 import departmentApi from "@/api/departmentApi";
 
@@ -40,16 +40,33 @@ function extractList(data, keys) {
   return [];
 }
 
+// The API links a designation to a department by NAME (field "department" / "department_name").
 function normalizeDesignation(item) {
+  const departmentName =
+    item.department_name ??
+    (typeof item.department === "string"
+      ? item.department
+      : (item.department?.department_name ?? item.department?.name)) ??
+    "";
+
   return {
     ...item,
     id: item.id,
     name: item.designation_name ?? item.name ?? "",
-    department_id: item.department_id ?? "",
-    department_name: item.department_name ?? "",
+    department_name: departmentName,
+    designation_type: item.designation_type ? String(item.designation_type).toLowerCase() : "",
     is_active: item.is_active ?? true,
   };
 }
+
+// Marks who counts as HR / Manager / CEO: the HR and Manager pickers list employees by this type.
+const DESIGNATION_TYPES = [
+  { value: "hr", label: "HR" },
+  { value: "manager", label: "Manager" },
+  { value: "ceo", label: "CEO" },
+];
+
+const typeLabel = (value) => DESIGNATION_TYPES.find((t) => t.value === value)?.label ?? "—";
 
 function normalizeDepartment(item) {
   return {
@@ -126,7 +143,9 @@ export default function Designation() {
   const [designations, setDesignations] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [designationName, setDesignationName] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
+  // Holds the department NAME (the API links designations to departments by name).
+  const [departmentName, setDepartmentName] = useState("");
+  const [designationType, setDesignationType] = useState("");
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -135,11 +154,13 @@ export default function Designation() {
   const [saving, setSaving] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const scope = useCompanyScope();
+  const scopeParams = scope.companyId ? { company_id: scope.companyId } : undefined;
   const [error, setError] = useState("");
   const [pageError, setPageError] = useState("");
 
   async function loadDesignations() {
-    const response = await designationApi.getDesignations();
+    const response = await designationApi.getDesignations(scopeParams);
 
     const records = extractList(response.data, [
       "items",
@@ -151,7 +172,7 @@ export default function Designation() {
   }
 
   async function loadDepartments() {
-    const response = await departmentApi.getDepartments();
+    const response = await departmentApi.getDepartments(scopeParams);
 
     const records = extractList(response.data, [
       "items",
@@ -190,41 +211,27 @@ export default function Designation() {
 
   useEffect(() => {
     loadPageData();
-  }, []);
+  }, [scope.companyId, scope.isSuper]);
 
   const filteredDesignations = useMemo(() => {
     const query = search.trim().toLowerCase();
 
     return designations.filter((item) => {
-      const departmentName =
-        item.department_name ||
-        departments.find(
-          (department) =>
-            String(department.id) === String(item.department_id)
-        )?.name ||
-        "";
-
       return (
         item.name.toLowerCase().includes(query) ||
-        departmentName.toLowerCase().includes(query)
+        (item.department_name ?? "").toLowerCase().includes(query)
       );
     });
-  }, [designations, departments, search]);
+  }, [designations, search]);
 
   function getDepartmentName(designation) {
-    return (
-      designation.department_name ||
-      departments.find(
-        (department) =>
-          String(department.id) === String(designation.department_id)
-      )?.name ||
-      "—"
-    );
+    return designation.department_name || "—";
   }
 
   function resetForm() {
     setDesignationName("");
-    setDepartmentId("");
+    setDepartmentName("");
+    setDesignationType("");
     setEditingId(null);
     setError("");
   }
@@ -245,26 +252,29 @@ export default function Designation() {
 
     const name = designationName.trim();
 
-    if (!departmentId) {
-      setError("Please select a department.");
+    if (!name) {
+      setError("Designation name is required.");
       return;
     }
 
-    if (!name) {
-      setError("Designation name is required.");
+    if (scope.isSuper && editingId === null && !scope.companyId) {
+      setError("Select a company first — designations belong to one company.");
       return;
     }
 
     const duplicate = designations.some(
       (item) =>
         item.name.toLowerCase() === name.toLowerCase() &&
-        String(item.department_id) === String(departmentId) &&
+        (item.department_name ?? "").toLowerCase() ===
+          departmentName.toLowerCase() &&
         String(item.id) !== String(editingId)
     );
 
     if (duplicate) {
       setError(
-        "This designation already exists in the selected department."
+        departmentName
+          ? "This designation already exists in the selected department."
+          : "This designation already exists without a department."
       );
       return;
     }
@@ -278,10 +288,13 @@ export default function Designation() {
         (item) => String(item.id) === String(editingId)
       );
 
+      // Department is optional: send its name, or null when none is selected.
       const payload = {
         designation_name: name,
-        department_id: departmentId,
+        department: departmentName || null,
+        designation_type: designationType || null,
         is_active: existing?.is_active ?? true,
+        ...(scope.isSuper && editingId === null ? { company_id: scope.companyId } : {}),
       };
 
       if (editingId !== null) {
@@ -301,7 +314,8 @@ export default function Designation() {
 
   function handleEdit(designation) {
     setDesignationName(designation.name);
-    setDepartmentId(String(designation.department_id));
+    setDepartmentName(designation.department_name || "");
+    setDesignationType(designation.designation_type || "");
     setEditingId(designation.id);
     setError("");
     setPageError("");
@@ -392,6 +406,13 @@ export default function Designation() {
     URL.revokeObjectURL(url);
   }
 
+  // Keep the current department selectable even if it is not in the departments list.
+  const departmentOptions =
+    departmentName &&
+    !departments.some((department) => department.name === departmentName)
+      ? [{ id: "__current", name: departmentName }, ...departments]
+      : departments;
+
   return (
     <div className="min-h-full space-y-6 bg-slate-50 p-5 text-slate-900 transition-colors dark:bg-[#080f0c] dark:text-[#edf4ef] sm:p-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -412,14 +433,17 @@ export default function Designation() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openAddForm}
-          className={buttonClass}
-        >
-          <Plus size={17} />
-          Add Designation
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <CompanyScopeSelect scope={scope} />
+          <button
+            type="button"
+            onClick={openAddForm}
+            className={buttonClass}
+          >
+            <Plus size={17} />
+            Add Designation
+          </button>
+        </div>
       </div>
 
       {pageError && (
@@ -494,6 +518,7 @@ export default function Designation() {
                 <th className="w-24 px-5 py-4">SL No.</th>
                 <th className="px-5 py-4">Designation Name</th>
                 <th className="px-5 py-4">Department</th>
+                <th className="px-5 py-4">Type</th>
                 <th className="w-44 px-5 py-4">Actions</th>
               </tr>
             </thead>
@@ -502,7 +527,7 @@ export default function Designation() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className={`px-5 py-12 text-center ${mutedClass}`}
                   >
                     <LoaderCircle
@@ -528,6 +553,10 @@ export default function Designation() {
 
                     <td className="px-5 py-4">
                       {getDepartmentName(designation)}
+                    </td>
+
+                    <td className="px-5 py-4">
+                      {typeLabel(designation.designation_type)}
                     </td>
 
                     <td className="px-5 py-4">
@@ -579,7 +608,7 @@ export default function Designation() {
               {!loading && filteredDesignations.length === 0 && (
                 <tr>
                   <td
-                    colSpan={4}
+                    colSpan={5}
                     className={`px-5 py-12 text-center ${mutedClass}`}
                   >
                     {pageError
@@ -619,7 +648,7 @@ export default function Designation() {
               <button
                 type="submit"
                 form="designation-form"
-                disabled={saving || departments.length === 0}
+                disabled={saving}
                 className={buttonClass}
               >
                 {saving ? (
@@ -644,27 +673,27 @@ export default function Designation() {
           >
             <div>
               <label
-                htmlFor="departmentId"
+                htmlFor="departmentName"
                 className="mb-2 block text-sm font-medium"
               >
-                Department <span className="text-red-500">*</span>
+                Department 
+                {/* <span className={mutedClass}>(Optional)</span> */}
               </label>
 
               <select
-                id="departmentId"
-                value={departmentId}
+                id="departmentName"
+                value={departmentName}
                 onChange={(event) => {
-                  setDepartmentId(event.target.value);
+                  setDepartmentName(event.target.value);
                   setError("");
                 }}
                 className={inputClass}
-                required
                 autoFocus
               >
-                <option value="">Select department</option>
+                <option value="">Select department (Optional)</option>
 
-                {departments.map((department) => (
-                  <option key={department.id} value={department.id}>
+                {departmentOptions.map((department) => (
+                  <option key={department.id} value={department.name}>
                     {department.name}
                   </option>
                 ))}
@@ -672,7 +701,7 @@ export default function Designation() {
 
               {departments.length === 0 && !loading && (
                 <p className="mt-2 text-xs text-amber-600 dark:text-amber-300">
-                  No departments available. Create a department first.
+                  No departments available. You can still create a designation without selecting a department.
                 </p>
               )}
             </div>
@@ -697,6 +726,32 @@ export default function Designation() {
                 maxLength={100}
                 required
               />
+            </div>
+
+            <div>
+              <label
+                htmlFor="designationType"
+                className="mb-2 block text-sm font-medium"
+              >
+                Designation type <span className={mutedClass}>(Optional)</span>
+              </label>
+
+              <select
+                id="designationType"
+                value={designationType}
+                onChange={(event) => setDesignationType(event.target.value)}
+                className={inputClass}
+              >
+                <option value="">None</option>
+                {DESIGNATION_TYPES.map((type) => (
+                  <option key={type.value} value={type.value}>
+                    {type.label}
+                  </option>
+                ))}
+              </select>
+              <p className={`mt-2 text-xs ${mutedClass}`}>
+                People with an HR or Manager type are listed in the HR and Manager pickers.
+              </p>
             </div>
 
             {error && (
@@ -741,32 +796,39 @@ export default function Designation() {
           }
         >
           <div className="space-y-5">
-  {/* SL No. */}
-  <div>
-    <p className={`text-sm ${mutedClass}`}>SL No.</p>
-    <p className="mt-1 font-semibold">
-      {filteredDesignations.findIndex(
-        (item) => String(item.id) === String(viewDesignation.id)
-      ) + 1}
-    </p>
-  </div>
+            {/* SL No. */}
+            <div>
+              <p className={`text-sm ${mutedClass}`}>SL No.</p>
+              <p className="mt-1 font-semibold">
+                {filteredDesignations.findIndex(
+                  (item) => String(item.id) === String(viewDesignation.id)
+                ) + 1}
+              </p>
+            </div>
 
-  {/* Department Name */}
-  <div>
-    <p className={`text-sm ${mutedClass}`}>Department</p>
-    <p className="mt-1 font-semibold">
-      {getDepartmentName(viewDesignation)}
-    </p>
-  </div>
+            {/* Department Name */}
+            <div>
+              <p className={`text-sm ${mutedClass}`}>Department</p>
+              <p className="mt-1 font-semibold">
+                {getDepartmentName(viewDesignation)}
+              </p>
+            </div>
 
-  {/* Designation Name */}
-  <div>
-    <p className={`text-sm ${mutedClass}`}>Designation Name</p>
-    <p className="mt-1 font-semibold">
-      {viewDesignation.name}
-    </p>
-  </div>
-</div>
+            {/* Designation Name */}
+            <div>
+              <p className={`text-sm ${mutedClass}`}>Designation Name</p>
+              <p className="mt-1 font-semibold">
+                {viewDesignation.name}
+              </p>
+            </div>
+
+            <div>
+              <p className={`text-sm ${mutedClass}`}>Designation type</p>
+              <p className="mt-1 font-semibold">
+                {typeLabel(viewDesignation.designation_type)}
+              </p>
+            </div>
+          </div>
         </Modal>
       )}
     </div>

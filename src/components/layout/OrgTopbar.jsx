@@ -49,9 +49,12 @@ function Breadcrumbs() {
   );
 }
 
+import { useSessionStore } from "@/features/auth/data/session-store";
 export function OrgTopbar({ onMenu }) {
   const router = useRouter();
   const me = useCurrentUser();
+  const companyName = useSessionStore((s) => s.companyName);
+  const branchName = useSessionStore((s) => s.branchName);
   const avatar = useEmployeeAvatar();
   return (
     <header className="border-border bg-card/95 shadow-card glass-topbar pt-safe sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-2 border-b px-3 backdrop-blur md:gap-3 md:px-6">
@@ -98,6 +101,12 @@ export function OrgTopbar({ onMenu }) {
         <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuLabel>
             {me.name} · {me.role}
+            {companyName && (
+              <div className="text-muted-foreground text-[11px] font-normal">
+                {companyName}
+                {branchName ? ` · ${branchName}` : ""}
+              </div>
+            )}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem asChild>

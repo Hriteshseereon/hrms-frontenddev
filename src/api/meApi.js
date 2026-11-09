@@ -52,6 +52,7 @@ export function replaceTokens({ access_token, refresh_token }) {
     localStorage.setItem("refresh_token", refresh_token);
   }
   useSessionStore.setState({
+    mustChangePassword: false, // a password change clears the temporary-password lock
     ...(access_token ? { accessToken: access_token } : {}),
     ...(refresh_token ? { refreshToken: refresh_token } : {}),
   });

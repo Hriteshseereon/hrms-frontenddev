@@ -1343,7 +1343,13 @@ export function runChecks(id, user) {
     })),
   ];
   const errors = checks.filter((c) => c.level === "error" && isOpenCheck(c)).length;
-  const status = errors > 0 && cfg.payroll.blockOnErrors ? "Checks Failed" : "Checks Passed";
+  const attendanceLockFailed = checks.some(
+    (check) => check.code === "ATT-LOCK" && check.level === "error" && isOpenCheck(check),
+  );
+  const status =
+    attendanceLockFailed || (errors > 0 && cfg.payroll.blockOnErrors)
+      ? "Checks Failed"
+      : "Checks Passed";
   update(id, (r) =>
     log(
       {
@@ -1374,7 +1380,7 @@ export function runChecks(id, user) {
 const CHECK_EDITABLE = ["Draft", "Checks Failed", "Checks Passed", "Rejected"];
 
 /** Errors that describe impossible pay data — they must be corrected at source, never overridden. */
-export const NON_OVERRIDABLE_CHECKS = new Set(["NET-NEG", "NCP-DIM", "LOP-GT-WD"]);
+export const NON_OVERRIDABLE_CHECKS = new Set(["NET-NEG", "NCP-DIM", "LOP-GT-WD", "ATT-LOCK"]);
 
 /**
  * Can `user` override / manually verify this check? Warnings and info: anyone working the run. Blocking errors: never
@@ -1592,6 +1598,11 @@ export function decideRun(id, user, decision, remarks) {
   if (!run) return { ok: false, message: "Run not found." };
   if (run.status !== "Pending Approval")
     return { ok: false, message: "Run is not awaiting approval." };
+  if (decision === "Approved" && !isAttendanceLocked(run.period, run.orgId))
+    return {
+      ok: false,
+      message: `Attendance for ${periodLabel(run.period)} is not locked. Lock attendance before approving this payroll run.`,
+    };
   const cfg = getStatutoryConfig();
   // Maker–checker applies to every role (the policy text promises "can never approve"); rejection is always allowed.
   if (cfg.payroll.enforceMakerChecker && decision === "Approved" && run.preparedBy.id === user.id) {

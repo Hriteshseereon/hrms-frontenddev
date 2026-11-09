@@ -136,7 +136,7 @@ function EmpDashboard() {
               Welcome back, {me.name.split(" ")[0]}
             </h1>
             <p className="mt-0.5 text-sm text-white/70">
-              {me.role} · {me.dept} · {me.branch} · {me.id}
+              {[me.role, me.dept, me.branch].filter(Boolean).join(" · ")}
             </p>
           </div>
           <div className="ml-auto flex flex-wrap gap-2">
