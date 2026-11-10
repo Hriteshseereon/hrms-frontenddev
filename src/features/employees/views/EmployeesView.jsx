@@ -704,16 +704,7 @@ function Employees() {
                             <div>
                               <div className="font-semibold">{e.name}</div>
                               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <span title="Employee Profile ID">Emp ID: {e.id}</span>
-                                {e.user_id && (
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[10px] py-0 px-1 border-muted text-muted-foreground"
-                                    title="Login User Account ID"
-                                  >
-                                    User: {e.user_id.slice(0, 8)}…
-                                  </Badge>
-                                )}
+                                <span title="Employee Code">Emp ID: {e.employee_code || "—"}</span>
                               </div>
                             </div>
                           </div>

@@ -264,19 +264,10 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 <Badge
                   variant="outline"
                   className="border-gold/40 text-gold bg-white/10"
-                  title="Employee Profile ID"
+                  title="Employee Code"
                 >
-                  Emp ID: {employeeProfileId}
+                  Emp ID: {merged.employee_code || "—"}
                 </Badge>
-                {userAccountId && (
-                  <Badge
-                    variant="outline"
-                    className="border-white/30 text-white/80 bg-white/10 text-[10px]"
-                    title="User Account Login ID"
-                  >
-                    User: {userAccountId.slice(0, 8)}…
-                  </Badge>
-                )}
               </div>
               <div className="flex items-center gap-1.5">
                 <Badge variant="outline" className="border-white/30 bg-white/10 text-white">

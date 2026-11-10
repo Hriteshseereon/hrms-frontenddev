@@ -34,11 +34,13 @@ export const PAY_GRADE_ROWS = [
 ];
 
 export const PAY_BANDS = [
-  "Entry",
+  // Must match the bands the backend accepts (POST /pay-grades returns 422 for anything else).
+  "Entry Level",
   "Individual Contributor",
   "Senior IC",
   "People Manager",
-  "Leadership",
+  "Management",
+  "Executive / Leadership",
 ];
 
 export const SALARY_STRUCTURE_ROWS = [
