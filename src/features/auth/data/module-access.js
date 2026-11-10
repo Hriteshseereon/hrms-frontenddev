@@ -19,6 +19,37 @@ const keysOf = (list) =>
 const isAdminRole = (role) =>
   ["SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN"].includes(String(role ?? "").toUpperCase());
 
+const isSuperRole = (role) => ["SUPER_ADMIN", "SUPERADMIN"].includes(String(role ?? "").toUpperCase());
+
+/**
+ * Super Admin with no company picked is in organisation mode: the server answers 400 "Select a company" for every
+ * company screen and `permitted_modules` is empty, so only the organisation-level screens are offered.
+ */
+export const isOrgMode = (s = useSessionStore.getState()) =>
+  Boolean(s.isAuthenticated) && isSuperRole(s.role) && !s.scopeCompanyId;
+
+export const ORG_MODE_PATHS = [
+  "/org/dashboard",
+  "/org/groups",
+  "/org/company-modules",
+  "/org/reports",
+  "/org/organisation-setup",
+  "/org/settings",
+  "/emp/profile",
+];
+export const isOrgModePath = (to) => {
+  const path = String(to).split("?")[0];
+  return path === "/org" || ORG_MODE_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
+};
+
+/** Hook form of `isOrgMode`. */
+export function useOrgMode() {
+  const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
+  const role = useSessionStore((s) => s.role);
+  const scopeCompanyId = useSessionStore((s) => s.scopeCompanyId);
+  return isOrgMode({ isAuthenticated, role, scopeCompanyId });
+}
+
 /** `can("employee.edit")` — module level "<module>.view|edit|delete", screen level "<screen_code>.view|edit|delete". */
 export function canDo(permission, s = useSessionStore.getState()) {
   if (!s.isAuthenticated) return true; // mock / signed-out preview
@@ -54,6 +85,7 @@ export function grantedModules(s = useSessionStore.getState()) {
 registerNavExtension((_user, pathname) => {
   const s = useSessionStore.getState();
   if (!s.isAuthenticated || !pathname.startsWith("/org")) return false;
+  if (isOrgMode(s)) return isOrgModePath(pathname);
   const adminPortal = s.redirectPortal === "org";
   if (adminPortal && pathname === "/org/dashboard") return true;
   const key = moduleOfRoute(pathname);
@@ -66,6 +98,8 @@ export function useRouteModuleOk(pathname) {
   const permitted = useSessionStore((s) => s.permittedModules);
   const apiSession = useSessionStore((s) => s.isAuthenticated);
   const loaded = useSessionStore((s) => s.accessLoaded);
+  const orgMode = useOrgMode();
+  if (orgMode) return isOrgModePath(pathname);
   const key = moduleOfRoute(pathname);
   return !apiSession || !loaded || !key || keysOf(permitted).includes(key);
 }
@@ -78,13 +112,31 @@ export function useModuleAccess() {
   useEffect(() => {
     if (!apiSession) return;
     getMe()
-      .then((me) => useSessionStore.getState().applyMe(me))
+      .then((me) => {
+        if (import.meta.env.DEV)
+          console.info("[/me] response", {
+            role: me?.user?.role ?? me?.role,
+            portal: me?.redirect_portal,
+            company: me?.company?.name,
+            permitted_modules: me?.permitted_modules,
+            permissions: me?.permissions?.length,
+          });
+        useSessionStore.getState().applyMe(me);
+      })
       .catch(() => {});
   }, [apiSession]);
+  const role = useSessionStore((s) => s.role);
+  const permissions = useSessionStore((s) => s.permissions);
   const keys = new Set(keysOf(permitted));
+  const orgMode = useOrgMode();
   return (to) => {
     if (!apiSession) return true; // mock / signed-out preview: no API session to gate by
+    if (orgMode) return isOrgModePath(to);
     const key = moduleOfRoute(to);
-    return !key || keys.has(key);
+    if (key && !keys.has(key)) return false;
+    // Payroll also needs a payroll.* permission (admins hold everything in their scope).
+    if (key === "payroll" && !isAdminRole(role))
+      return (permissions ?? []).some((p) => String(p).startsWith("payroll."));
+    return true;
   };
 }

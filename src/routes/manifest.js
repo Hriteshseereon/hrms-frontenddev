@@ -300,9 +300,15 @@ export const PAGES = [
     path: "/org/dashboard",
     shell: "org",
     title: "Workspace Dashboard",
-    load: () => import("@/features/dashboard/views/DashboardView"),
+    load: () =>
+      import("@/features/organization/views/OrgLevelScreens").then((m) => ({ default: m.DashboardRouter })),
   },
-  
+  {
+    path: "/org/company-modules",
+    shell: "org",
+    title: "Company Modules",
+    load: () => import("@/features/organization/views/OrgLevelScreens"),
+  },
   {
     path: "/org/departments",
     shell: "org",
@@ -446,7 +452,8 @@ export const PAGES = [
     path: "/org/reports",
     shell: "org",
     title: "Reports",
-    load: () => import("@/features/reports/views/ReportsView"),
+    load: () =>
+      import("@/features/organization/views/OrgLevelScreens").then((m) => ({ default: m.ReportsRouter })),
   },
   {
     path: "/org/roles",

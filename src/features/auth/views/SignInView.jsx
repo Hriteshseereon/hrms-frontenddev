@@ -93,6 +93,15 @@ function Login() {
     try {
       const data = await SuperAdmin_auth.login(identifier, password);
       const user = data?.user;
+      if (import.meta.env.DEV)
+        console.info("[login] response", {
+          role: user?.role,
+          portal: data?.redirect_portal,
+          company: data?.company?.name,
+          permitted_modules: data?.permitted_modules,
+          permissions: data?.permissions?.length,
+          must_change_password: data?.must_change_password,
+        });
       toast.success(`Welcome, ${user?.full_name || user?.name || "back"}`);
 
       // A temporary password (must_change_password) is handled by the portal itself: it shows a blocking

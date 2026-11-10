@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { attendanceApi } from "@/api/attendanceApi";
+import { detailText } from "@/api/payrollRunApi";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -119,7 +120,6 @@ const statusLabel = (value) =>
 
 export function PayrollAttendanceLockPanel({
   period,
-  companyId,
   payrollOrgId,
   canLock,
   actorName,
@@ -151,14 +151,28 @@ export function PayrollAttendanceLockPanel({
         attendanceApi.getPayrollSummary(period),
         attendanceApi.getPayrollWorkHours(period),
         attendanceApi.getPayrollRegister(period),
-        attendanceApi.getLocks(companyId),
+        attendanceApi.getLocks(),
       ]);
       const [reportResult, hoursResult, registerResult, locksResult] = results;
       const failures = results.filter((result) => result.status === "rejected");
       const nextReportRows = reportResult.status === "fulfilled" ? listOf(reportResult.value) : [];
       setReportRows(nextReportRows);
       setPayrollAttendanceSnapshot(period, nextReportRows, employees);
-      if (hoursResult.status === "fulfilled") setWorkHourRows(listOf(hoursResult.value));
+      // /attendance/work-hours gives each employee's `days` plus a `totals` block: lift the totals to the row.
+      if (hoursResult.status === "fulfilled")
+        setWorkHourRows(
+          listOf(hoursResult.value).map((row) =>
+            row?.totals
+              ? {
+                  ...row,
+                  half_days: row.totals.half_days,
+                  late_marks: row.totals.late_days ?? row.totals.late_marks,
+                  overtime_hours: row.totals.overtime_hours,
+                  short_hours: row.totals.short_hours,
+                }
+              : row,
+          ),
+        );
       else setWorkHourRows([]);
       if (registerResult.status === "fulfilled") setRegisterRows(listOf(registerResult.value));
       else setRegisterRows([]);
@@ -186,18 +200,18 @@ export function PayrollAttendanceLockPanel({
       }
       if (failures.length) {
         const reasons = failures
-          .map((result) => result.reason?.response?.data?.detail ?? result.reason?.message)
+          .map((result) => detailText(result.reason, ""))
           .filter(Boolean);
         setError(reasons.join(" · ") || "Some attendance summaries could not be loaded.");
       }
     } catch (err) {
       setError(
-        err?.response?.data?.detail ?? err?.message ?? "Could not load attendance from the server.",
+        detailText(err, "Could not load attendance from the server."),
       );
     } finally {
       setLoading(false);
     }
-  }, [period, companyId, payrollOrgId, employees]);
+  }, [period, payrollOrgId, employees]);
 
   useEffect(() => {
     loadAttendance();
@@ -334,7 +348,7 @@ export function PayrollAttendanceLockPanel({
       });
       setPunches(listOf(result));
     } catch (err) {
-      setPunchError(err?.response?.data?.detail ?? err?.message ?? "Could not load daily punches.");
+      setPunchError(detailText(err, "Could not load daily punches."));
     } finally {
       setPunchesLoading(false);
     }
@@ -357,7 +371,7 @@ export function PayrollAttendanceLockPanel({
       await loadAttendance();
     } catch (err) {
       toast.error(
-        err?.response?.data?.detail ?? err?.message ?? "Could not correct the attendance punch.",
+        detailText(err, "Could not correct the attendance punch."),
       );
     } finally {
       setSavingPunch(false);
@@ -382,7 +396,7 @@ export function PayrollAttendanceLockPanel({
       await loadAttendance();
     } catch (err) {
       toast.error(
-        err?.response?.data?.detail ?? err?.message ?? "Could not add the attendance punch.",
+        detailText(err, "Could not add the attendance punch."),
       );
     } finally {
       setSavingPunch(false);
@@ -392,7 +406,7 @@ export function PayrollAttendanceLockPanel({
   const lockMonth = async () => {
     setSavingLock(true);
     try {
-      const response = await attendanceApi.lockPayrollMonth(period, companyId);
+      const response = await attendanceApi.lockPayrollMonth(period);
       lockAttendance(period, actorName, payrollOrgId);
       setLocks((previous) => {
         const record = response?.lock ?? response ?? { by: actorName };
@@ -403,7 +417,23 @@ export function PayrollAttendanceLockPanel({
       toast.success(`${periodName(period)} attendance locked`);
       await loadAttendance();
     } catch (err) {
-      toast.error(err?.response?.data?.detail ?? err?.message ?? "Could not lock attendance.");
+      toast.error(detailText(err, "Could not lock attendance."));
+    } finally {
+      setSavingLock(false);
+    }
+  };
+
+  /** DELETE /attendance/locks/{period}: 409 while a payroll run for the month is in progress, 404 if not locked. */
+  const unlockMonth = async () => {
+    setSavingLock(true);
+    try {
+      await attendanceApi.unlockPayrollMonth(period);
+      unlockAttendance(period, payrollOrgId);
+      toast.success(`${periodName(period)} attendance unlocked`);
+      await loadAttendance();
+    } catch (err) {
+      toast.error(detailText(err, "Could not unlock attendance."));
+      if ([404, 409].includes(err?.response?.status)) await loadAttendance();
     } finally {
       setSavingLock(false);
     }
@@ -459,6 +489,31 @@ export function PayrollAttendanceLockPanel({
                     <AlertDialogCancel>Review again</AlertDialogCancel>
                     <AlertDialogAction disabled={savingLock} onClick={lockMonth}>
                       Confirm lock
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+            {canLock && !loading && !lockStatusUnavailable && currentLock && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={savingLock}>
+                    Unlock
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Unlock {periodName(period)} attendance?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Punches and leave for this month become editable again. The server refuses
+                      this while a payroll run for the month is pending approval, approved,
+                      processed or paid.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Keep locked</AlertDialogCancel>
+                    <AlertDialogAction disabled={savingLock} onClick={unlockMonth}>
+                      Unlock
                     </AlertDialogAction>
                   </AlertDialogFooter>
                 </AlertDialogContent>

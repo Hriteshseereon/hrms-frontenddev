@@ -1,4 +1,5 @@
 import axios from "axios";
+import { applyScopeRules } from "@/services/api/scope";
 
 // NOTE: Do NOT set a default "Content-Type" here.
 // axios sets application/json automatically for plain objects, and the
@@ -37,7 +38,8 @@ SuperAdmin_axios.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token.replace(/^Bearer\s+/i, "")}`;
     }
 
-    return config;
+    // Company isolation: Super Admin sends X-Company-Id once a company is picked; everyone else sends no scope.
+    return applyScopeRules(config);
   },
   (error) => Promise.reject(error),
 );
@@ -79,8 +81,18 @@ SuperAdmin_axios.interceptors.response.use(
       );
       return Promise.reject(error);
     }
+    // Super Admin acted on a company screen without a company: open the picker (see CompanyPickerDialog).
+    if (error.response?.status === 400 && /select a company/i.test(detailText)) {
+      error.userMessage = "Select a company first";
+      import("@/features/auth/data/session-store").then((m) => {
+        const s = m.useSessionStore.getState();
+        if (String(s.role ?? "").toUpperCase() === "SUPER_ADMIN") m.useSessionStore.setState({ needCompany: true });
+      });
+      return Promise.reject(error);
+    }
+    if (error.response?.status === 404) error.userMessage = "Not found";
     if (error.response?.status === 403 && /module not enabled/i.test(detailText)) {
-      error.userMessage = "Module not available for your company";
+      error.userMessage = "This module is not enabled for this company";
       flagAccessError("module", request, detailText);
       return Promise.reject(error);
     }

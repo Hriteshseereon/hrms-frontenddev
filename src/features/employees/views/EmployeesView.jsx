@@ -118,6 +118,7 @@ import { EmployeeDetail } from "@/features/employees/components/EmployeeDetail";
 import { EmployeeLeaveSheet } from "@/features/leave/components/LeavePieces";
 import { HireEmployeeDialog } from "@/features/employees/components/HireEmployeeDialog";
 import { useScope, useScopeMatch } from "@/features/organization/data/tenancy";
+import * as XLSX from "xlsx";
 
 const BULK_EMPLOYEE_COLUMNS = [
   "first_name", "last_name", "personal_email", "phone", "date_of_birth", "gender",
@@ -181,30 +182,20 @@ function normalizeIntegerDigits(value) {
     : digits.slice(0, decimalPosition);
 }
 
-function parseEmployeeCsv(text) {
-  const rows = [];
-  let row = [], cell = "", quoted = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === '"' && quoted && text[i + 1] === '"') { cell += '"'; i += 1; }
-    else if (ch === '"') quoted = !quoted;
-    else if (ch === "," && !quoted) { row.push(cell.trim()); cell = ""; }
-    else if ((ch === "\n" || ch === "\r") && !quoted) {
-      if (ch === "\r" && text[i + 1] === "\n") i += 1;
-      row.push(cell.trim());
-      if (row.some(Boolean)) rows.push(row);
-      row = []; cell = "";
-    } else cell += ch;
-  }
-  row.push(cell.trim());
-  if (row.some(Boolean)) rows.push(row);
-  if (rows.length < 2) throw new Error("The CSV must include a header row and at least one employee.");
-  const headers = rows[0].map((h) => h.toLowerCase().replace(/^\uFEFF/, ""));
+function validateEmployeeRows(rows) {
+  rows = rows.filter((row) => row.some((value) => String(value ?? "").trim()));
+  if (rows.length < 2) throw new Error("The file must include a header row and at least one employee.");
+  const headers = rows[0].map((h) => String(h ?? "").trim().toLowerCase().replace(/^\uFEFF/, ""));
   for (const required of REQUIRED_BULK_EMPLOYEE_COLUMNS) {
     if (!headers.includes(required)) throw new Error(`Missing required column: ${required}`);
   }
   return rows.slice(1).map((values, index) => {
-    const employee = Object.fromEntries(headers.map((h, i) => [h, values[i] ?? ""]));
+    const employee = Object.fromEntries(
+      headers.map((header, i) => {
+        const value = values[i] ?? "";
+        return [header, value instanceof Date ? value.toISOString().slice(0, 10) : String(value).trim()];
+      }),
+    );
     const missing = REQUIRED_BULK_EMPLOYEE_COLUMNS.filter((column) => !employee[column]?.trim());
     if (missing.length) throw new Error(`Row ${index + 2}: fill required fields: ${missing.join(", ")}.`);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employee.personal_email)) throw new Error(`Row ${index + 2}: personal_email must be a valid email.`);
@@ -223,11 +214,50 @@ function parseEmployeeCsv(text) {
     if (!Number.isFinite(Number(employee.ctc)) || Number(employee.ctc) <= 0) throw new Error(`Row ${index + 2}: ctc must be a number greater than zero.`);
     for (const [key, value] of Object.entries(employee)) {
       if (value && !BULK_EMPLOYEE_COLUMNS.includes(key) && !/^pc_[A-Za-z0-9_]+$/.test(key) && !/^prev\d+_(company|role|from|to|ctc|reason)$/.test(key)) {
-        throw new Error(`CSV has an unsupported column: ${key}`);
+        throw new Error(`File has an unsupported column: ${key}`);
       }
     }
     return employee;
   });
+}
+
+function parseEmployeeCsv(text) {
+  const rows = [];
+  let row = [], cell = "", quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '"' && quoted && text[i + 1] === '"') { cell += '"'; i += 1; }
+    else if (ch === '"') quoted = !quoted;
+    else if (ch === "," && !quoted) { row.push(cell.trim()); cell = ""; }
+    else if ((ch === "\n" || ch === "\r") && !quoted) {
+      if (ch === "\r" && text[i + 1] === "\n") i += 1;
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = []; cell = "";
+    } else cell += ch;
+  }
+  row.push(cell.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return validateEmployeeRows(rows);
+}
+
+function parseEmployeeXlsx(data) {
+  const workbook = XLSX.read(data, { type: "array", cellDates: true });
+  const firstSheet = workbook.SheetNames[0];
+  if (!firstSheet) throw new Error("The Excel workbook has no worksheets.");
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], {
+    header: 1,
+    raw: true,
+    defval: "",
+  });
+  return validateEmployeeRows(rows);
+}
+
+async function parseEmployeeFile(file) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension === "csv") return parseEmployeeCsv(await file.text());
+  if (extension === "xlsx") return parseEmployeeXlsx(await file.arrayBuffer());
+  throw new Error("Choose a CSV or Excel .xlsx file.");
 }
 
 async function downloadEmployeeCsvTemplate() {
@@ -917,10 +947,10 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
   const inputRef = useRef(null);
   const close = () => { if (!busy) { onOpenChange(false); setFile(null); setSummary(null); } };
   const upload = async () => {
-    if (!file) { toast.error("Choose a CSV file to continue."); return; }
+    if (!file) { toast.error("Choose a CSV or Excel .xlsx file to continue."); return; }
     let employees;
-    try { employees = parseEmployeeCsv(await file.text()); }
-    catch (error) { toast.error(error.message || "Could not read this CSV."); return; }
+    try { employees = await parseEmployeeFile(file); }
+    catch (error) { toast.error(error.message || "Could not read this employee file."); return; }
     setBusy(true); setSummary(null);
     let succeeded = 0;
     const failures = [];
@@ -976,14 +1006,29 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
         failures.push({ row: index + 2, email: employee.personal_email, message: `Organization "${employee.organization_name}" does not match the active organization.` });
         continue;
       }
-      let companyId = session.companyId || "";
-      if (employee.company_name) {
-        const companyMatches = exactName(companies, employee.company_name).filter((company) => !company.organization_id || !organizationId || company.organization_id === organizationId);
-        if (companyMatches.length !== 1) {
+      let companyId = session.companyId || session.scopeCompanyId || "";
+      // A company-scoped login already supplies the authoritative tenant ID.
+      // Avoid rejecting its uploads because the company-list endpoint omits or
+      // differently scopes the current company in its response.
+      if (employee.company_name && !session.companyId) {
+        const companyMatches = exactName(companies, employee.company_name).filter(
+          (company) =>
+            !company.organization_id ||
+            !organizationId ||
+            String(company.organization_id).trim() === String(organizationId).trim(),
+        );
+        const scopedCompany = companies.find(
+          (company) => String(company.id) === String(companyId),
+        );
+        const scopedCompanyName = scopedCompany?.name || session.companyName || "";
+        const matchesCurrentCompany =
+          companyId &&
+          normalizeOptionName(employee.company_name) === normalizeOptionName(scopedCompanyName);
+        if (companyMatches.length !== 1 && !matchesCurrentCompany) {
           failures.push({ row: index + 2, email: employee.personal_email, message: `Company "${employee.company_name}" must match one configured company in the active organization.` });
           continue;
         }
-        companyId = companyMatches[0].id;
+        if (companyMatches.length === 1) companyId = companyMatches[0].id;
       }
       if (organizationId && isUuid(organizationId)) payload.organization_id = organizationId;
       if (companyId && isUuid(companyId)) payload.company_id = companyId;
@@ -1112,8 +1157,8 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
         <div className="space-y-4">
           <Button type="button" variant="outline" size="sm" onClick={downloadEmployeeCsvTemplate}><Download className="h-4 w-4" /> Download Template</Button>
           <div className="rounded-lg border border-dashed p-5">
-            <Label htmlFor="employee-bulk-csv">Employee CSV</Label>
-            <Input ref={inputRef} id="employee-bulk-csv" type="file" accept=".csv,text/csv" className="mt-2" disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setSummary(null); }} />
+            <Label htmlFor="employee-bulk-csv">Employee file (CSV or Excel .xlsx)</Label>
+            <Input ref={inputRef} id="employee-bulk-csv" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="mt-2" disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setSummary(null); }} />
           </div>
           {file && <p className="text-sm">Selected: <span className="font-medium">{file.name}</span></p>}
           {summary && <div className="max-h-40 space-y-1 overflow-auto rounded-md bg-muted/40 p-3 text-sm"><p>{summary.succeeded} created · {summary.failures.length} failed</p>{summary.failures.map((failure) => <p className="text-destructive" key={`${failure.row}-${failure.email}`}>Row {failure.row} ({failure.email}): {failure.message}</p>)}</div>}

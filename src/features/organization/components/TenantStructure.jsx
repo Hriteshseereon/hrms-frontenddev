@@ -9,7 +9,6 @@ import {
   AlertTriangle,
   Building2,
   Check,
-  CheckSquare,
   Copy,
   ExternalLink,
   FileCheck,
@@ -29,7 +28,6 @@ import {
   Power,
   Receipt,
   ShieldCheck,
-  Square,
   Trash2,
   UploadCloud,
   X,
@@ -73,7 +71,9 @@ import {
 } from "@/features/organization/data/tenancy";
 import { directoryEmployees } from "@/features/employees/data/employee-directory";
 import { cn } from "@/lib/utils";
-import { useModuleCatalog } from "@/features/organization/data/useModuleCatalog";
+import { useOrgMode } from "@/features/auth/data/module-access";
+import { ModuleChooser } from "@/features/organization/components/ModuleChooser";
+import { moduleLabel, optionalOf } from "@/config/modules";
 
 const EMAIL_REGEX = /^\S+@\S+\.\S+$/;
 
@@ -133,7 +133,6 @@ export function TenantStructure({
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
-  const SYSTEM_MODULES = useModuleCatalog();
   const router = useRouter();
   const users = allUsers();
   const people = directoryEmployees();
@@ -201,11 +200,14 @@ export function TenantStructure({
     }
   }, []);
 
+  // Branches belong to a company: organisation mode (no company open) has none to list.
+  const orgMode = useOrgMode();
   useEffect(() => {
     void loadRootOrg();
     void loadCompanies();
-    void loadBranches();
-  }, [loadRootOrg, loadCompanies, loadBranches]);
+    if (!orgMode) void loadBranches();
+    else setApiBranches([]);
+  }, [loadRootOrg, loadCompanies, loadBranches, orgMode]);
 
   // Merge companies list with fallback
   const companies = (
@@ -220,11 +222,13 @@ export function TenantStructure({
               ? "Active"
               : "Inactive",
           isHolding: false,
-          modules: Array.isArray(company.modules)
-            ? company.modules
-            : typeof company.modules === "string"
-              ? company.modules.split(",").map((s) => s.trim())
-              : [],
+          modules: Array.isArray(company.enabled_modules)
+            ? company.enabled_modules
+            : Array.isArray(company.modules)
+              ? company.modules
+              : typeof company.modules === "string"
+                ? company.modules.split(",").map((s) => s.trim())
+                : [],
         }))
   ).filter((company) => !limitToOrgId || company.id === limitToOrgId);
 
@@ -581,9 +585,7 @@ export function TenantStructure({
                   {enabledModules.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
                       {enabledModules.map((mKey) => {
-                        const modInfo = SYSTEM_MODULES.find(
-                          (m) => m.key === mKey,
-                        );
+                        const modInfo = { label: moduleLabel(mKey) };
                         return (
                           <Badge
                             key={mKey}
@@ -893,7 +895,6 @@ export function TenantStructure({
 // 🏢 COMPANY CREATE / EDIT DIALOG (WITH 5 TABS & MODULE SELECTION)
 // =========================================================================
 function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
-  const SYSTEM_MODULES = useModuleCatalog();
   const isEdit = dialog.kind === "editCompany";
   const existing = isEdit ? dialog.company : null;
 
@@ -962,14 +963,28 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
 
-  // Module Entitlements
-  const [selectedModules, setSelectedModules] = useState(() => {
-    if (isEdit && Array.isArray(existing?.modules)) {
-      return existing.modules;
-    }
-    // Default modules for new company
-    return ["employee", "attendance", "leave", "payroll"];
-  });
+  // Module entitlement: the optional keys only — core modules are always on and never sent.
+  const [selectedModules, setSelectedModules] = useState(() =>
+    optionalOf(existing?.optional_modules ?? existing?.enabled_modules ?? existing?.modules),
+  );
+  const [savedModules, setSavedModules] = useState(selectedModules);
+  useEffect(() => {
+    if (!isEdit || !existing?.id) return undefined;
+    let alive = true;
+    Company_api.getCompanyModules(existing.id)
+      .then((res) => {
+        const d = res?.data?.data ?? res?.data ?? {};
+        const keys = optionalOf(d.optional ?? d.optional_modules ?? d.enabled_modules);
+        if (alive) {
+          setSelectedModules(keys);
+          setSavedModules(keys);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [isEdit, existing?.id]);
 
   const handleFileUpload = async (file, fieldKey) => {
     if (!file) return;
@@ -992,22 +1007,6 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       toast.warning("Upload API unreachable. Using local object reference.");
     } finally {
       setUploadingField(null);
-    }
-  };
-
-  const toggleModule = (modKey) => {
-    setSelectedModules((prev) =>
-      prev.includes(modKey)
-        ? prev.filter((k) => k !== modKey)
-        : [...prev, modKey],
-    );
-  };
-
-  const handleSelectAllModules = () => {
-    if (selectedModules.length === SYSTEM_MODULES.length) {
-      setSelectedModules([]);
-    } else {
-      setSelectedModules(SYSTEM_MODULES.map((m) => m.key));
     }
   };
 
@@ -1043,7 +1042,7 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       currency,
       timezone,
       fiscal_year_start: fiscalYearStart,
-      is_active: true,
+      is_active: isEdit ? (existing?.is_active ?? true) : true,
       gst_no: gstNo.trim(),
       pan_no: panNo.trim(),
       cin_no: cinNo.trim(),
@@ -1054,10 +1053,10 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       gst_doc_url: gstDocUrl,
       pan_doc_url: panDocUrl,
       cin_doc_url: cinDocUrl,
-      modules: selectedModules.filter((k) => SYSTEM_MODULES.some((m) => m.key === k)),
       ...(isEdit
         ? {}
         : {
+            modules: selectedModules,
             admin_email: adminEmail.trim().toLowerCase(),
             admin_name: adminName.trim(),
             admin_phone: contactPhone.trim(),
@@ -1067,7 +1066,22 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
     try {
       setLoading(true);
       if (isEdit) {
+        const removed = savedModules.filter((k) => !selectedModules.includes(k));
+        if (
+          removed.length &&
+          !window.confirm(
+            `Turn off ${removed.join(", ")} for ${name}? Its users lose access immediately; the data is kept.`,
+          )
+        ) {
+          setLoading(false);
+          return;
+        }
         await Company_api.updateCompany(existing.id, payload);
+        if (
+          removed.length ||
+          selectedModules.some((k) => !savedModules.includes(k))
+        )
+          await Company_api.updateCompanyModules(existing.id, selectedModules);
         toast.success(`Company "${name}" updated successfully`);
         onSuccess(null);
       } else {
@@ -1106,7 +1120,7 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
     { id: "statutory", label: "Statutory & Tax", icon: Landmark },
     { id: "docs", label: "Documents", icon: UploadCloud },
     { id: "address", label: "Address & Contact", icon: MapPin },
-    { id: "modules", label: `Modules (${selectedModules.length})`, icon: Receipt },
+    { id: "modules", label: "Modules", icon: Receipt },
   ];
 
   return (
@@ -1670,72 +1684,7 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
 
           {/* TAB 5: MODULE ENTITLEMENTS */}
           {activeTab === "modules" && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between pb-1">
-                <div>
-                  <div className="text-xs font-semibold">
-                    Select Enabled Modules for {name || "Company"}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground">
-                    Only checked modules will be accessible by employees of this company.
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2.5 text-xs"
-                  onClick={handleSelectAllModules}
-                >
-                  {selectedModules.length === SYSTEM_MODULES.length
-                    ? "Deselect All"
-                    : "Select All"}
-                </Button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
-                {SYSTEM_MODULES.map((mod) => {
-                  const Icon = mod.icon;
-                  const isChecked = selectedModules.includes(mod.key);
-                  return (
-                    <div
-                      key={mod.key}
-                      onClick={() => toggleModule(mod.key)}
-                      className={cn(
-                        "flex items-start gap-3 p-2.5 rounded-xl border cursor-pointer transition-all select-none",
-                        isChecked
-                          ? "border-primary bg-primary/5 shadow-xs"
-                          : "border-border/60 hover:border-border bg-card/60 opacity-70",
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "h-8 w-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5",
-                          mod.color,
-                        )}
-                      >
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-xs font-semibold leading-tight text-foreground truncate">
-                            {mod.label}
-                          </span>
-                          {isChecked ? (
-                            <CheckSquare className="h-4 w-4 text-primary shrink-0" />
-                          ) : (
-                            <Square className="h-4 w-4 text-muted-foreground shrink-0" />
-                          )}
-                        </div>
-                        <p className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">
-                          {mod.desc}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <ModuleChooser value={selectedModules} onChange={setSelectedModules} />
           )}
 
           <DialogFooter className="pt-3 border-t">

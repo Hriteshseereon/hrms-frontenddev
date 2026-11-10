@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { signInFromBackend, signOut as authSessionSignOut } from "./auth-session";
+import { getScopeCompany, setScopeCompany } from "@/services/api/scope";
 
 const INITIAL_STATE = {
   accessToken: null,
@@ -23,7 +24,9 @@ const INITIAL_STATE = {
   accessLoaded: false, // true once the access fields above came from the backend in this page load
   accessError: null, // { reason: "module" | "permission", path } — set by a 403 from the API client
   companyName: null, // company.name from login / GET /me
-  scopeCompanyId: "", // Super Admin: company chosen on the per-company master screens
+  scopeCompanyId: getScopeCompany().id, // Super Admin: company being worked in (sent as X-Company-Id); "" = organisation mode
+  scopeCompanyName: getScopeCompany().name,
+  needCompany: false, // set by a 400 "Select a company": opens the company picker
   branchName: null, // branch.name (null for company-level users)
   redirectPortal: null, // "org" | "emp" — decided by the backend at login
   designationType: null, // "HR" | "MANAGER" | "CEO" | null
@@ -142,9 +145,27 @@ export const useSessionStore = create()(
       },
 
       /**
+       * Super Admin: work inside one company. Everything held for the previous company (stores, filters, fetched data)
+       * is dropped by reloading the current route, and /me is read again with the new X-Company-Id.
+       */
+      selectCompany: (id, name = "") => {
+        setScopeCompany(id, name);
+        set({ scopeCompanyId: id || "", scopeCompanyName: name || "", needCompany: false });
+        if (typeof window !== "undefined") window.location.reload();
+      },
+
+      /** Back to organisation mode (no company selected). */
+      exitCompany: () => {
+        setScopeCompany("");
+        set({ scopeCompanyId: "", scopeCompanyName: "", needCompany: false });
+        if (typeof window !== "undefined") window.location.assign("/org/dashboard");
+      },
+
+      /**
        * Clears session, tokens and user scope on logout.
        */
       clearSession: () => {
+        setScopeCompany("");
         if (typeof window !== "undefined") {
           localStorage.removeItem("super_admin_access_token");
           localStorage.removeItem("super_admin_refresh_token");
@@ -158,7 +179,7 @@ export const useSessionStore = create()(
           // ignore
         }
 
-        set({ ...INITIAL_STATE });
+        set({ ...INITIAL_STATE, scopeCompanyId: "", scopeCompanyName: "" });
       },
 
       /**
@@ -209,6 +230,8 @@ export const useSessionStore = create()(
         designationType: state.designationType,
         mustChangePassword: state.mustChangePassword,
         isAuthenticated: state.isAuthenticated,
+        scopeCompanyId: state.scopeCompanyId,
+        scopeCompanyName: state.scopeCompanyName,
       }),
     },
   ),
