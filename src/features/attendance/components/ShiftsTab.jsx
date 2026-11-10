@@ -24,7 +24,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { OFFICES } from "@/features/employees/data/hr-data";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import {
   createShiftApi,
@@ -32,12 +31,16 @@ import {
   apiErrorMessage,
 } from "@/features/recruitment/data/recruitmentMasterAdapters";
 
+// Radix Select cannot hold an empty value, so "no office" is this sentinel in the form and "" in the payload.
+const NO_OFFICE = "__none__";
+
 export function ShiftsTab() {
   const orgId = useActiveOrgId();
   const api = useMemo(() => createShiftApi(orgId), [orgId]);
 
   const [rows, setRows] = useState([]);
-  const [offices, setOffices] = useState(OFFICES);
+  // Offices come from the API only: a made-up fallback list would send names the server rejects.
+  const [offices, setOffices] = useState([]);
   const [open, setOpen] = useState(false);
 
   // Shared dialog for viewing and editing a shift.
@@ -209,7 +212,8 @@ export function ShiftsTab() {
   <div className="min-w-[150px] flex-1">
     <div className="font-semibold text-sm">{s.name}</div>
     <div className="text-muted-foreground text-xs">
-      {s.id} · {s.office}
+      {s.id}
+      {s.office ? ` · ${s.office}` : ""}
     </div>
   </div>
 
@@ -436,7 +440,6 @@ function NewShiftDialog({
 
   const valid =
     name.trim() &&
-    office &&
     start &&
     end &&
     (!breakEnabled || (breakStart && breakEnd)) &&
@@ -469,13 +472,17 @@ function NewShiftDialog({
 
         <div className="space-y-1.5">
           <Label className="text-muted-foreground text-xs font-medium">
-            Office *
+            Office (optional)
           </Label>
-          <Select value={office} onValueChange={setOffice}>
+          <Select
+            value={office || NO_OFFICE}
+            onValueChange={(v) => setOffice(v === NO_OFFICE ? "" : v)}
+          >
             <SelectTrigger>
-              <SelectValue placeholder="Select office" />
+              <SelectValue placeholder="All offices" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={NO_OFFICE}>No specific office</SelectItem>
               {offices.map((o) => (
                 <SelectItem key={o} value={o}>
                   {o}
