@@ -57,15 +57,17 @@ function CreateRole() {
         const data = await rbacApi.getRoleById(edit);
         if (mounted && data) {
           setExisting(data);
-          return;
+        } else if (mounted) {
+          const found = fallbackRoles.find((r) => r.id === edit);
+          setExisting(found);
         }
       } catch {
-        // Fallback
-      }
-      if (mounted) {
-        const found = fallbackRoles.find((r) => r.id === edit);
-        setExisting(found);
-        setLoading(false);
+        if (mounted) {
+          const found = fallbackRoles.find((r) => r.id === edit);
+          setExisting(found);
+        }
+      } finally {
+        if (mounted) setLoading(false);
       }
     };
     fetchRole();

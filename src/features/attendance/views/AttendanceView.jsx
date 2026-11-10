@@ -34,9 +34,21 @@ function AttendancePage() {
   // Admin logins read every employee's attendance from the API; everyone else keeps the team register.
   const apiSession = useSessionStore((s) => s.isAuthenticated);
   const apiRole = useSessionStore((s) => (s.isAuthenticated ? s.role : null));
+  const hasAttendanceAccess = useSessionStore(
+    (s) =>
+      s.isAuthenticated &&
+      (s.permissions ?? []).some((value) => {
+        const permission = String(value).toLowerCase();
+        return (
+          /^attendance\.(view|manage|edit|approve|lock)$/.test(permission) ||
+          (permission.startsWith("attendance.") && /\.(view|edit|delete)$/.test(permission))
+        );
+      }),
+  );
   const isAdminLogin = ["SUPER_ADMIN", "MASTER_ADMIN", "COMPANY_ADMIN", "BRANCH_ADMIN"].includes(
     String(apiRole ?? "").toUpperCase(),
   );
+  const useEmployeeAttendanceApi = isAdminLogin || hasAttendanceAccess;
   return (
     <div className="space-y-6">
       <div>
@@ -62,7 +74,7 @@ function AttendancePage() {
           {canConfigure && <TabsTrigger value="workorders">Work Orders</TabsTrigger>}
         </ScrollTabsList>
         <TabsContent value="log" className="pt-4">
-          {isAdminLogin ? <EmployeeAttendanceTab /> : <AttendanceLogTab />}
+          {useEmployeeAttendanceApi ? <EmployeeAttendanceTab /> : <AttendanceLogTab />}
         </TabsContent>
         <TabsContent value="report" className="pt-4">
           {apiSession ? <AttendanceReportApiTab /> : <AttendanceReportTab />}

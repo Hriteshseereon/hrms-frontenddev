@@ -436,7 +436,6 @@ function NewShiftDialog({
 
   const valid =
     name.trim() &&
-    office &&
     start &&
     end &&
     (!breakEnabled || (breakStart && breakEnd)) &&
@@ -469,7 +468,7 @@ function NewShiftDialog({
 
         <div className="space-y-1.5">
           <Label className="text-muted-foreground text-xs font-medium">
-            Office *
+            Office <span className="font-normal">(optional)</span>
           </Label>
           <Select value={office} onValueChange={setOffice}>
             <SelectTrigger>

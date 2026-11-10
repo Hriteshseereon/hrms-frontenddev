@@ -70,7 +70,7 @@ function StatusPill({ status, title }) {
 function ErrorState({ kind }) {
   const text =
     kind === "forbidden"
-      ? ["No access", "Employee attendance is available to admin logins only."]
+      ? ["No access", "Your account does not have permission to view employee attendance."]
       : ["Attendance is not enabled", "The Attendance module is not enabled for this company."];
   return (
     <Card className="shadow-card">
