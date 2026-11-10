@@ -1,8 +1,9 @@
-import { DollarSign, FileText, Wallet } from "lucide-react";
+import { DollarSign, FileText, SlidersHorizontal, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollTabsList } from "@/components/common/ScrollTabs";
 import { PayrollTab } from "@/features/payroll/components/PayrollTab";
 import { PayrollRunsTab } from "@/features/payroll/components/PayrollRunsTab";
+import { PayrollPolicyTab } from "@/features/payroll/components/PayrollPolicyTab";
 import { PayslipsTab } from "@/features/payroll/components/PayslipsTab";
 import { LoansTab } from "@/features/payroll/components/LoansTab";
 import { useSessionStore } from "@/features/auth/data/session-store";
@@ -40,6 +41,11 @@ function FinancePage() {
           <TabsTrigger value="loans">
             <Wallet className="h-4 w-4" /> Employee Loans
           </TabsTrigger>
+          {apiSession && canSeePayroll && (
+            <TabsTrigger value="policy">
+              <SlidersHorizontal className="h-4 w-4" /> Wage &amp; Statutory Policy
+            </TabsTrigger>
+          )}
         </ScrollTabsList>
         <TabsContent value="payroll" className="pt-4">
           {!apiSession ? (
@@ -59,6 +65,11 @@ function FinancePage() {
         <TabsContent value="loans" className="pt-4">
           <LoansTab />
         </TabsContent>
+        {apiSession && canSeePayroll && (
+          <TabsContent value="policy" className="pt-4">
+            <PayrollPolicyTab />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

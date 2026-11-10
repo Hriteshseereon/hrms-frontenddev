@@ -44,6 +44,29 @@ SuperAdmin_axios.interceptors.request.use(
   (error) => Promise.reject(error),
 );
 
+// Dev only: one console line per API call, so a screen that makes no call (local sample data) stands out.
+if (import.meta.env.DEV) {
+  SuperAdmin_axios.interceptors.request.use((config) => {
+    config._startedAt = Date.now();
+    return config;
+  });
+  const logCall = (config, status, extra = "") =>
+    console.debug(
+      `[api] ${String(config?.method ?? "get").toUpperCase()} ${config?.url ?? ""} → ${status} (${Date.now() - (config?._startedAt ?? Date.now())} ms)${extra}`,
+    );
+  SuperAdmin_axios.interceptors.response.use(
+    (response) => {
+      logCall(response.config, response.status);
+      return response;
+    },
+    (error) => {
+      const d = error.response?.data?.detail;
+      logCall(error.config, error.response?.status ?? "no response", d ? ` — ${typeof d === "string" ? d : JSON.stringify(d)}` : "");
+      return Promise.reject(error);
+    },
+  );
+}
+
 /** Makes the open screen show the "module not available" / "no access" notice (see OrgShell, EmployeeShell). */
 function flagAccessError(reason, request, detailText) {
   const info = `${String(request?.method ?? "get").toUpperCase()} ${request?.url ?? ""} — ${detailText}`;

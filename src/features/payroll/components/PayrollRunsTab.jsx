@@ -1,5 +1,6 @@
 // Payroll runs on the real API: the server calculates, checks and approves; this screen only shows its numbers
 // and offers the actions the permissions / next_action allow.
+import Link from "@/lib/router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
@@ -589,8 +590,11 @@ function RunDetail({ runId, onBack, onChanged }) {
                 <tr>
                   <th className="p-3 text-left">Employee</th>
                   <th className="p-3 text-left">Dept</th>
-                  <th className="p-3 text-right">Payable days</th>
+                  <th className="p-3 text-left">Type</th>
+                  <th className="p-3 text-right">Paid days</th>
                   <th className="p-3 text-right">LOP</th>
+                  <th className="p-3 text-right">OT hours</th>
+                  <th className="p-3 text-right">OT amount</th>
                   <th className="p-3 text-right">Gross</th>
                   <th className="p-3 text-right">Deductions</th>
                   <th className="p-3 text-right">Net</th>
@@ -599,7 +603,7 @@ function RunDetail({ runId, onBack, onChanged }) {
               <tbody className="divide-border divide-y">
                 {(run.lines ?? []).length === 0 && (
                   <tr>
-                    <td colSpan={7} className="text-muted-foreground p-8 text-center">
+                    <td colSpan={10} className="text-muted-foreground p-8 text-center">
                       No rows to show.
                     </td>
                   </tr>
@@ -611,8 +615,11 @@ function RunDetail({ runId, onBack, onChanged }) {
                       <div className="text-muted-foreground text-xs">{l.employee_code}</div>
                     </td>
                     <td className="text-muted-foreground p-3">{l.department ?? "—"}</td>
-                    <td className="p-3 text-right tabular-nums">{l.lop?.payable_days ?? "—"}</td>
+                    <td className="text-muted-foreground p-3">{l.wage_type ?? "—"}</td>
+                    <td className="p-3 text-right tabular-nums">{l.paid_days ?? l.lop?.payable_days ?? "—"}</td>
                     <td className="p-3 text-right tabular-nums">{l.lop?.days ?? 0}</td>
+                    <td className="p-3 text-right tabular-nums">{l.ot_hours ?? 0}</td>
+                    <td className="p-3 text-right tabular-nums">{money(l.ot_amount ?? 0)}</td>
                     <td className="p-3 text-right tabular-nums">{money(l.earned_gross)}</td>
                     <td className="p-3 text-right tabular-nums">{money(l.total_deductions)}</td>
                     <td className="p-3 text-right font-semibold tabular-nums">{money(l.net)}</td>
@@ -644,6 +651,11 @@ function RunDetail({ runId, onBack, onChanged }) {
                     {c.resolution_note ? ` · ${c.resolution_note}` : ""}
                   </div>
                 </div>
+                {c.code === "DAILY-RATE-MISSING" && c.employee_id && (
+                  <Link href={`/org/employees?id=${encodeURIComponent(c.employee_id)}`} className="text-primary text-xs font-medium hover:underline">
+                    Set the daily rate
+                  </Link>
+                )}
                 {canRun && EDITABLE.includes(s) && ["open", "escalated"].includes(c.status) && (
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" disabled={busy} onClick={() => quiet(() => payrollRunApi.resolveCheck(run.id, c.id, { action: "fix", note: "" }), "Marked as fixed")}>
@@ -792,7 +804,7 @@ export function PayrollRunsTab() {
               <span className="text-muted-foreground block font-medium">Period</span>
               <Input
                 type="month"
-                className="h-9 w-[150px]"
+                className="h-9 w-[200px]"
                 value={create.period}
                 onChange={(e) => e.target.value && setCreate({ period: e.target.value, pay_date: lastDayOf(e.target.value) })}
               />
@@ -818,7 +830,7 @@ export function PayrollRunsTab() {
               </option>
             ))}
           </select>
-          <Input type="month" className="h-9 w-[150px]" value={period} onChange={(e) => (setPeriod(e.target.value), setPage(1))} aria-label="Period" />
+          <Input type="month" className="h-9 w-[200px]" value={period} onChange={(e) => (setPeriod(e.target.value), setPage(1))} aria-label="Period" />
           {(status || period) && (
             <Button variant="ghost" size="sm" onClick={() => (setStatus(""), setPeriod(""), setPage(1))}>
               Clear

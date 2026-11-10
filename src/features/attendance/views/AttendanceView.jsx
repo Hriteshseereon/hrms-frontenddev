@@ -31,12 +31,10 @@ function AttendancePage() {
   const canLockAttendance = can(user.role, "attendance.lock") || apiLock;
   // The Master Data link is only useful to roles that can open /org/masters (HOD / CTO cannot — they would hit Access Denied).
   const canOpenMasters = canOpen(user.role, "/org/masters");
-  // Admin logins read every employee's attendance from the API; everyone else keeps the team register.
+  // A real login always reads attendance from the API (a role without access gets the server's 403 message, not
+  // sample data); the local team register is only for the signed-out preview.
   const apiSession = useSessionStore((s) => s.isAuthenticated);
-  const apiRole = useSessionStore((s) => (s.isAuthenticated ? s.role : null));
-  const isAdminLogin = ["SUPER_ADMIN", "MASTER_ADMIN", "COMPANY_ADMIN", "BRANCH_ADMIN"].includes(
-    String(apiRole ?? "").toUpperCase(),
-  );
+  const isAdminLogin = apiSession;
   return (
     <div className="space-y-6">
       <div>

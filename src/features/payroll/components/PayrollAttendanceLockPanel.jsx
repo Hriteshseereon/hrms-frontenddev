@@ -42,6 +42,9 @@ import {
   unlockAttendance,
 } from "@/features/attendance/data/attendance-pattern";
 
+// No company-wide register endpoint is used; day-wise records come from the work-hours rows.
+const NO_REGISTER_ROWS = [];
+
 const listOf = (value) => {
   if (Array.isArray(value)) return value;
   for (const key of ["items", "rows", "employees", "results", "data"]) {
@@ -131,7 +134,7 @@ export function PayrollAttendanceLockPanel({
   const [lockStatusUnavailable, setLockStatusUnavailable] = useState(false);
   const [reportRows, setReportRows] = useState([]);
   const [workHourRows, setWorkHourRows] = useState([]);
-  const [registerRows, setRegisterRows] = useState([]);
+  const registerRows = NO_REGISTER_ROWS;
   const [locks, setLocks] = useState({});
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
@@ -147,13 +150,14 @@ export function PayrollAttendanceLockPanel({
     setError("");
     setLocks({});
     try {
+      // Day-wise records come from /attendance/work-hours (`days` per employee). /attendance/register is the
+      // signed-in user's own register, not a company one, so it is not used here.
       const results = await Promise.allSettled([
         attendanceApi.getPayrollSummary(period),
         attendanceApi.getPayrollWorkHours(period),
-        attendanceApi.getPayrollRegister(period),
         attendanceApi.getLocks(),
       ]);
-      const [reportResult, hoursResult, registerResult, locksResult] = results;
+      const [reportResult, hoursResult, locksResult] = results;
       const failures = results.filter((result) => result.status === "rejected");
       const nextReportRows = reportResult.status === "fulfilled" ? listOf(reportResult.value) : [];
       setReportRows(nextReportRows);
@@ -174,8 +178,6 @@ export function PayrollAttendanceLockPanel({
           ),
         );
       else setWorkHourRows([]);
-      if (registerResult.status === "fulfilled") setRegisterRows(listOf(registerResult.value));
-      else setRegisterRows([]);
       if (locksResult.status === "rejected") {
         setLockStatusUnavailable(true);
         unlockAttendance(period, payrollOrgId);
@@ -243,7 +245,8 @@ export function PayrollAttendanceLockPanel({
       };
       hoursById.set(key, {
         ...records[records.length - 1],
-        days: records,
+        days:
+          records.length === 1 && Array.isArray(records[0].days) ? records[0].days : records,
         half_days: total(["half_days", "halfDays", "half_day_count"], (record) =>
           /half/i.test(String(record.day_type ?? record.dayType ?? "")),
         ),
@@ -274,7 +277,8 @@ export function PayrollAttendanceLockPanel({
         registerRows.find((row) => idOf(row).toLowerCase() === id.toLowerCase()) ??
         registerRows.find(
           (row) => nameOf(row).trim().toLowerCase() === nameOf(employee).trim().toLowerCase(),
-        );
+        ) ??
+        (Array.isArray(hours?.days) && hours.days.length ? hours : undefined);
       return {
         employee,
         report: report?.attendance ?? report?.summary ?? report ?? {},
@@ -294,7 +298,7 @@ export function PayrollAttendanceLockPanel({
   );
   const readyToLock =
     allRows.length > 0 &&
-    allRows.every(({ employee, report, hours, registerEntry }) => {
+    allRows.every(({ report, hours }) => {
       const required = [
         numeric(report, "present", "present_days", "present_count"),
         numeric(report, "absent", "absent_days", "absent_count"),
@@ -305,10 +309,7 @@ export function PayrollAttendanceLockPanel({
         numeric(hours, "overtime_hours", "overtime", "ot_hours"),
         numeric(hours, "short_hours", "shortHours"),
       ];
-      return (
-        required.every((value) => value !== null) &&
-        dayRecords(registerEntry ?? report, registerRows, employee, period).length > 0
-      );
+      return required.every((value) => value !== null);
     });
 
   const totals = useMemo(() => {
@@ -550,8 +551,8 @@ export function PayrollAttendanceLockPanel({
 
           {!loading && !locked && allRows.length > 0 && !readyToLock && (
             <div className="border-gold/40 bg-gold/10 rounded-md border p-3 text-xs">
-              Attendance cannot be locked until monthly summary fields and day-wise register records
-              are available for every employee.
+              Attendance cannot be locked until the monthly summary (present, absent, leave, working days,
+              half days, late marks, overtime and short hours) is available for every employee.
             </div>
           )}
 

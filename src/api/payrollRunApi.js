@@ -61,6 +61,8 @@ export const payrollRunApi = {
 
   getPolicy: () => axios.get("/payroll/policy").then(unwrap),
   updatePolicy: (body) => axios.put("/payroll/policy", body).then(unwrap),
+  /** One-month estimate at full attendance, from the same calculation a run uses. Needs payroll.view. */
+  salaryPreview: (body) => axios.post("/payroll/salary-preview", body).then(unwrap),
   getSalaryComponents: (employeeId) =>
     axios.get(`/payroll/employees/${encodeURIComponent(employeeId)}/salary-components`).then(unwrap),
   saveSalaryComponents: (employeeId, components) =>
