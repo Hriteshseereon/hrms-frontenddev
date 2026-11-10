@@ -497,7 +497,8 @@ export function createShiftApi(organizationId) {
 
   const toPayload = (s) => ({
     shift_name: clean(s.name),
-    office_name: clean(s.office),
+    // Office is optional: company-level users without a branch omit it.
+    ...(clean(s.office) ? { office_name: clean(s.office) } : {}),
     start_time: toApiTime(s.start),
     end_time: toApiTime(s.end),
     break_time_enabled: Boolean(s.breakEnabled),

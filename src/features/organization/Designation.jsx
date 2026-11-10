@@ -13,6 +13,7 @@ import {
 import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import designationApi from "@/api/designationApi";
 import departmentApi from "@/api/departmentApi";
+import ConfirmDeleteDialog from "@/features/organization/components/ConfirmDeleteDialog";
 
 function getErrorMessage(error) {
   const detail = error?.response?.data?.detail;
@@ -83,7 +84,10 @@ const buttonClass =
   "inline-flex items-center justify-center gap-2 rounded-xl bg-[#14563f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#1a6a4d] disabled:cursor-not-allowed disabled:opacity-60";
 
 const actionButtonClass =
-  "rounded-lg border border-slate-200 bg-white p-2 text-emerald-700 transition hover:bg-emerald-50 dark:border-[#304238] dark:bg-[#101a15] dark:text-emerald-300 dark:hover:bg-[#1b3829] disabled:opacity-50";
+  "inline-flex items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50";
+
+const deleteButtonClass =
+  "inline-flex items-center justify-center rounded-md p-2 text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/30 disabled:cursor-not-allowed disabled:opacity-50";
 
 const panelClass =
   "rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-[#25332c] dark:bg-[#101a15]";
@@ -154,6 +158,7 @@ export default function Designation() {
   const [saving, setSaving] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const scope = useCompanyScope();
   const scopeParams = scope.companyId ? { company_id: scope.companyId } : undefined;
   const [error, setError] = useState("");
@@ -342,12 +347,6 @@ export default function Designation() {
   }
 
   async function handleDelete(designation) {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${designation.name}"?`
-    );
-
-    if (!confirmed) return;
-
     setDeletingId(designation.id);
     setPageError("");
 
@@ -371,6 +370,7 @@ export default function Designation() {
       setPageError(getErrorMessage(err));
     } finally {
       setDeletingId(null);
+      setDeleteTarget(null);
     }
   }
 
@@ -415,6 +415,15 @@ export default function Designation() {
 
   return (
     <div className="min-h-full space-y-6 bg-slate-50 p-5 text-slate-900 transition-colors dark:bg-[#080f0c] dark:text-[#edf4ef] sm:p-8">
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        title="Delete Designation"
+        name={deleteTarget?.name}
+        busy={deletingId !== null}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => handleDelete(deleteTarget)}
+      />
+
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -584,11 +593,11 @@ export default function Designation() {
 
                         <button
                           type="button"
-                          onClick={() => handleDelete(designation)}
+                          onClick={() => setDeleteTarget(designation)}
                           title="Delete"
                           aria-label={`Delete ${designation.name}`}
                           disabled={deletingId === designation.id}
-                          className="rounded-lg border border-red-200 bg-white p-2 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:border-[#49302d] dark:bg-[#101a15] dark:text-red-300 dark:hover:bg-[#38211e]"
+                          className={deleteButtonClass}
                         >
                           {deletingId === designation.id ? (
                             <LoaderCircle

@@ -24,7 +24,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { OFFICES } from "@/features/employees/data/hr-data";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import {
   createShiftApi,
@@ -37,7 +36,8 @@ export function ShiftsTab() {
   const api = useMemo(() => createShiftApi(orgId), [orgId]);
 
   const [rows, setRows] = useState([]);
-  const [offices, setOffices] = useState(OFFICES);
+  // Real offices come from the API; company-level users may have none (office is optional).
+  const [offices, setOffices] = useState([]);
   const [open, setOpen] = useState(false);
 
   // Shared dialog for viewing and editing a shift.
@@ -67,7 +67,7 @@ export function ShiftsTab() {
 
     loadShiftOffices(orgId)
       .then((list) => {
-        if (alive && list.length) setOffices(list);
+        if (alive) setOffices(list);
       })
       .catch((error) => {
         console.error("Failed to load shift offices:", error);
@@ -387,6 +387,8 @@ const mins = (t) => {
   return h * 60 + m;
 };
 
+const NO_OFFICE = "__none__";
+
 function NewShiftDialog({
   onSubmit,
   existing,
@@ -436,7 +438,6 @@ function NewShiftDialog({
 
   const valid =
     name.trim() &&
-    office &&
     start &&
     end &&
     (!breakEnabled || (breakStart && breakEnd)) &&
@@ -469,13 +470,17 @@ function NewShiftDialog({
 
         <div className="space-y-1.5">
           <Label className="text-muted-foreground text-xs font-medium">
-            Office *
+            Office
           </Label>
-          <Select value={office} onValueChange={setOffice}>
+          <Select
+            value={office || NO_OFFICE}
+            onValueChange={(v) => setOffice(v === NO_OFFICE ? "" : v)}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Select office" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={NO_OFFICE}>No office (company-wide)</SelectItem>
               {offices.map((o) => (
                 <SelectItem key={o} value={o}>
                   {o}

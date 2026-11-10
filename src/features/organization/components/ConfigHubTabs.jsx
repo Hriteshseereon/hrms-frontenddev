@@ -2,6 +2,7 @@ import {
   createLeaveTypeApi,
 } from "@/features/leave/data/leaveMasterAdapters";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ConfirmDeleteDialog from "@/features/organization/components/ConfirmDeleteDialog";
 import { companiesOf, useCurrentTenant } from "@/features/organization/data/tenancy";
 import { useOrgs, useActiveOrgId } from "@/features/organization/data/group-data";
 import { captureFiles } from "@/lib/attachments";
@@ -2020,19 +2021,35 @@ export function LeaveMasterTab({ section = "both" }) {
     }
   };
 
-  const handleDeleteCalendar = async (c) => {
-    if (!window.confirm(`Delete holiday calendar "${c.name}"?`)) return;
+  const [deleteCal, setDeleteCal] = useState(null);
+  const [deletingCal, setDeletingCal] = useState(false);
+  const handleDeleteCalendar = (c) => setDeleteCal(c);
+  const confirmDeleteCalendar = async () => {
+    const c = deleteCal;
+    if (!c) return;
+    setDeletingCal(true);
     try {
       await calApi.remove(c._apiId);
       toast.success(`${c.name} deleted`);
+      setDeleteCal(null);
       await reloadCals();
     } catch (error) {
       console.error("Failed to delete holiday calendar:", error);
       toast.error(apiErrorMessage(error, "Unable to delete the holiday calendar."));
+    } finally {
+      setDeletingCal(false);
     }
   };
   return (
     <div className="space-y-4">
+      <ConfirmDeleteDialog
+        open={!!deleteCal}
+        title="Delete Holiday Calendar"
+        name={deleteCal?.name}
+        busy={deletingCal}
+        onCancel={() => setDeleteCal(null)}
+        onConfirm={confirmDeleteCalendar}
+      />
       {showLeave && <LeavePolicyCard />}
       {showLeave && (
         <Card className="shadow-card">

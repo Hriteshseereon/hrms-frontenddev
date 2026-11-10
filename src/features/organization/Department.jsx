@@ -14,6 +14,7 @@ import {
 
 import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import departmentApi from "@/api/departmentApi";
+import ConfirmDeleteDialog from "@/features/organization/components/ConfirmDeleteDialog";
 
 function getErrorMessage(error) {
   const detail = error?.response?.data?.detail;
@@ -57,6 +58,9 @@ const buttonClass =
 /* Icons have no box by default. Hover uses the active organization theme. */
 const actionButtonClass =
   "inline-flex items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50";
+
+const deleteButtonClass =
+  "inline-flex items-center justify-center rounded-md p-2 text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/30 disabled:cursor-not-allowed disabled:opacity-50";
 
 /* Theme-aware panel */
 const panelClass =
@@ -127,6 +131,7 @@ export default function Department() {
   const [saving, setSaving] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const scope = useCompanyScope();
 
   async function loadDepartments() {
@@ -262,12 +267,6 @@ export default function Department() {
   }
 
   async function handleDelete(department) {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${department.name}"?`
-    );
-
-    if (!confirmed) return;
-
     setDeletingId(department.id);
     setPageError("");
 
@@ -291,6 +290,7 @@ export default function Department() {
       setPageError(getErrorMessage(err));
     } finally {
       setDeletingId(null);
+      setDeleteTarget(null);
     }
   }
 
@@ -523,11 +523,11 @@ export default function Department() {
                         {/* Delete */}
                         <button
                           type="button"
-                          onClick={() => handleDelete(department)}
+                          onClick={() => setDeleteTarget(department)}
                           title="Delete"
                           aria-label={`Delete ${department.name}`}
                           disabled={deletingId === department.id}
-                          className={actionButtonClass}
+                          className={deleteButtonClass}
                         >
                           {deletingId === department.id ? (
                             <LoaderCircle
@@ -569,6 +569,15 @@ export default function Department() {
           Showing {filteredDepartments.length} of {departments.length} departments
         </div>
       </section>
+
+      <ConfirmDeleteDialog
+        open={!!deleteTarget}
+        title="Delete Department"
+        name={deleteTarget?.name}
+        busy={deletingId !== null}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => handleDelete(deleteTarget)}
+      />
 
       {/* Add / Edit Department Modal */}
       {showForm && (
