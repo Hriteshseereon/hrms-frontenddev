@@ -14,6 +14,7 @@ import { createPersistentStore, namespaceChanged, registerNamespaceResolver } fr
 import { registerListResolver } from "@/lib/shared-list";
 import { createStore } from "@/lib/store";
 import { bumpFeatureGate, registerTabGate } from "@/lib/feature-gate";
+import { useSessionStore } from "@/features/auth/data/session-store";
 import {
   allUsers,
   getCurrentUser,
@@ -557,17 +558,23 @@ const ORG_LEVEL_ACTIONS = new Set(["role.manage", "group.manage", "department.ma
 /** Super Admin only. */
 const SUPER_ONLY_ROUTES = ["/org/configuration", "/org/organisation-setup"];
 
+/** Signed in through the API: GET /me (permitted_modules + permissions) is the only entitlement source, so the
+ *  browser-stored mock entitlements below must not hide screens the server allows. */
+const apiSession = () => useSessionStore.getState().isAuthenticated;
+
 registerAccessGate({
   screen: (path, role) => {
     const u = getCurrentUser();
     if (SUPER_ONLY_ROUTES.some((r) => path === r || path.startsWith(r + "/")))
       return (role ?? u.role) === "SuperAdmin";
+    if (apiSession()) return true;
     const sc = screenOf(path);
     if (!sc) return true;
     return isEnabledAt(currentTenant(), `s:${sc.route}`, configScopeIdsFor(u));
   },
   action: (action, role) => {
     const u = getCurrentUser();
+    if (apiSession()) return true;
     if (!isEnabledAt(currentTenant(), `a:${action}`, configScopeIdsFor(u))) return false;
     // Collective (all-companies) view is read-only for the signed-in Super Admin: pick a company to act. Organisation-level
     // administration (roles, companies & branches) is not company data and stays available there.
@@ -583,6 +590,7 @@ registerAccessGate({
 });
 
 registerTabGate((pathname, value) => {
+  if (apiSession()) return true;
   const u = getCurrentUser();
   const sc = screenOf(pathname);
   if (!sc) return true;

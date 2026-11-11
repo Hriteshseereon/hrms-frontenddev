@@ -19,6 +19,7 @@ import { useRouteModuleOk } from "@/features/auth/data/module-access";
 import { useSessionCutoff } from "@/features/auth/data/session-guard";
 import { applyTenantScope } from "@/features/organization/data/group-data";
 import { applyBranchScope, lastWorkspacePath } from "@/features/organization/data/tenancy";
+import { GlobalCompanyPicker } from "@/components/layout/CompanySwitcher";
 import { ScopeGate } from "@/components/layout/ScopeGate";
 import { WallpaperLayer } from "@/components/layout/Appearance";
 
@@ -52,6 +53,11 @@ function OrgShell({ children }) {
   const accessError = useSessionStore((s) => s.accessError);
   const deniedReason = accessError?.path === pathname ? accessError.reason : null;
   const allowed = !deniedReason && (pathname === "/org" || (moduleOk && canOpenPath(me.role, pathname)));
+  // A route whose module is not in permitted_modules goes home straight away — no API call, no wait for a 403.
+  useEffect(() => {
+    if (signedIn && hydrated && !moduleOk && pathname !== "/org/dashboard")
+      router.replace(me.role === "Employee" ? "/emp/dashboard" : "/org/dashboard");
+  }, [signedIn, hydrated, moduleOk, pathname, router, me.role]);
   if (!signedIn) return null;
   if (mustChangePassword) return <ForcePasswordChange />;
   // Role-dependent UI is rendered only once the browser session is known (see useHydrated).
@@ -88,6 +94,7 @@ function OrgShell({ children }) {
           )}
         </main>
       </div>
+      <GlobalCompanyPicker />
       <AIAssistant />
     </div>
   );

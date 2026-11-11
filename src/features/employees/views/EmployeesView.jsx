@@ -110,6 +110,9 @@ import {
 import { can, hireableRoles, useCurrentUser } from "@/features/auth/data/auth-session";
 import { setHrPartner } from "@/features/organization/data/hr-partner";
 import { hireEmployee, validateHireInput } from "@/features/recruitment/data/hiring-data";
+import { SalaryPreviewPanel } from "@/features/payroll/components/SalaryPreviewPanel";
+import { getPayGrades } from "@/api/payGradeApi";
+import { Switch } from "@/components/ui/switch";
 import { setManager } from "@/features/organization/data/manager-data";
 import { useActiveOrgId, useOrgs } from "@/features/organization/data/group-data";
 import { exportCsv } from "@/lib/export-utils";
@@ -118,6 +121,7 @@ import { EmployeeDetail } from "@/features/employees/components/EmployeeDetail";
 import { EmployeeLeaveSheet } from "@/features/leave/components/LeavePieces";
 import { HireEmployeeDialog } from "@/features/employees/components/HireEmployeeDialog";
 import { useScope, useScopeMatch } from "@/features/organization/data/tenancy";
+import * as XLSX from "xlsx";
 
 const BULK_EMPLOYEE_COLUMNS = [
   "first_name", "last_name", "personal_email", "phone", "date_of_birth", "gender",
@@ -129,14 +133,14 @@ const BULK_EMPLOYEE_COLUMNS = [
   "bank_account_number", "bank_account_number_confirm", "ifsc_code", "bank_branch",
   "bank_account_type", "payment_mode", "date_of_joining", "organization_name", "company_name", "department",
   "designation", "manager_name", "hr_partner_name", "employment_type", "probation_months",
-  "ctc", "grade", "wage_type", "attendance_pattern_id", "notice_period_days", "work_mode",
+  "ctc", "daily_rate", "grade", "wage_type", "pf_applicable", "esi_applicable", "pf_member_id", "pt_state", "attendance_pattern_id", "notice_period_days", "work_mode",
   "shift_name", "pay_frequency", "prev1_company", "prev1_role", "prev1_from",
   "prev1_to", "prev1_ctc", "prev1_reason",
 ];
 const REQUIRED_BULK_EMPLOYEE_COLUMNS = [
   "first_name", "last_name", "personal_email", "phone", "date_of_birth", "aadhaar_number",
   "pan_number", "bank_account_holder_name", "bank_name", "bank_account_number",
-  "bank_account_number_confirm", "ifsc_code", "date_of_joining", "ctc",
+  "bank_account_number_confirm", "ifsc_code", "date_of_joining",
 ];
 
 function normalizeCsvDate(value, rowNumber, column) {
@@ -181,6 +185,53 @@ function normalizeIntegerDigits(value) {
     : digits.slice(0, decimalPosition);
 }
 
+function validateEmployeeRows(rows) {
+  rows = rows.filter((row) => row.some((value) => String(value ?? "").trim()));
+  if (rows.length < 2) throw new Error("The file must include a header row and at least one employee.");
+  const headers = rows[0].map((h) => String(h ?? "").trim().toLowerCase().replace(/^\uFEFF/, ""));
+  for (const required of REQUIRED_BULK_EMPLOYEE_COLUMNS) {
+    if (!headers.includes(required)) throw new Error(`Missing required column: ${required}`);
+  }
+  return rows.slice(1).map((values, index) => {
+    const employee = Object.fromEntries(
+      headers.map((header, i) => {
+        const value = values[i] ?? "";
+        return [header, value instanceof Date ? value.toISOString().slice(0, 10) : String(value).trim()];
+      }),
+    );
+    const missing = REQUIRED_BULK_EMPLOYEE_COLUMNS.filter((column) => !employee[column]?.trim());
+    if (missing.length) throw new Error(`Row ${index + 2}: fill required fields: ${missing.join(", ")}.`);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employee.personal_email)) throw new Error(`Row ${index + 2}: personal_email must be a valid email.`);
+    if (employee.phone.replace(/\D/g, "").length < 10) throw new Error(`Row ${index + 2}: phone must contain at least 10 digits.`);
+    employee.date_of_birth = normalizeCsvDate(employee.date_of_birth, index + 2, "date_of_birth");
+    employee.date_of_joining = normalizeCsvDate(employee.date_of_joining, index + 2, "date_of_joining");
+    if (employee.date_of_birth >= employee.date_of_joining) throw new Error(`Row ${index + 2}: date_of_birth must be before date_of_joining.`);
+    employee.aadhaar_number = normalizeAadhaar(employee.aadhaar_number);
+    if (!/^\d{12}$/.test(employee.aadhaar_number)) throw new Error(`Row ${index + 2}: aadhaar_number must be exactly 12 digits. In Excel, format the column as Text before entering it.`);
+    if (!/^[A-Z]{5}\d{4}[A-Z]$/i.test(employee.pan_number.trim())) throw new Error(`Row ${index + 2}: pan_number must look like ABCDE1234F.`);
+    employee.bank_account_number = normalizeIntegerDigits(employee.bank_account_number);
+    employee.bank_account_number_confirm = normalizeIntegerDigits(employee.bank_account_number_confirm);
+    if (!/^\d{9,18}$/.test(employee.bank_account_number)) throw new Error(`Row ${index + 2}: bank_account_number must contain 9–18 digits. Format the column as Text in Excel before entering it.`);
+    if (employee.bank_account_number !== employee.bank_account_number_confirm) throw new Error(`Row ${index + 2}: bank account confirmation does not match.`);
+    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/i.test(employee.ifsc_code.trim())) throw new Error(`Row ${index + 2}: ifsc_code must look like HDFC0001234.`);
+    // Wage type: Monthly (needs ctc) or Daily (needs daily_rate). A blank cell means Monthly.
+    const wage = String(employee.wage_type || "Monthly").trim().toLowerCase();
+    if (wage !== "monthly" && wage !== "daily") throw new Error(`Row ${index + 2}: wage_type must be Monthly or Daily.`);
+    employee.wage_type = wage === "daily" ? "Daily" : "Monthly";
+    const amountField = employee.wage_type === "Daily" ? "daily_rate" : "ctc";
+    if (!Number.isFinite(Number(employee[amountField])) || Number(employee[amountField]) <= 0)
+      throw new Error(`Row ${index + 2}: ${amountField} must be a number greater than zero for a ${employee.wage_type} employee.`);
+    if (employee.uan_number && !/^\d{12}$/.test(employee.uan_number)) throw new Error(`Row ${index + 2}: uan_number must be 12 digits.`);
+    if (employee.esic_number && !/^\d{17}$/.test(employee.esic_number)) throw new Error(`Row ${index + 2}: esic_number must be 17 digits.`);
+    for (const [key, value] of Object.entries(employee)) {
+      if (value && !BULK_EMPLOYEE_COLUMNS.includes(key) && !/^pc_[A-Za-z0-9_]+$/.test(key) && !/^prev\d+_(company|role|from|to|ctc|reason)$/.test(key)) {
+        throw new Error(`File has an unsupported column: ${key}`);
+      }
+    }
+    return employee;
+  });
+}
+
 function parseEmployeeCsv(text) {
   const rows = [];
   let row = [], cell = "", quoted = false;
@@ -198,36 +249,26 @@ function parseEmployeeCsv(text) {
   }
   row.push(cell.trim());
   if (row.some(Boolean)) rows.push(row);
-  if (rows.length < 2) throw new Error("The CSV must include a header row and at least one employee.");
-  const headers = rows[0].map((h) => h.toLowerCase().replace(/^\uFEFF/, ""));
-  for (const required of REQUIRED_BULK_EMPLOYEE_COLUMNS) {
-    if (!headers.includes(required)) throw new Error(`Missing required column: ${required}`);
-  }
-  return rows.slice(1).map((values, index) => {
-    const employee = Object.fromEntries(headers.map((h, i) => [h, values[i] ?? ""]));
-    const missing = REQUIRED_BULK_EMPLOYEE_COLUMNS.filter((column) => !employee[column]?.trim());
-    if (missing.length) throw new Error(`Row ${index + 2}: fill required fields: ${missing.join(", ")}.`);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(employee.personal_email)) throw new Error(`Row ${index + 2}: personal_email must be a valid email.`);
-    if (employee.phone.replace(/\D/g, "").length < 10) throw new Error(`Row ${index + 2}: phone must contain at least 10 digits.`);
-    employee.date_of_birth = normalizeCsvDate(employee.date_of_birth, index + 2, "date_of_birth");
-    employee.date_of_joining = normalizeCsvDate(employee.date_of_joining, index + 2, "date_of_joining");
-    if (employee.date_of_birth >= employee.date_of_joining) throw new Error(`Row ${index + 2}: date_of_birth must be before date_of_joining.`);
-    employee.aadhaar_number = normalizeAadhaar(employee.aadhaar_number);
-    if (!/^\d{12}$/.test(employee.aadhaar_number)) throw new Error(`Row ${index + 2}: aadhaar_number must be exactly 12 digits. In Excel, format the column as Text before entering it.`);
-    if (!/^[A-Z]{5}\d{4}[A-Z]$/i.test(employee.pan_number.trim())) throw new Error(`Row ${index + 2}: pan_number must look like ABCDE1234F.`);
-    employee.bank_account_number = normalizeIntegerDigits(employee.bank_account_number);
-    employee.bank_account_number_confirm = normalizeIntegerDigits(employee.bank_account_number_confirm);
-    if (!/^\d{9,18}$/.test(employee.bank_account_number)) throw new Error(`Row ${index + 2}: bank_account_number must contain 9–18 digits. Format the column as Text in Excel before entering it.`);
-    if (employee.bank_account_number !== employee.bank_account_number_confirm) throw new Error(`Row ${index + 2}: bank account confirmation does not match.`);
-    if (!/^[A-Z]{4}0[A-Z0-9]{6}$/i.test(employee.ifsc_code.trim())) throw new Error(`Row ${index + 2}: ifsc_code must look like HDFC0001234.`);
-    if (!Number.isFinite(Number(employee.ctc)) || Number(employee.ctc) <= 0) throw new Error(`Row ${index + 2}: ctc must be a number greater than zero.`);
-    for (const [key, value] of Object.entries(employee)) {
-      if (value && !BULK_EMPLOYEE_COLUMNS.includes(key) && !/^pc_[A-Za-z0-9_]+$/.test(key) && !/^prev\d+_(company|role|from|to|ctc|reason)$/.test(key)) {
-        throw new Error(`CSV has an unsupported column: ${key}`);
-      }
-    }
-    return employee;
+  return validateEmployeeRows(rows);
+}
+
+function parseEmployeeXlsx(data) {
+  const workbook = XLSX.read(data, { type: "array", cellDates: true });
+  const firstSheet = workbook.SheetNames[0];
+  if (!firstSheet) throw new Error("The Excel workbook has no worksheets.");
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], {
+    header: 1,
+    raw: true,
+    defval: "",
   });
+  return validateEmployeeRows(rows);
+}
+
+async function parseEmployeeFile(file) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (extension === "csv") return parseEmployeeCsv(await file.text());
+  if (extension === "xlsx") return parseEmployeeXlsx(await file.arrayBuffer());
+  throw new Error("Choose a CSV or Excel .xlsx file.");
 }
 
 async function downloadEmployeeCsvTemplate() {
@@ -258,8 +299,8 @@ async function downloadEmployeeCsvTemplate() {
     organization_name: defaultOrganization?.name ?? defaultOrganization?.organisation_name ?? defaultOrganization?.organization_name ?? defaultOrganization?.legal_name ?? "",
     company_name: defaultCompany?.company_name ?? defaultCompany?.name ?? "",
     department: defaultDepartment?.department_name ?? defaultDepartment?.name ?? "",
-    designation: "", employment_type: "Full-time", probation_months: "3", ctc: "600000",
-    wage_type: "Salaried", bank_account_type: "savings", pay_frequency: "monthly",
+    designation: "", employment_type: "Full-time", probation_months: "3", ctc: "600000", daily_rate: "",
+    wage_type: "Monthly", pf_applicable: "true", esi_applicable: "true", bank_account_type: "savings",
   };
   const csvCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
   const csv = `${BULK_EMPLOYEE_COLUMNS.join(",")}\n${BULK_EMPLOYEE_COLUMNS.map((column) => csvCell(sample[column])).join(",")}\n`;
@@ -704,16 +745,7 @@ function Employees() {
                             <div>
                               <div className="font-semibold">{e.name}</div>
                               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                <span title="Employee Profile ID">Emp ID: {e.id}</span>
-                                {e.user_id && (
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[10px] py-0 px-1 border-muted text-muted-foreground"
-                                    title="Login User Account ID"
-                                  >
-                                    User: {e.user_id.slice(0, 8)}…
-                                  </Badge>
-                                )}
+                                <span title="Employee Code">Emp ID: {e.employee_code || "—"}</span>
                               </div>
                             </div>
                           </div>
@@ -917,10 +949,10 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
   const inputRef = useRef(null);
   const close = () => { if (!busy) { onOpenChange(false); setFile(null); setSummary(null); } };
   const upload = async () => {
-    if (!file) { toast.error("Choose a CSV file to continue."); return; }
+    if (!file) { toast.error("Choose a CSV or Excel .xlsx file to continue."); return; }
     let employees;
-    try { employees = parseEmployeeCsv(await file.text()); }
-    catch (error) { toast.error(error.message || "Could not read this CSV."); return; }
+    try { employees = await parseEmployeeFile(file); }
+    catch (error) { toast.error(error.message || "Could not read this employee file."); return; }
     setBusy(true); setSummary(null);
     let succeeded = 0;
     const failures = [];
@@ -976,14 +1008,29 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
         failures.push({ row: index + 2, email: employee.personal_email, message: `Organization "${employee.organization_name}" does not match the active organization.` });
         continue;
       }
-      let companyId = session.companyId || "";
-      if (employee.company_name) {
-        const companyMatches = exactName(companies, employee.company_name).filter((company) => !company.organization_id || !organizationId || company.organization_id === organizationId);
-        if (companyMatches.length !== 1) {
+      let companyId = session.companyId || session.scopeCompanyId || "";
+      // A company-scoped login already supplies the authoritative tenant ID.
+      // Avoid rejecting its uploads because the company-list endpoint omits or
+      // differently scopes the current company in its response.
+      if (employee.company_name && !session.companyId) {
+        const companyMatches = exactName(companies, employee.company_name).filter(
+          (company) =>
+            !company.organization_id ||
+            !organizationId ||
+            String(company.organization_id).trim() === String(organizationId).trim(),
+        );
+        const scopedCompany = companies.find(
+          (company) => String(company.id) === String(companyId),
+        );
+        const scopedCompanyName = scopedCompany?.name || session.companyName || "";
+        const matchesCurrentCompany =
+          companyId &&
+          normalizeOptionName(employee.company_name) === normalizeOptionName(scopedCompanyName);
+        if (companyMatches.length !== 1 && !matchesCurrentCompany) {
           failures.push({ row: index + 2, email: employee.personal_email, message: `Company "${employee.company_name}" must match one configured company in the active organization.` });
           continue;
         }
-        companyId = companyMatches[0].id;
+        if (companyMatches.length === 1) companyId = companyMatches[0].id;
       }
       if (organizationId && isUuid(organizationId)) payload.organization_id = organizationId;
       if (companyId && isUuid(companyId)) payload.company_id = companyId;
@@ -1079,7 +1126,8 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
       payload.status = "ACTIVE";
       payload.probation_months = "3";
       payload.employment_type ||= "Full-time";
-      payload.wage_type = "Salaried";
+      payload.wage_type = employee.wage_type;
+      if (payload.wage_type === "Daily") delete payload.ctc; else delete payload.daily_rate;
       try {
         for (;;) {
           try { await createEmployeeApi(payload); break; }
@@ -1112,8 +1160,8 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
         <div className="space-y-4">
           <Button type="button" variant="outline" size="sm" onClick={downloadEmployeeCsvTemplate}><Download className="h-4 w-4" /> Download Template</Button>
           <div className="rounded-lg border border-dashed p-5">
-            <Label htmlFor="employee-bulk-csv">Employee CSV</Label>
-            <Input ref={inputRef} id="employee-bulk-csv" type="file" accept=".csv,text/csv" className="mt-2" disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setSummary(null); }} />
+            <Label htmlFor="employee-bulk-csv">Employee file (CSV or Excel .xlsx)</Label>
+            <Input ref={inputRef} id="employee-bulk-csv" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="mt-2" disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setSummary(null); }} />
           </div>
           {file && <p className="text-sm">Selected: <span className="font-medium">{file.name}</span></p>}
           {summary && <div className="max-h-40 space-y-1 overflow-auto rounded-md bg-muted/40 p-3 text-sm"><p>{summary.succeeded} created · {summary.failures.length} failed</p>{summary.failures.map((failure) => <p className="text-destructive" key={`${failure.row}-${failure.email}`}>Row {failure.row} ({failure.email}): {failure.message}</p>)}</div>}
@@ -1173,6 +1221,10 @@ const FORM_TO_API = {
   workMode: "work_mode",
   probationMonths: "probation_months",
   payFrequency: "pay_frequency",
+  wageType: "wage_type",
+  dailyRate: "daily_rate",
+  pfMemberId: "pf_member_id",
+  ptState: "pt_state",
 };
 
 const PERSONAL_KEYS = new Set([
@@ -1182,7 +1234,7 @@ const PERSONAL_KEYS = new Set([
   "twitter_url", "website_url",
 ]);
 const LEGAL_KEYS = new Set([
-  "pan_number", "aadhaar_number", "uan_number", "esic_number", "driving_license_number", "passport_number",
+  "pan_number", "aadhaar_number", "uan_number", "esic_number", "pf_member_id", "driving_license_number", "passport_number",
   "aadhaar_card", "pan_card", "driving_license", "passport", "resume", "offer_letter", "appointment_letter",
   "educational_certificate", "address_proof",
 ]);
@@ -1522,6 +1574,12 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       noticeDays: e.notice_period_days != null ? String(e.notice_period_days) : undefined,
       workMode: e.work_mode || undefined,
       ctc: e.ctc != null ? String(Math.round(Number(e.ctc))) : "",
+      wageType: e.wage_type === "Monthly" || e.wage_type === "Daily" ? e.wage_type : "",
+      dailyRate: e.daily_rate != null ? String(e.daily_rate) : "",
+      pfApplicable: e.pf_applicable !== false,
+      esiApplicable: e.esi_applicable !== false,
+      pfMemberId: e.pf_member_id ?? "",
+      ptState: e.pt_state ?? "",
       probationMonths: e.probation_months != null ? String(e.probation_months) : undefined,
       payFrequency: e.pay_frequency || undefined,
       grade: e.grade || undefined,
@@ -1727,10 +1785,28 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
   const deptDesignations = designations;
   const roleOptions = apiRoles.length ? apiRoles.map((r) => r.name) : ["Employee"];
 
-  const [ctcDraft, setCtcDraft] = useState(0);
-  const monthlyGross = Math.round(ctcDraft / 12);
-  const basic = Math.round(monthlyGross * 0.4);
-  const deductions = Math.round(basic * 0.12) + 200 + 850 + Math.round(monthlyGross * 0.08);
+  // Compensation: Monthly (annual CTC) or Daily (daily rate). An old row with another wage type starts empty.
+  const [wageType, setWageType] = useState(isEdit ? (init.wageType ?? "") : "Monthly");
+  const [ctcDraft, setCtcDraft] = useState(Number(init.ctc) || 0);
+  const [dailyRateDraft, setDailyRateDraft] = useState(Number(init.dailyRate) || 0);
+  const [pfApplicable, setPfApplicable] = useState(init.pfApplicable !== false);
+  const [esiApplicable, setEsiApplicable] = useState(init.esiApplicable !== false);
+  const [ptStateDraft, setPtStateDraft] = useState(init.ptState ?? "");
+  // Grades come from the Pay Grades list (active only); the server rejects any other code.
+  const [gradeOptions, setGradeOptions] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    getPayGrades({ status: "Active", page_size: 100 })
+      .then((res) => {
+        const d = res?.data?.data ?? res?.data ?? [];
+        const rows = Array.isArray(d) ? d : (d.items ?? d.pay_grades ?? []);
+        if (alive) setGradeOptions(rows.filter((g) => g.grade_code && (g.status ?? "Active") === "Active"));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   /** Reads the form, validates it, creates the employee through the backend API, then mirrors it in the local store. */
   async function create() {
@@ -1762,9 +1838,11 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       ["personalEmail", "Personal email"],
       ["phone", "Mobile number"],
       ["doj", "Date of joining"],
-      ["ctc", "Annual CTC"],
     ];
     const missing = required.filter(([k]) => !v[k]?.trim()).map(([, l]) => l);
+    if (wageType !== "Monthly" && wageType !== "Daily") missing.push("Wage type");
+    else if (wageType === "Monthly" && !(Number(v.ctc) > 0)) missing.push("Annual CTC");
+    else if (wageType === "Daily" && !(Number(v.dailyRate) > 0)) missing.push("Daily rate");
     if (isSuperAdmin && placementMode === "company" && !isUuid(selectedCompanyId)) {
       missing.push("Company");
     }
@@ -1795,6 +1873,8 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
     if (pan && pan !== employee?.pan_number && !/^[A-Z]{5}\d{4}[A-Z]$/.test(pan))
       return fail("PAN must be in the format ABCDE1234F", "legal");
     if (uan && uan !== employee?.uan_number && !/^\d{12}$/.test(uan)) return fail("UAN must be 12 digits", "legal");
+    const esic = (v.esiNo ?? "").replace(/\s+/g, "");
+    if (esic && esic !== employee?.esic_number && !/^\d{17}$/.test(esic)) return fail("ESIC number must be 17 digits", "legal");
     if (acct && acct !== employee?.bank_account_number && !/^\d{9,18}$/.test(acct)) return fail("Account number must be 9–18 digits", "bank");
     if (acct && acct !== (v.accountNo2 ?? "").replace(/\s+/g, ""))
       return fail("The re-entered account number does not match", "bank");
@@ -1805,6 +1885,8 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       return fail("Enter a valid work email address", "personal");
     }
 
+    // The local mirror and its validation want an annual figure: a daily rate is stood in at 26 days a month.
+    const localCtc = wageType === "Daily" ? Number(v.dailyRate) * 26 * 12 : Number(v.ctc);
     const validationError = validateHireInput({
       firstName: v.firstName,
       lastName: v.lastName,
@@ -1812,7 +1894,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       phone: v.phone,
       dob: v.dob,
       doj: v.doj,
-      ctc: Number(v.ctc),
+      ctc: localCtc,
       workEmail: v.workEmail,
     });
     if (validationError) {
@@ -1869,16 +1951,21 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       date_of_joining: v.doj || "",
       probation_months: v.probationMonths || "3",
       ...(isEdit ? {} : { status: "ACTIVE" }),
-      ctc: v.ctc ? String(Number(v.ctc)) : "",
+      ctc: wageType === "Monthly" && v.ctc ? String(Number(v.ctc)) : "",
+      daily_rate: wageType === "Daily" && v.dailyRate ? String(Number(v.dailyRate)) : "",
       grade: v.grade || "",
-      wage_type: v.wageType || "Salaried",
+      wage_type: wageType,
+      pf_applicable: String(pfApplicable),
+      esi_applicable: String(esiApplicable),
+      pf_member_id: v.pfMemberId?.trim() || undefined,
+      pt_state: v.ptState?.trim() || undefined,
       attendance_pattern_id: v.patternId || undefined,
       notice_period_days: v.noticeDays || undefined,
       work_mode: v.workMode || undefined,
       pan_number: pan || undefined,
       aadhaar_number: aadhaar || undefined,
       uan_number: uan || undefined,
-      esic_number: v.esiNo?.trim() || undefined,
+      esic_number: esic || undefined,
       bank_name: v.bankName?.trim() || undefined,
       bank_account_number: acct || undefined,
       ifsc_code: ifsc || undefined,
@@ -1962,7 +2049,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       // Optional fields the backend lets us clear with the literal string "null".
       const clearable = new Set([
         "last_name", "personal_email", "phone", "date_of_birth", "gender", "grade", "pan_number",
-        "aadhaar_number", "uan_number", "esic_number", "bank_name", "bank_account_number", "ifsc_code",
+        "aadhaar_number", "uan_number", "esic_number", "pf_member_id", "pt_state", "bank_name", "bank_account_number", "ifsc_code",
         "marital_status", "blood_group", "nationality", "religion", "whatsapp_number",
         "emergency_contact_name", "emergency_contact_phone", "current_address", "permanent_address",
         "linkedin_url", "github_url", "twitter_url", "website_url", "qualification", "institution",
@@ -1993,6 +2080,11 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
           }
           formData.append(key, next);
         });
+      // A wage type change needs the amount for the new type in the same request (422 otherwise).
+      if (formData.has("wage_type")) {
+        if (wageType === "Daily") formData.set("daily_rate", String(Number(v.dailyRate)));
+        else formData.set("ctc", String(Number(v.ctc)));
+      }
       // Optional ids: the string "null" clears them.
       [
         ["manager_id", managerId],
@@ -2123,7 +2215,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
         managerId: v.managerId || null,
         doj: v.doj,
         probationMonths: Number(v.probationMonths || 3),
-        ctc: Number(v.ctc),
+        ctc: localCtc,
         grade: v.grade || undefined,
         workEmail,
       });
@@ -2622,11 +2714,16 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                 </Field>
               </FieldRow>
               <FieldRow>
-                <Field label="UAN (PF)">
+                <Field label="UAN (12 digits)">
                   <Input name="uan" defaultValue={init.uan} inputMode="numeric" placeholder="1000 1234 5678" />
                 </Field>
-                <Field label="ESI No.">
-                  <Input name="esiNo" defaultValue={init.esiNo} placeholder="—" />
+                <Field label="ESI No. (17 digits)">
+                  <Input name="esiNo" defaultValue={init.esiNo} inputMode="numeric" placeholder="—" />
+                </Field>
+              </FieldRow>
+              <FieldRow>
+                <Field label="PF member ID">
+                  <Input name="pfMemberId" defaultValue={init.pfMemberId} maxLength={30} placeholder="Optional" />
                 </Field>
               </FieldRow>
 
@@ -3170,15 +3267,42 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
               />
 
               <FieldRow>
-                <Field label="Annual CTC (₹)" required>
-                  <Input
-                    name="ctc" defaultValue={init.ctc}
-                    type="number"
-                    min={1}
-                    placeholder="1200000"
-                    onChange={(e) => setCtcDraft(Number(e.target.value) || 0)}
-                  />
+                <Field label="Wage type" required field="wageType">
+                  <Select name="wageType" value={wageType} onValueChange={setWageType}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select wage type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Monthly">Monthly</SelectItem>
+                      <SelectItem value="Daily">Daily</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </Field>
+                {wageType === "Monthly" && (
+                  <Field label="Annual CTC (₹)" required>
+                    <Input
+                      name="ctc" defaultValue={init.ctc}
+                      type="number"
+                      min={1}
+                      placeholder="1200000"
+                      onChange={(e) => setCtcDraft(Number(e.target.value) || 0)}
+                    />
+                  </Field>
+                )}
+                {wageType === "Daily" && (
+                  <Field label="Daily rate (₹)" required>
+                    <Input
+                      name="dailyRate" defaultValue={init.dailyRate}
+                      type="number"
+                      min={0.01}
+                      step="any"
+                      placeholder="650"
+                      onChange={(e) => setDailyRateDraft(Number(e.target.value) || 0)}
+                    />
+                  </Field>
+                )}
+              </FieldRow>
+              <FieldRow>
                 <Field label="Probation Period">
                   <Select name="probationMonths" defaultValue={init.probationMonths ?? "3"}>
                     <SelectTrigger>
@@ -3191,31 +3315,43 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                     </SelectContent>
                   </Select>
                 </Field>
-              </FieldRow>
-              <FieldRow>
-                <Field label="Pay Frequency">
-                  <Select name="payFrequency" defaultValue={init.payFrequency ?? "monthly"}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </Field>
-                <Field label="Salary Grade">
+                <Field label="Pay Grade">
                   <Select name="grade" defaultValue={init.grade}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select grade" />
+                      <SelectValue placeholder={gradeOptions.length ? "Select pay grade" : "No pay grades yet"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {["G1", "G2", "G3", "G4", "G5", "M1", "M2", "M3"].map((g) => (
-                        <SelectItem key={g} value={g}>
-                          {g}
+                      {gradeOptions.map((g) => (
+                        <SelectItem key={g.grade_code} value={g.grade_code}>
+                          {g.grade_code}
+                          {g.grade_name ? ` — ${g.grade_name}` : ""}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                </Field>
+              </FieldRow>
+              <FieldRow>
+                <Field label="Provident Fund (PF) applicable">
+                  <div className="flex h-9 items-center gap-2">
+                    <Switch checked={pfApplicable} onCheckedChange={setPfApplicable} aria-label="PF applicable" />
+                    <span className="text-muted-foreground text-xs">{pfApplicable ? "Yes" : "No"}</span>
+                  </div>
+                </Field>
+                <Field label="ESI applicable">
+                  <div className="flex h-9 items-center gap-2">
+                    <Switch checked={esiApplicable} onCheckedChange={setEsiApplicable} aria-label="ESI applicable" />
+                    <span className="text-muted-foreground text-xs">{esiApplicable ? "Yes" : "No"}</span>
+                  </div>
+                </Field>
+              </FieldRow>
+              <FieldRow>
+                <Field label="Professional tax state">
+                  <Input
+                    name="ptState" defaultValue={init.ptState}
+                    placeholder="e.g. Odisha"
+                    onChange={(e) => setPtStateDraft(e.target.value.trim())}
+                  />
                 </Field>
               </FieldRow>
 
@@ -3245,34 +3381,14 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                 </div>
               )}
 
-              <Card className="shadow-card bg-muted/30">
-                <CardContent className="grid grid-cols-1 gap-3 p-4 text-sm sm:grid-cols-3">
-                  <div>
-                    <div className="text-muted-foreground text-xs tracking-wider uppercase">
-                      Gross (Monthly)
-                    </div>
-                    <div className="text-lg font-bold">
-                      {ctcDraft > 0 ? inr(monthlyGross) : "—"}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground text-xs tracking-wider uppercase">
-                      Total Deductions
-                    </div>
-                    <div className="text-destructive text-lg font-bold">
-                      {ctcDraft > 0 ? inr(deductions) : "—"}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-muted-foreground text-xs tracking-wider uppercase">
-                      Net Take-home
-                    </div>
-                    <div className="text-primary text-lg font-bold">
-                      {ctcDraft > 0 ? inr(monthlyGross - deductions) : "—"}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              <SalaryPreviewPanel
+                wageType={wageType}
+                ctc={ctcDraft}
+                dailyRate={dailyRateDraft}
+                pfApplicable={pfApplicable}
+                esiApplicable={esiApplicable}
+                ptState={ptStateDraft}
+              />
 
               <div className="flex justify-between pt-2">
                 <Button type="button" variant="outline" onClick={() => setTab("bank")}>

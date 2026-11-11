@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogOut, Send, Info, Undo2, CalendarClock, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,7 +31,6 @@ import {
   myExit,
   myExitHistory,
   stageTone,
-  submitResignation,
   todayISO,
   withdrawResignation,
   useExitRequests,
@@ -45,6 +44,19 @@ import {
 import { ExitSurveyForm } from "@/features/exit/components/SeparationPieces";
 import { useFnf } from "@/features/exit/data/separation-data";
 import { inr } from "@/lib/store";
+import {
+  LETTER_ACCEPT,
+  applyForResignation,
+  getMyResignation,
+  loadResignationReasons,
+  recalledResignationId,
+  rememberResignationId,
+  resignationErrorMessage,
+  validateLetter,
+} from "@/features/exit/data/resignation_adapter";
+
+// A resignation from the API is "open" until it is rejected, withdrawn or closed.
+const apiIsOpen = (r) => !!r && !/reject|withdraw|complet|retain|cancel/i.test(r.status);
 
 function MyResignation() {
   const me = useCurrentUser();
@@ -53,6 +65,17 @@ function MyResignation() {
   const history = myExitHistory(all, me.id);
   const manager = userById(me.managerId);
 
+  // Live resignation from GET /resignations/{id} (id remembered after Apply).
+  const [apiResignation, setApiResignation] = useState(null);
+  useEffect(() => {
+    const id = recalledResignationId();
+    if (!id) return;
+    getMyResignation(id)
+      .then(setApiResignation)
+      .catch(() => {});
+  }, []);
+
+  const apiOpen = apiIsOpen(apiResignation);
   const openRequest = active && ACTIVE_STAGES.includes(active.stage) ? active : null;
   const [applyOpen, setApplyOpen] = useState(false);
 
@@ -71,15 +94,17 @@ function MyResignation() {
         </div>
         <Button
           className="bg-gradient-emerald shadow-premium text-white"
-          disabled={!!openRequest}
-          title={openRequest ? "A resignation is already in progress" : ""}
+          disabled={!!openRequest || apiOpen}
+          title={openRequest || apiOpen ? "A resignation is already in progress" : ""}
           onClick={() => setApplyOpen(true)}
         >
           <Send className="h-4 w-4" /> Apply for resignation
         </Button>
       </div>
 
-      {openRequest ? (
+      {apiResignation && <ApiResignationCard r={apiResignation} />}
+
+      {apiOpen ? null : openRequest ? (
         <ActiveExit request={openRequest} />
       ) : active && (active.stage === "Exit Completed" || active.stage === "Retained") ? (
         // Closed outcomes used to disappear from this page (only a one-line history row remained).
@@ -150,7 +175,13 @@ function MyResignation() {
           </DialogHeader>
           <ResignationForm
             managerName={manager?.name ?? "your reporting manager"}
-            onSubmitted={() => setApplyOpen(false)}
+            onSubmitted={(created) => {
+              if (created?.id) {
+                rememberResignationId(created.id);
+                setApiResignation(created);
+              }
+              setApplyOpen(false);
+            }}
           />
         </DialogContent>
       </Dialog>
@@ -184,6 +215,63 @@ function MyResignation() {
         </Card>
       )}
     </div>
+  );
+}
+
+// View Resignation (GET /resignations/{id}) - live record from the API.
+function ApiResignationCard({ r }) {
+  return (
+    <Card className="shadow-card">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
+          <FileText className="text-primary h-4 w-4" /> My Resignation · {r.code}
+          <Badge variant="outline">{r.status}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Kv k="Reason" v={r.reason} />
+          <Kv k="Applied on" v={fmtDate(String(r.submittedAt).slice(0, 10))} />
+          <Kv k="Requested last working day" v={fmtDate(r.requestedLwd)} />
+          <Kv k="Reporting manager" v={r.managerName || "—"} />
+          <Kv k="Manager approval" v={r.managerStatus || "—"} />
+          <Kv k="HR clearance" v={r.hrStatus || "—"} />
+          {r.noticeDays != null && <Kv k="Notice period" v={`${r.noticeDays} days`} />}
+          {r.finalLwd && <Kv k="Final last working day" v={fmtDate(r.finalLwd)} />}
+          <Kv
+            k="Letter"
+            v={
+              r.letter?.url ? (
+                <a
+                  href={r.letter.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-primary underline"
+                >
+                  {r.letter.name || "View letter"}
+                </a>
+              ) : (
+                "Not attached"
+              )
+            }
+          />
+        </div>
+        <p className="border-border bg-muted/30 text-muted-foreground rounded-lg border p-3">
+          {r.note}
+        </p>
+        {r.managerRemarks && (
+          <div className="border-border bg-muted/20 rounded-lg border p-3 text-xs">
+            <span className="text-foreground font-semibold">Manager remarks</span> —{" "}
+            {r.managerRemarks}
+          </div>
+        )}
+        {r.hrRemarks && (
+          <div className="border-border bg-muted/20 rounded-lg border p-3 text-xs">
+            <span className="text-foreground font-semibold">HR remarks</span> — {r.hrRemarks}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -369,9 +457,39 @@ function ResignationForm({ managerName, onSubmitted }) {
   const [reason, setReason] = useState("");
   const [description, setDescription] = useState("");
   const [lwd, setLwd] = useState(addDays(todayISO(), 30));
-  const [doc, setDoc] = useState("");
+  const [letter, setLetter] = useState(null);
   const [confirm, setConfirm] = useState(false);
-  const valid = reason && description.trim().length > 10 && lwd && lwd >= todayISO();
+  const [submitting, setSubmitting] = useState(false);
+  // GET /resignations/reasons - fall back to the built-in list if the call fails.
+  const [reasons, setReasons] = useState(RESIGNATION_REASONS);
+  useEffect(() => {
+    loadResignationReasons()
+      .then((list) => list.length && setReasons(list))
+      .catch(() => {});
+  }, []);
+  const letterError = validateLetter(letter);
+  const valid =
+    reason && description.trim().length > 10 && lwd && lwd >= todayISO() && !letterError;
+
+  const submit = async () => {
+    setSubmitting(true);
+    try {
+      const created = await applyForResignation({
+        reason,
+        requestedLwd: lwd,
+        note: description,
+        letter,
+      });
+      toast.success(`Resignation submitted to ${managerName}`);
+      setConfirm(false);
+      onSubmitted?.(created);
+    } catch (err) {
+      toast.error(resignationErrorMessage(err, "Could not submit resignation"));
+      setConfirm(false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -382,23 +500,20 @@ function ResignationForm({ managerName, onSubmitted }) {
         <CardContent className="space-y-4">
           <div className="border-border bg-muted/30 rounded-lg border px-3 py-2 text-sm">
             <span className="text-muted-foreground">Submitting as</span>{" "}
-            <span className="font-semibold">{me.name}</span>{" "}
-            <span className="text-muted-foreground">
-              · {me.id} · {me.designation} · {me.dept}
-            </span>
+            <span className="font-semibold">{me.name}</span>
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>
-                Reason <span className="text-destructive">*</span>
+                Reason<span className="text-destructive">*</span>
               </Label>
               <Select value={reason} onValueChange={setReason}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select a reason" />
                 </SelectTrigger>
                 <SelectContent>
-                  {RESIGNATION_REASONS.map((r) => (
+                  {reasons.map((r) => (
                     <SelectItem key={r} value={r}>
                       {r}
                     </SelectItem>
@@ -432,12 +547,13 @@ function ResignationForm({ managerName, onSubmitted }) {
           </div>
 
           <div className="space-y-1.5">
-            <Label>Resignation letter (file name)</Label>
+            <Label>Resignation letter (optional · PDF/JPG/PNG, max 5 MB)</Label>
             <Input
-              value={doc}
-              onChange={(e) => setDoc(e.target.value)}
-              placeholder="resignation-letter.pdf"
+              type="file"
+              accept={LETTER_ACCEPT}
+              onChange={(e) => setLetter(e.target.files?.[0] ?? null)}
             />
+            {letterError && <p className="text-destructive text-xs">{letterError}</p>}
           </div>
 
           <Button
@@ -495,24 +611,10 @@ function ResignationForm({ managerName, onSubmitted }) {
             </Button>
             <Button
               className="bg-gradient-emerald shadow-premium text-white"
-              onClick={() => {
-                const req = submitResignation({
-                  employee: me,
-                  reason,
-                  description: description.trim(),
-                  requestedLwd: lwd,
-                  document: doc.trim(),
-                });
-                toast.success(
-                  req.appliedOn === todayISO() && req.reason === reason
-                    ? `Resignation submitted to ${managerName}`
-                    : `You already have resignation ${req.id} in progress.`,
-                );
-                setConfirm(false);
-                onSubmitted?.();
-              }}
+              disabled={submitting}
+              onClick={submit}
             >
-              Submit resignation
+              {submitting ? "Submitting…" : "Submit resignation"}
             </Button>
           </DialogFooter>
         </DialogContent>

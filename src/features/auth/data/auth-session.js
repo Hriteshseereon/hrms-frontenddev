@@ -1480,6 +1480,7 @@ export function signOut() {
     window.localStorage.removeItem("super_admin_refresh_token");
     window.localStorage.removeItem("access_token");
     window.localStorage.removeItem("refresh_token");
+    window.localStorage.removeItem("seereon.scope.company.v1");
     import("./session-store").then((m) =>
       m.useSessionStore.setState({
         accessToken: null,
@@ -1487,6 +1488,8 @@ export function signOut() {
         role: null,
         isAuthenticated: false,
         mustChangePassword: false,
+        scopeCompanyId: "",
+        scopeCompanyName: "",
       }),
     );
   }

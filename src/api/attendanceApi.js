@@ -2,6 +2,38 @@ import axios from "./SuperAdmin_axios";
 
 const BASE = "/attendance";
 
+/** Drops empty filters so the backend only sees the ones the admin actually set. */
+const clean = (params = {}) =>
+  Object.fromEntries(
+    Object.entries(params).filter(([, v]) => v !== "" && v !== null && v !== undefined && v !== "all"),
+  );
+
+/** Admin "Employee Attendance" (all employees in scope): GET /attendance/employee-attendance/* */
+export const employeeAttendanceApi = {
+  daily: async (params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/daily`, { params: clean(params) });
+    return data;
+  },
+  weekly: async (params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/weekly`, { params: clean(params) });
+    return data;
+  },
+  monthly: async (params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/monthly`, { params: clean(params) });
+    return data;
+  },
+  summary: async (params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/summary`, { params: clean(params) });
+    return data;
+  },
+  employee: async (employeeId, params) => {
+    const { data } = await axios.get(`${BASE}/employee-attendance/employees/${employeeId}`, {
+      params: clean(params),
+    });
+    return data;
+  },
+};
+
 export const attendanceApi = {
   // 1. Mark Punch In
   punchIn: async (
@@ -112,6 +144,11 @@ export const attendanceApi = {
     const { data } = await axios.get(`${BASE}/report`, { params: { month } });
     return data;
   },
+  /** GET /attendance/report with the screen filters (dept, office, shift, empId, band, sort, companyId). */
+  getReport: async (params) => {
+    const { data } = await axios.get(`${BASE}/report`, { params: clean(params) });
+    return data;
+  },
   getPayrollRegister: async (month) => {
     const { data } = await axios.get(`${BASE}/register`, {
       params: { month, view: "month" },
@@ -119,23 +156,22 @@ export const attendanceApi = {
     return data;
   },
   getPayrollWorkHours: async (month) => {
-    const { data } = await axios.get(`${BASE}/work-hours`, { params: { month } });
+    // A string is the month alone (lock panel); an object carries the screen filters too.
+    const params = typeof month === "string" ? { month } : clean(month);
+    const { data } = await axios.get(`${BASE}/work-hours`, { params });
     return data;
   },
-  getLocks: async (companyId) => {
-    const { data } = await axios.get(`${BASE}/locks`, {
-      params: companyId ? { companyId } : {},
-    });
+  // The company comes from the login (or X-Company-Id for a Super Admin); no scope is sent here.
+  getLocks: async () => {
+    const { data } = await axios.get(`${BASE}/locks`);
     return data;
   },
-  lockPayrollMonth: async (period, companyId) => {
-    const { data } = await axios.post(`${BASE}/locks`, { period, companyId });
+  lockPayrollMonth: async (period) => {
+    const { data } = await axios.post(`${BASE}/locks`, { period });
     return data;
   },
-  unlockPayrollMonth: async (period, companyId) => {
-    const { data } = await axios.delete(`${BASE}/locks/${encodeURIComponent(period)}`, {
-      params: companyId ? { companyId } : {},
-    });
+  unlockPayrollMonth: async (period) => {
+    const { data } = await axios.delete(`${BASE}/locks/${encodeURIComponent(period)}`);
     return data;
   },
 

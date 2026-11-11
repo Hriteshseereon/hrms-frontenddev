@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
+import { CompanyBanner, CompanySwitcher } from "@/components/layout/CompanySwitcher";
 import { AlertsBell } from "@/components/layout/EmpTopbar";
 import { useEmployeeAvatar } from "@/features/auth/data/emp-session";
 import {
@@ -57,7 +58,8 @@ export function OrgTopbar({ onMenu }) {
   const branchName = useSessionStore((s) => s.branchName);
   const avatar = useEmployeeAvatar();
   return (
-    <header className="border-border bg-card/95 shadow-card glass-topbar pt-safe sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-2 border-b px-3 backdrop-blur md:gap-3 md:px-6">
+    <div className="sticky top-0 z-30">
+    <header className="border-border bg-card/95 shadow-card glass-topbar pt-safe flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-2 border-b px-3 backdrop-blur md:gap-3 md:px-6">
       <button
         onClick={onMenu}
         aria-label="Open menu"
@@ -67,6 +69,8 @@ export function OrgTopbar({ onMenu }) {
       </button>
       <Breadcrumbs />
       <div className="flex-1" />
+
+      <CompanySwitcher />
 
       <GlobalSearch portal="org" />
 
@@ -140,5 +144,7 @@ export function OrgTopbar({ onMenu }) {
         </DropdownMenuContent>
       </DropdownMenu>
     </header>
+    <CompanyBanner />
+    </div>
   );
 }

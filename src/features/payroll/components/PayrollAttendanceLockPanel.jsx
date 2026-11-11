@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { attendanceApi } from "@/api/attendanceApi";
+import { detailText } from "@/api/payrollRunApi";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,6 +41,9 @@ import {
   setPayrollAttendanceSnapshot,
   unlockAttendance,
 } from "@/features/attendance/data/attendance-pattern";
+
+// No company-wide register endpoint is used; day-wise records come from the work-hours rows.
+const NO_REGISTER_ROWS = [];
 
 const listOf = (value) => {
   if (Array.isArray(value)) return value;
@@ -119,7 +123,6 @@ const statusLabel = (value) =>
 
 export function PayrollAttendanceLockPanel({
   period,
-  companyId,
   payrollOrgId,
   canLock,
   actorName,
@@ -131,7 +134,7 @@ export function PayrollAttendanceLockPanel({
   const [lockStatusUnavailable, setLockStatusUnavailable] = useState(false);
   const [reportRows, setReportRows] = useState([]);
   const [workHourRows, setWorkHourRows] = useState([]);
-  const [registerRows, setRegisterRows] = useState([]);
+  const registerRows = NO_REGISTER_ROWS;
   const [locks, setLocks] = useState({});
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(null);
@@ -147,21 +150,34 @@ export function PayrollAttendanceLockPanel({
     setError("");
     setLocks({});
     try {
+      // Day-wise records come from /attendance/work-hours (`days` per employee). /attendance/register is the
+      // signed-in user's own register, not a company one, so it is not used here.
       const results = await Promise.allSettled([
         attendanceApi.getPayrollSummary(period),
         attendanceApi.getPayrollWorkHours(period),
-        attendanceApi.getPayrollRegister(period),
-        attendanceApi.getLocks(companyId),
+        attendanceApi.getLocks(),
       ]);
-      const [reportResult, hoursResult, registerResult, locksResult] = results;
+      const [reportResult, hoursResult, locksResult] = results;
       const failures = results.filter((result) => result.status === "rejected");
       const nextReportRows = reportResult.status === "fulfilled" ? listOf(reportResult.value) : [];
       setReportRows(nextReportRows);
       setPayrollAttendanceSnapshot(period, nextReportRows, employees);
-      if (hoursResult.status === "fulfilled") setWorkHourRows(listOf(hoursResult.value));
+      // /attendance/work-hours gives each employee's `days` plus a `totals` block: lift the totals to the row.
+      if (hoursResult.status === "fulfilled")
+        setWorkHourRows(
+          listOf(hoursResult.value).map((row) =>
+            row?.totals
+              ? {
+                  ...row,
+                  half_days: row.totals.half_days,
+                  late_marks: row.totals.late_days ?? row.totals.late_marks,
+                  overtime_hours: row.totals.overtime_hours,
+                  short_hours: row.totals.short_hours,
+                }
+              : row,
+          ),
+        );
       else setWorkHourRows([]);
-      if (registerResult.status === "fulfilled") setRegisterRows(listOf(registerResult.value));
-      else setRegisterRows([]);
       if (locksResult.status === "rejected") {
         setLockStatusUnavailable(true);
         unlockAttendance(period, payrollOrgId);
@@ -186,18 +202,18 @@ export function PayrollAttendanceLockPanel({
       }
       if (failures.length) {
         const reasons = failures
-          .map((result) => result.reason?.response?.data?.detail ?? result.reason?.message)
+          .map((result) => detailText(result.reason, ""))
           .filter(Boolean);
         setError(reasons.join(" · ") || "Some attendance summaries could not be loaded.");
       }
     } catch (err) {
       setError(
-        err?.response?.data?.detail ?? err?.message ?? "Could not load attendance from the server.",
+        detailText(err, "Could not load attendance from the server."),
       );
     } finally {
       setLoading(false);
     }
-  }, [period, companyId, payrollOrgId, employees]);
+  }, [period, payrollOrgId, employees]);
 
   useEffect(() => {
     loadAttendance();
@@ -229,7 +245,8 @@ export function PayrollAttendanceLockPanel({
       };
       hoursById.set(key, {
         ...records[records.length - 1],
-        days: records,
+        days:
+          records.length === 1 && Array.isArray(records[0].days) ? records[0].days : records,
         half_days: total(["half_days", "halfDays", "half_day_count"], (record) =>
           /half/i.test(String(record.day_type ?? record.dayType ?? "")),
         ),
@@ -260,7 +277,8 @@ export function PayrollAttendanceLockPanel({
         registerRows.find((row) => idOf(row).toLowerCase() === id.toLowerCase()) ??
         registerRows.find(
           (row) => nameOf(row).trim().toLowerCase() === nameOf(employee).trim().toLowerCase(),
-        );
+        ) ??
+        (Array.isArray(hours?.days) && hours.days.length ? hours : undefined);
       return {
         employee,
         report: report?.attendance ?? report?.summary ?? report ?? {},
@@ -280,7 +298,7 @@ export function PayrollAttendanceLockPanel({
   );
   const readyToLock =
     allRows.length > 0 &&
-    allRows.every(({ employee, report, hours, registerEntry }) => {
+    allRows.every(({ report, hours }) => {
       const required = [
         numeric(report, "present", "present_days", "present_count"),
         numeric(report, "absent", "absent_days", "absent_count"),
@@ -291,10 +309,7 @@ export function PayrollAttendanceLockPanel({
         numeric(hours, "overtime_hours", "overtime", "ot_hours"),
         numeric(hours, "short_hours", "shortHours"),
       ];
-      return (
-        required.every((value) => value !== null) &&
-        dayRecords(registerEntry ?? report, registerRows, employee, period).length > 0
-      );
+      return required.every((value) => value !== null);
     });
 
   const totals = useMemo(() => {
@@ -334,7 +349,7 @@ export function PayrollAttendanceLockPanel({
       });
       setPunches(listOf(result));
     } catch (err) {
-      setPunchError(err?.response?.data?.detail ?? err?.message ?? "Could not load daily punches.");
+      setPunchError(detailText(err, "Could not load daily punches."));
     } finally {
       setPunchesLoading(false);
     }
@@ -357,7 +372,7 @@ export function PayrollAttendanceLockPanel({
       await loadAttendance();
     } catch (err) {
       toast.error(
-        err?.response?.data?.detail ?? err?.message ?? "Could not correct the attendance punch.",
+        detailText(err, "Could not correct the attendance punch."),
       );
     } finally {
       setSavingPunch(false);
@@ -382,7 +397,7 @@ export function PayrollAttendanceLockPanel({
       await loadAttendance();
     } catch (err) {
       toast.error(
-        err?.response?.data?.detail ?? err?.message ?? "Could not add the attendance punch.",
+        detailText(err, "Could not add the attendance punch."),
       );
     } finally {
       setSavingPunch(false);
@@ -392,7 +407,7 @@ export function PayrollAttendanceLockPanel({
   const lockMonth = async () => {
     setSavingLock(true);
     try {
-      const response = await attendanceApi.lockPayrollMonth(period, companyId);
+      const response = await attendanceApi.lockPayrollMonth(period);
       lockAttendance(period, actorName, payrollOrgId);
       setLocks((previous) => {
         const record = response?.lock ?? response ?? { by: actorName };
@@ -403,7 +418,23 @@ export function PayrollAttendanceLockPanel({
       toast.success(`${periodName(period)} attendance locked`);
       await loadAttendance();
     } catch (err) {
-      toast.error(err?.response?.data?.detail ?? err?.message ?? "Could not lock attendance.");
+      toast.error(detailText(err, "Could not lock attendance."));
+    } finally {
+      setSavingLock(false);
+    }
+  };
+
+  /** DELETE /attendance/locks/{period}: 409 while a payroll run for the month is in progress, 404 if not locked. */
+  const unlockMonth = async () => {
+    setSavingLock(true);
+    try {
+      await attendanceApi.unlockPayrollMonth(period);
+      unlockAttendance(period, payrollOrgId);
+      toast.success(`${periodName(period)} attendance unlocked`);
+      await loadAttendance();
+    } catch (err) {
+      toast.error(detailText(err, "Could not unlock attendance."));
+      if ([404, 409].includes(err?.response?.status)) await loadAttendance();
     } finally {
       setSavingLock(false);
     }
@@ -464,6 +495,31 @@ export function PayrollAttendanceLockPanel({
                 </AlertDialogContent>
               </AlertDialog>
             )}
+            {canLock && !loading && !lockStatusUnavailable && currentLock && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={savingLock}>
+                    Unlock
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Unlock {periodName(period)} attendance?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Punches and leave for this month become editable again. The server refuses
+                      this while a payroll run for the month is pending approval, approved,
+                      processed or paid.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Keep locked</AlertDialogCancel>
+                    <AlertDialogAction disabled={savingLock} onClick={unlockMonth}>
+                      Unlock
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
             <Button
               variant="outline"
               size="icon"
@@ -495,8 +551,8 @@ export function PayrollAttendanceLockPanel({
 
           {!loading && !locked && allRows.length > 0 && !readyToLock && (
             <div className="border-gold/40 bg-gold/10 rounded-md border p-3 text-xs">
-              Attendance cannot be locked until monthly summary fields and day-wise register records
-              are available for every employee.
+              Attendance cannot be locked until the monthly summary (present, absent, leave, working days,
+              half days, late marks, overtime and short hours) is available for every employee.
             </div>
           )}
 

@@ -15,7 +15,7 @@ import {
 } from "@/features/auth/data/auth-session";
 import { cn } from "@/lib/utils";
 import { ForcePasswordChange } from "@/features/auth/components/ForcePasswordChange";
-import { useRouteModuleOk } from "@/features/auth/data/module-access";
+import { useOrgMode, useRouteModuleOk } from "@/features/auth/data/module-access";
 import { useSessionCutoff } from "@/features/auth/data/session-guard";
 import { applyTenantScope } from "@/features/organization/data/group-data";
 import { applyBranchScope, lastWorkspacePath } from "@/features/organization/data/tenancy";
@@ -47,6 +47,12 @@ function EmpShell({ children }) {
   const accessError = useSessionStore((s) => s.accessError);
   const deniedReason = accessError?.path === pathname ? accessError.reason : null;
   const allowed = !deniedReason && (pathname === "/emp" || (moduleOk && canOpenPath(me.role, pathname)));
+  // A route whose module is not in permitted_modules goes home straight away — no API call, no wait for a 403.
+  const orgMode = useOrgMode();
+  useEffect(() => {
+    const home = orgMode ? "/org/dashboard" : "/emp/dashboard";
+    if (signedIn && hydrated && !moduleOk && pathname !== home) router.replace(home);
+  }, [signedIn, hydrated, moduleOk, orgMode, pathname, router]);
   if (!signedIn) return null;
   // Temporary password: only the change screen renders until it is changed (nothing else may call the API).
   if (mustChangePassword) return <ForcePasswordChange />;

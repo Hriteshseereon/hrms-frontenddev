@@ -82,7 +82,7 @@ import {
 // Company/branch scope dropdown disabled.
 // import { ScopeSwitcher } from "@/components/layout/ScopeSwitcher";
 
-import { useModuleAccess } from "@/features/auth/data/module-access";
+import { useModuleAccess, useOrgMode } from "@/features/auth/data/module-access";
 
 export const ORG_NAV_GROUPS = [
   {
@@ -217,6 +217,20 @@ export const ORG_NAV_GROUPS = [
   },
 ];
 
+/** What a Super Admin sees before picking a company: only the organisation-level screens. */
+export const ORG_MODE_GROUPS = [
+  {
+    label: "Organisation",
+    items: [
+      { to: "/org/dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { to: "/org/groups", label: "Companies", icon: Building },
+      { to: "/org/company-modules", label: "Company Modules", icon: Boxes },
+      { to: "/org/reports", label: "Reports & Analytics", icon: BarChart3 },
+      { to: "/org/organisation-setup", label: "Organisation Profile", icon: Settings },
+    ],
+  },
+];
+
 /**
  * One visibility rule for org navigation.
  */
@@ -265,6 +279,7 @@ export function OrgSidebar({
 
   const me = useCurrentUser();
   const moduleOn = useModuleAccess();
+  const orgMode = useOrgMode();
   const scope = useScope();
   const inScope = useScopeMatch();
 
@@ -300,13 +315,13 @@ export function OrgSidebar({
     ).length,
   };
 
-  const visibleGroups = ORG_NAV_GROUPS.map((g) => ({
+  const visibleGroups = (orgMode ? ORG_MODE_GROUPS : ORG_NAV_GROUPS).map((g) => ({
     ...g,
     readOnly: collective && MODULE_GROUPS.has(g.label),
     items: g.items
       .filter(
         (i) =>
-          orgNavVisible(me.role, i) &&
+          (orgMode || orgNavVisible(me.role, i)) &&
           moduleOn(i.to) &&
           (!i.groupOnly || isGroupTenant),
       )
@@ -432,7 +447,7 @@ export function OrgSidebar({
             )}
           */}
 
-          {!collapsed && collective && (
+          {!collapsed && collective && !orgMode && (
             <div className="border-gold/30 bg-gold/10 text-sidebar-foreground/80 rounded-lg border px-3 py-2 text-[11px] leading-snug">
               Collective view of all companies. Module screens show combined data and are view-only
               — pick a company in the scope chip to add or change records.
