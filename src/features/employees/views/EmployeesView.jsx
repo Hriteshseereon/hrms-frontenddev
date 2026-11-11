@@ -3104,13 +3104,13 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                 </Field>
               </FieldRow>
               <FieldRow>
-                <Field label="Department">
+                <Field label="Department" required>
                   <Select
                     value={deptId || NONE}
                     onValueChange={(val) => setDeptId(val === NONE ? "" : val)}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select department (optional)" />
+                      <SelectValue placeholder="Select department" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value={NONE}>— None —</SelectItem>
@@ -3122,7 +3122,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Designation">
+                <Field label="Designation" required>
                   <Select
                     value={designationId || NONE}
                     onValueChange={(val) => setDesignationId(val === NONE ? "" : val)}
@@ -3130,7 +3130,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                     <SelectTrigger>
                       <SelectValue
                         placeholder={
-                          deptDesignations.length ? "Select designation (optional)" : "No designations created yet"
+                          deptDesignations.length ? "Select designation" : "No designations created yet"
                         }
                       />
                     </SelectTrigger>
