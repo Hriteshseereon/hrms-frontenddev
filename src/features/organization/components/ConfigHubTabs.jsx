@@ -31,6 +31,7 @@ import {
   parseHolidayExcel,
 } from "@/features/organization/components/HolidayBulkUploadDialog";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1905,8 +1906,14 @@ export function LeaveMasterTab({ section = "both" }) {
   }
 
   // DELETE /leave-types/{id}, then drop the row from the local leave master store.
-  async function deleteLeaveType(r) {
-    if (!window.confirm(`Delete leave type "${r.name}"?`)) return;
+  function deleteLeaveType(r) {
+    setLeaveToDelete(r);
+  }
+
+  async function confirmDeleteLeaveType() {
+    const r = leaveToDelete;
+    setLeaveToDelete(null);
+    if (!r) return;
 
     const fromServer = leaveStatus === "ready" && leaveOrder.includes(r.id);
     setDeletingLeaveId(r.id);
@@ -1997,6 +2004,8 @@ export function LeaveMasterTab({ section = "both" }) {
   // GET /attendance/holiday-calendars/{id}: load the latest copy before View / Edit.
   // If the request fails, the card's own data is used so the dialog still opens.
   const [loadingCalId, setLoadingCalId] = useState(null);
+  const [calToDelete, setCalToDelete] = useState(null);
+  const [leaveToDelete, setLeaveToDelete] = useState(null);
   const openCalendar = async (c, mode) => {
     const open = (record) =>
       mode === "edit"
@@ -2020,8 +2029,12 @@ export function LeaveMasterTab({ section = "both" }) {
     }
   };
 
-  const handleDeleteCalendar = async (c) => {
-    if (!window.confirm(`Delete holiday calendar "${c.name}"?`)) return;
+  const handleDeleteCalendar = (c) => setCalToDelete(c);
+
+  const confirmDeleteCalendar = async () => {
+    const c = calToDelete;
+    setCalToDelete(null);
+    if (!c) return;
     try {
       await calApi.remove(c._apiId);
       toast.success(`${c.name} deleted`);
@@ -2033,6 +2046,24 @@ export function LeaveMasterTab({ section = "both" }) {
   };
   return (
     <div className="space-y-4">
+      <ConfirmDeleteDialog
+        open={calToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setCalToDelete(null);
+        }}
+        title="Delete holiday calendar?"
+        description={`Are you sure you want to delete "${calToDelete?.name ?? ""}"? This action cannot be undone.`}
+        onConfirm={confirmDeleteCalendar}
+      />
+      <ConfirmDeleteDialog
+        open={leaveToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setLeaveToDelete(null);
+        }}
+        title="Delete leave type?"
+        description={`Are you sure you want to delete "${leaveToDelete?.name ?? ""}"? This action cannot be undone.`}
+        onConfirm={confirmDeleteLeaveType}
+      />
       {showLeave && <LeavePolicyCard />}
       {showLeave && (
         <Card className="shadow-card">

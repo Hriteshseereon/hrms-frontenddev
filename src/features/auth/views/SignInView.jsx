@@ -229,7 +229,7 @@ function Login() {
             © 2026 Seereon Consulting &amp; IT Services · Seereon HRMS
           </span> */}
           <span>
-  © 2026 WCS Consulting &amp; IT Services · WCS HRMS
+  © 2026 Seereon Consulting &amp; IT Services · WCS HRMS
 </span>
 
           <div className="flex flex-wrap gap-4">

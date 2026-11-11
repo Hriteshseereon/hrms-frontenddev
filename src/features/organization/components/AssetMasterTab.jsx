@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 import {
   Dialog,
   DialogContent,
@@ -58,6 +59,7 @@ export function AssetMasterTab() {
   const assets = useAssets();
   const [edit, setEdit] = useState(null);
   const [view, setView] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   // Server count first (in_register); falls back to the local register for rows without it.
   const countOf = (r) => r.inRegister ?? assets.filter((a) => a.type === r.name).length;
 
@@ -115,7 +117,12 @@ export function AssetMasterTab() {
   };
 
   // DELETE /assets/asset-types/{id}
-  const handleDelete = async (r) => {
+  const handleDelete = (r) => setDeleteTarget(r);
+
+  const confirmDelete = async () => {
+    const r = deleteTarget;
+    setDeleteTarget(null);
+    if (!r) return;
     try {
       await api.remove(r.id);
       toast.success("Asset type removed");
@@ -128,6 +135,15 @@ export function AssetMasterTab() {
 
   return (
     <Card className="shadow-card">
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        title="Delete asset type?"
+        description={`Are you sure you want to delete "${deleteTarget?.name ?? ""}"? This action cannot be undone.`}
+        onConfirm={confirmDelete}
+      />
       <CardContent className="p-5">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div className="flex items-center gap-3">

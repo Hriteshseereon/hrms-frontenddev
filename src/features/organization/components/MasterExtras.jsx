@@ -17,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 
 import {
   Select,
@@ -247,6 +248,7 @@ export function TimesheetFormatsTab() {
   );
 
   const [rows, setRows] = useState([]);
+  const [deleteTarget, setDeleteTarget] = useState(null);
 
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -443,12 +445,15 @@ export function TimesheetFormatsTab() {
 
 
   // DELETE /attendance-and-time/timesheet-formats/{id}
-  async function handleDelete(r) {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${r.name}"?`
-    );
+  function handleDelete(r) {
+    setDeleteTarget(r);
+  }
 
-    if (!confirmed) {
+  async function confirmDelete() {
+    const r = deleteTarget;
+    setDeleteTarget(null);
+
+    if (!r) {
       return;
     }
 
@@ -473,6 +478,15 @@ export function TimesheetFormatsTab() {
 
   return (
     <Card className="shadow-card">
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        title="Delete timesheet format?"
+        description={`Are you sure you want to delete "${deleteTarget?.name ?? ""}"? This action cannot be undone.`}
+        onConfirm={confirmDelete}
+      />
       <CardContent className="p-6">
         <Head
           icon={Clock3}

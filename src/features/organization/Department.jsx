@@ -14,6 +14,7 @@ import {
 
 import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import departmentApi from "@/api/departmentApi";
+import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 
 function getErrorMessage(error) {
   const detail = error?.response?.data?.detail;
@@ -56,7 +57,10 @@ const buttonClass =
 
 /* Icons have no box by default. Hover uses the active organization theme. */
 const actionButtonClass =
-  "inline-flex items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50";
+
+const deleteButtonClass =
+  "inline-flex h-8 w-8 items-center justify-center rounded-md text-red-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/30 disabled:cursor-not-allowed disabled:opacity-50";
 
 /* Theme-aware panel */
 const panelClass =
@@ -127,6 +131,7 @@ export default function Department() {
   const [saving, setSaving] = useState(false);
   const [viewLoading, setViewLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const scope = useCompanyScope();
 
   async function loadDepartments() {
@@ -261,12 +266,14 @@ export default function Department() {
     }
   }
 
-  async function handleDelete(department) {
-    const confirmed = window.confirm(
-      `Are you sure you want to delete "${department.name}"?`
-    );
+  function handleDelete(department) {
+    setDeleteTarget(department);
+  }
 
-    if (!confirmed) return;
+  async function confirmDelete() {
+    const department = deleteTarget;
+    setDeleteTarget(null);
+    if (!department) return;
 
     setDeletingId(department.id);
     setPageError("");
@@ -333,6 +340,15 @@ export default function Department() {
 
   return (
     <div className="min-h-full space-y-6 bg-background p-5 text-foreground transition-colors sm:p-8">
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        title="Delete department?"
+        description={`Are you sure you want to delete "${deleteTarget?.name ?? ""}"? This action cannot be undone.`}
+        onConfirm={confirmDelete}
+      />
       {/* Page Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -527,7 +543,7 @@ export default function Department() {
                           title="Delete"
                           aria-label={`Delete ${department.name}`}
                           disabled={deletingId === department.id}
-                          className={actionButtonClass}
+                          className={deleteButtonClass}
                         >
                           {deletingId === department.id ? (
                             <LoaderCircle
