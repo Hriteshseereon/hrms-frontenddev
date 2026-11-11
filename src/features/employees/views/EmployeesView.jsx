@@ -221,6 +221,13 @@ function validateEmployeeRows(rows) {
     const amountField = employee.wage_type === "Daily" ? "daily_rate" : "ctc";
     if (!Number.isFinite(Number(employee[amountField])) || Number(employee[amountField]) <= 0)
       throw new Error(`Row ${index + 2}: ${amountField} must be a number greater than zero for a ${employee.wage_type} employee.`);
+    // PF / ESI applicability: the template says Yes / No, the server wants true / false (blank = default on).
+    for (const key of ["pf_applicable", "esi_applicable"]) {
+      if (!employee[key]) continue;
+      const answer = employee[key].trim().toLowerCase();
+      if (!["yes", "no", "true", "false", "y", "n"].includes(answer)) throw new Error(`Row ${index + 2}: ${key} must be Yes or No.`);
+      employee[key] = ["yes", "true", "y"].includes(answer) ? "true" : "false";
+    }
     if (employee.uan_number && !/^\d{12}$/.test(employee.uan_number)) throw new Error(`Row ${index + 2}: uan_number must be 12 digits.`);
     if (employee.esic_number && !/^\d{17}$/.test(employee.esic_number)) throw new Error(`Row ${index + 2}: esic_number must be 17 digits.`);
     for (const [key, value] of Object.entries(employee)) {
