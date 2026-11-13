@@ -57,6 +57,7 @@ function CreateRole() {
         const data = await rbacApi.getRoleById(edit);
         if (mounted && data) {
           setExisting(data);
+          setLoading(false);
           return;
         }
       } catch {

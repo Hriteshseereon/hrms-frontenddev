@@ -134,8 +134,9 @@ export function useModuleAccess() {
     if (orgMode) return isOrgModePath(to);
     const key = moduleOfRoute(to);
     if (key && !keys.has(key)) return false;
-    // Payroll also needs a payroll.* permission (admins hold everything in their scope).
-    if (key === "payroll" && !isAdminRole(role))
+    // Organization payroll actions need a payroll.* permission. Employee routes such as
+    // payslips, tax documents and loans are self-service; the enabled company module is enough.
+    if (key === "payroll" && String(to).startsWith("/org/") && !isAdminRole(role))
       return (permissions ?? []).some((p) => String(p).startsWith("payroll."));
     return true;
   };
