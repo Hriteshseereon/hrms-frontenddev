@@ -1782,7 +1782,8 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
   // Default access role: the one whose name starts with "Employee".
   useEffect(() => {
     if (isEdit) return;
-    const def = apiRoles.find((r) => /^employee/i.test(r.name));
+    // A new employee always starts on the built-in Employee Self-Service role; other roles are assigned later.
+    const def = apiRoles.find((r) => /^employee self/i.test(r.name)) ?? apiRoles.find((r) => /^employee/i.test(r.name));
     if (def) setRoleName(def.name);
   }, [apiRoles, isEdit]);
 
@@ -3151,18 +3152,28 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
               </FieldRow>
               <FieldRow>
                 <Field label="Role (Access)">
-                  <Select value={roleName} onValueChange={setRoleName}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Employee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {roleOptions.map((r) => (
-                        <SelectItem key={r} value={r}>
-                          {r}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {isEdit ? (
+                    <Select value={roleName} onValueChange={setRoleName}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Employee" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {roleOptions.map((r) => (
+                          <SelectItem key={r} value={r}>
+                            {r}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <>
+                      <Input value={roleName} readOnly disabled aria-label="Role (Access)" />
+                      <p className="text-muted-foreground text-[11px]">
+                        Every new employee starts as Employee Self-Service. Assign HR Manager, Finance Manager or any other
+                        role afterwards in Roles &amp; Permissions.
+                      </p>
+                    </>
+                  )}
                 </Field>
                 <Field label="Employment Type">
                   <Select name="employmentType" defaultValue={init.employmentType ?? "Full-time"}>
