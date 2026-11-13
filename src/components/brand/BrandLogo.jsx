@@ -18,7 +18,7 @@ export function BrandLogo({ variant = "light" }) {
             isDark ? "text-white" : "text-foreground"
           }`}
         >
-          WCS <span className="text-gold">HRMS</span>
+          The World <span className="text-gold">HRMS</span>
         </div>
 
         <div

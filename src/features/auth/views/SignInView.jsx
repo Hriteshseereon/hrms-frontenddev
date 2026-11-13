@@ -168,7 +168,7 @@ function Login() {
             <Sparkles className="h-3 w-3" /> Seereon HRMS · multi-company HRMS
           </div> */}
           <div className="border-gold/40 text-gold inline-flex items-center gap-2 rounded-full border bg-white/5 px-3 py-1 text-[11px] font-medium tracking-wider uppercase">
-  <Sparkles className="h-3 w-3" /> WCS HRMS · multi-company HRMS
+  <Sparkles className="h-3 w-3" /> The World HRMS · multi-company HRMS
 </div>
 
           <h1 className="text-4xl leading-[1.1] font-bold tracking-tight">
@@ -229,7 +229,7 @@ function Login() {
             © 2026 Seereon Consulting &amp; IT Services · Seereon HRMS
           </span> */}
           <span>
-  © 2026 WCS Consulting &amp; IT Services · WCS HRMS
+  © 2026 Seereon Consulting &amp; IT Services · WCS HRMS
 </span>
 
           <div className="flex flex-wrap gap-4">

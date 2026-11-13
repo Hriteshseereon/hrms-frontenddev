@@ -46,7 +46,7 @@ async function refreshAccessToken() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+        body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
       });
       if (!res.ok) {
         tokenStore.clear();

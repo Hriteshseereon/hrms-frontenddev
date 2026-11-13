@@ -830,7 +830,7 @@ export function PayrollTab() {
                   canProcess ? (
                     <div className="space-y-2">
                       <div className="border-primary/20 bg-primary/5 rounded-lg border p-3 text-xs">
-                        Payroll Admin approved this run. Review the totals, then finalize payroll to lock calculations and generate payslips.
+                        All configured approval levels are complete. Review the totals, then finalize payroll to lock calculations and generate payslips.
                       </div>
                       <Button className="bg-gradient-emerald w-full text-white" onClick={() => act(processRun(run.id, me))}>
                         <Play className="h-4 w-4" /> Finalize payroll &amp; generate payslips
@@ -838,7 +838,7 @@ export function PayrollTab() {
                     </div>
                   ) : (
                     <div className="border-border bg-muted/30 text-muted-foreground rounded-lg border p-3 text-xs">
-                      Approved by Payroll Admin. Waiting for an Accountant or authorized finance user to run final payroll.
+                      Payroll approvals are complete. Waiting for an Accountant or authorized finance user to run final payroll.
                     </div>
                   )
                 )}

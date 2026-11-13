@@ -2,7 +2,7 @@
 // The shells render it instead of the portal, so no dashboard data is fetched until the password is changed:
 // the backend answers 403 "Password change required" to everything but /me, the policy, change-password and logout.
 import { useEffect, useState } from "react";
-import { KeyRound, Loader2 } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "@/lib/router";
 import { Button } from "@/components/ui/button";
@@ -30,21 +30,34 @@ function policyError(p, pw) {
 }
 
 function Field({ id, label, value, onChange, error, autoFocus, autoComplete, disabled }) {
+  const [show, setShow] = useState(false);
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id} className="text-xs font-medium">
         {label}
       </Label>
-      <Input
-        id={id}
-        type="password"
-        value={value}
-        autoFocus={autoFocus}
-        autoComplete={autoComplete}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-10"
-      />
+      <div className="relative">
+        <Input
+          id={id}
+          type={show ? "text" : "password"}
+          value={value}
+          autoFocus={autoFocus}
+          autoComplete={autoComplete}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-10 pr-10"
+        />
+        <button
+          type="button"
+          onClick={() => setShow((s) => !s)}
+          aria-label={show ? "Hide password" : "Show password"}
+          title={show ? "Hide password" : "Show password"}
+          tabIndex={-1}
+          className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-10 items-center justify-center"
+        >
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
       {error && <p className="text-destructive text-xs">{error}</p>}
     </div>
   );
