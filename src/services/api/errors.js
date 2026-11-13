@@ -52,7 +52,11 @@ export function toApiError(status, body) {
     code: body.code,
     title: body.title,
     detail:
-      typeof body.detail === "string" ? body.detail : body.message || body.non_field_errors?.[0],
+      typeof body.detail === "string"
+        ? body.detail
+        : Array.isArray(body.detail)
+          ? body.detail.map((e) => `${e?.loc?.at(-1) || "Request"}: ${e?.msg || "invalid value"}`).join("; ")
+          : body.message || body.non_field_errors?.[0],
     fieldErrors,
     body,
   });
