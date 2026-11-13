@@ -2,6 +2,7 @@ import {
   createLeaveTypeApi,
 } from "@/features/leave/data/leaveMasterAdapters";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { nameError } from "@/lib/name-validation";
 import { companiesOf, useCurrentTenant } from "@/features/organization/data/tenancy";
 import { useOrgs, useActiveOrgId } from "@/features/organization/data/group-data";
 import { captureFiles } from "@/lib/attachments";
@@ -1786,8 +1787,14 @@ function LeavePolicyCard() {
 
 /** Holidays must be named, fall inside the calendar year and not repeat a date (they were saved unchecked). */
 function calendarError(c) {
+  const calName = nameError(c.name, "Calendar name");
+  if (calName) return calName;
   if (c.holidays.some((h) => !h.name.trim() || !h.date))
     return "Every holiday needs a date and a name.";
+  for (const h of c.holidays) {
+    const holName = nameError(h.name, `Holiday name "${h.name.trim()}"`);
+    if (holName) return holName;
+  }
   if (c.holidays.some((h) => !h.date.startsWith(`${c.year}-`)))
     return `All dates must fall in ${c.year}.`;
   if (new Set(c.holidays.map((h) => h.date)).size !== c.holidays.length)
@@ -1933,6 +1940,12 @@ export function LeaveMasterTab({ section = "both" }) {
   // POST for a new leave type, PATCH (changed fields only) for an existing one.
   async function submitLeaveType() {
     if (!edit) return;
+
+    const leaveNameError = nameError(edit.name, "Leave name");
+    if (leaveNameError) {
+      toast.error(leaveNameError);
+      return;
+    }
 
     if (leaveStatus === "loading") {
       toast.error("Leave types are still loading. Please try again in a moment.");
@@ -2468,6 +2481,11 @@ export function LeaveMasterTab({ section = "both" }) {
             </div>
           )}
           <DialogFooter>
+            {edit && nameError(edit.name, "Leave name") && (
+              <span className="text-destructive mr-auto text-xs">
+                {nameError(edit.name, "Leave name")}
+              </span>
+            )}
             {edit &&
               rows.some((r) => r.id !== edit.id && r.code && r.code === edit.code.trim()) && (
                 <span className="text-destructive mr-auto text-xs">
@@ -2478,6 +2496,7 @@ export function LeaveMasterTab({ section = "both" }) {
               className="bg-gradient-emerald text-white"
               disabled={
                 !edit?.name.trim() ||
+                !!nameError(edit?.name, "Leave name") ||
                 !edit?.code.trim() ||
                 rows.some((r) => r.id !== edit.id && r.code === edit.code.trim()) ||
                 [

@@ -26,6 +26,14 @@ const designationApi = {
     );
   },
 
+  // Multipart .xlsx import. Super Admin passes company_id as a query param.
+  importDesignations(file, params) {
+    const formData = new FormData();
+    formData.append("file", file);
+    // No Content-Type header: SuperAdmin_axios lets the browser add the multipart boundary.
+    return SuperAdmin_axios.post("/super-admin/designations/import", formData, { params });
+  },
+
   deleteDesignation(designationId) {
     return SuperAdmin_axios.delete(
       `/super-admin/designations/${designationId}`

@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import {
+  Upload,
+  FileSpreadsheet,
   Plus,
   Search,
   Pencil,
@@ -31,6 +34,51 @@ function getErrorMessage(error) {
   );
 }
 
+// Designation name: letters and single spaces only (no digits / special characters), starting with a capital.
+function validateDesignationName(name) {
+  if (!name) return "Designation name is required.";
+  if (/\d/u.test(name)) return "Designation name cannot contain digits.";
+  if (!/^\p{L}+(?: \p{L}+)*$/u.test(name)) {
+    return "Designation name can only contain letters and single spaces (no special characters).";
+  }
+  const first = name.charAt(0);
+  if (first !== first.toUpperCase() || first === first.toLowerCase()) {
+    return "Designation name must start with an uppercase letter.";
+  }
+  return "";
+}
+
+// The import endpoint returns every row error in `detail`; its shape can vary, so flatten it into lines.
+function getImportErrors(error) {
+  const detail = error?.response?.data?.detail ?? error?.response?.data;
+  const lines = [];
+
+  const walk = (value, prefix = "") => {
+    if (value == null) return;
+    if (typeof value === "string") lines.push(prefix + value);
+    else if (value && typeof value === "object" && value.row != null && value.error) {
+      lines.push(`Row ${value.row}: ${value.column ? `${value.column} — ` : ""}${value.error}`);
+    } else if (value && typeof value === "object" && Array.isArray(value.errors)) {
+      if (typeof value.message === "string") lines.push(value.message);
+      walk(value.errors, prefix);
+    }
+    else if (Array.isArray(value)) value.forEach((v) => walk(v, prefix));
+    else if (typeof value === "object") {
+      if (typeof value.msg === "string") {
+        const where = Array.isArray(value.loc) ? `${value.loc.join(" → ")}: ` : "";
+        lines.push(prefix + where + value.msg);
+      } else {
+        Object.entries(value).forEach(([k, v]) =>
+          typeof v === "object" ? walk(v, prefix) : lines.push(`${prefix}${k}: ${v}`)
+        );
+      }
+    }
+  };
+
+  walk(detail);
+  return lines.length ? lines : [getErrorMessage(error)];
+}
+
 function extractList(data, keys) {
   if (Array.isArray(data)) return data;
 
@@ -56,6 +104,8 @@ function normalizeDesignation(item) {
     name: item.designation_name ?? item.name ?? "",
     department_name: departmentName,
     designation_type: item.designation_type ? String(item.designation_type).toLowerCase() : "",
+    designation_code: item.designation_code ?? "",
+    designation_year: item.designation_year ?? "",
     is_active: item.is_active ?? true,
   };
 }
@@ -67,7 +117,15 @@ const DESIGNATION_TYPES = [
   { value: "ceo", label: "CEO" },
 ];
 
-const typeLabel = (value) => DESIGNATION_TYPES.find((t) => t.value === value)?.label ?? "—";
+const TEMPLATE_HEADERS = [
+  "Designation Name",
+  "Designation Code",
+  "Designation Year",
+  "Department Name",
+  "Designation Type",
+];
+
+const typeLabel =(value) => DESIGNATION_TYPES.find((t) => t.value === value)?.label ?? "—";
 
 function normalizeDepartment(item) {
   return {
@@ -159,33 +217,63 @@ export default function Designation() {
   const [viewLoading, setViewLoading] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [designationCode, setDesignationCode] = useState("");
+  const [designationYear, setDesignationYear] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [total, setTotal] = useState(0);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
+  const bulkInputRef = useRef(null);
   const scope = useCompanyScope();
   const scopeParams = scope.companyId ? { company_id: scope.companyId } : undefined;
   const [error, setError] = useState("");
   const [pageError, setPageError] = useState("");
 
+  // The API is paginated ({ items, page, page_size, total }), so only one page is loaded at a time.
   async function loadDesignations() {
-    const response = await designationApi.getDesignations(scopeParams);
+    const response = await designationApi.getDesignations({
+      ...scopeParams,
+      page,
+      page_size: pageSize,
+      sort_by: "created_at",
+      sort_order: "desc",
+      ...(debouncedSearch ? { search: debouncedSearch } : {}),
+    });
 
+    // Newest first, so a freshly added designation lands at the top, not in the middle.
+    const time = (item) => Date.parse(item.created_at ?? "") || 0;
     const records = extractList(response.data, [
       "items",
       "results",
       "designations",
-    ]).map(normalizeDesignation);
+    ])
+      .map(normalizeDesignation)
+      .sort((x, y) => time(y) - time(x));
 
     setDesignations(records);
+    setTotal(Number(response.data?.total ?? records.length));
   }
 
+  // Departments feed the dropdown and bulk-upload matching, so load every page of them.
   async function loadDepartments() {
-    const response = await departmentApi.getDepartments(scopeParams);
+    const all = [];
+    for (let current = 1; current <= 200; current += 1) {
+      const response = await departmentApi.getDepartments({
+        ...scopeParams,
+        page: current,
+        page_size: 50,
+      });
+      const batch = extractList(response.data, ["items", "results", "departments"]);
+      all.push(...batch);
+      const totalCount = Number(response.data?.total ?? 0);
+      if (!batch.length || !totalCount || all.length >= totalCount) break;
+    }
 
-    const records = extractList(response.data, [
-      "items",
-      "results",
-      "departments",
-    ]).map(normalizeDepartment);
-
-    setDepartments(records);
+    setDepartments(all.map(normalizeDepartment));
   }
 
   async function loadPageData() {
@@ -193,41 +281,37 @@ export default function Designation() {
     setPageError("");
 
     try {
-      const results = await Promise.allSettled([
-        loadDesignations(),
-        loadDepartments(),
-      ]);
-
-      const failures = results.filter(
-        (result) => result.status === "rejected"
-      );
-
-      if (failures.length) {
-        setPageError(
-          failures
-            .map((result) => getErrorMessage(result.reason))
-            .join(" ")
-        );
-      }
+      await loadDesignations();
+    } catch (err) {
+      setPageError(getErrorMessage(err));
     } finally {
       setLoading(false);
     }
   }
 
+  // Debounce the search box so the server is not hit on every keystroke.
   useEffect(() => {
-    loadPageData();
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    setPage(1);
   }, [scope.companyId, scope.isSuper]);
 
-  const filteredDesignations = useMemo(() => {
-    const query = search.trim().toLowerCase();
+  useEffect(() => {
+    loadPageData();
+  }, [scope.companyId, scope.isSuper, page, pageSize, debouncedSearch]);
 
-    return designations.filter((item) => {
-      return (
-        item.name.toLowerCase().includes(query) ||
-        (item.department_name ?? "").toLowerCase().includes(query)
-      );
-    });
-  }, [designations, search]);
+  useEffect(() => {
+    loadDepartments().catch((err) => setPageError(getErrorMessage(err)));
+  }, [scope.companyId, scope.isSuper]);
+
+  // Search runs on the server; the current page is shown as returned.
+  const filteredDesignations = designations;
 
   function getDepartmentName(designation) {
     return designation.department_name || "—";
@@ -237,6 +321,8 @@ export default function Designation() {
     setDesignationName("");
     setDepartmentName("");
     setDesignationType("");
+    setDesignationCode("");
+    setDesignationYear("");
     setEditingId(null);
     setError("");
   }
@@ -257,8 +343,22 @@ export default function Designation() {
 
     const name = designationName.trim();
 
-    if (!name) {
-      setError("Designation name is required.");
+    const nameError = validateDesignationName(name);
+    if (nameError) {
+      setError(nameError);
+      return;
+    }
+
+    const code = designationCode.trim();
+    const year = Number(designationYear);
+
+    if (!code) {
+      setError("Designation code is required.");
+      return;
+    }
+
+    if (designationYear === "" || !Number.isInteger(year) || year < 0 || year > 99) {
+      setError("Designation year must be a whole number of years between 0 and 99.");
       return;
     }
 
@@ -298,6 +398,8 @@ export default function Designation() {
         designation_name: name,
         department: departmentName || null,
         designation_type: designationType || null,
+        designation_code: code,
+        designation_year: year,
         is_active: existing?.is_active ?? true,
         ...(scope.isSuper && editingId === null ? { company_id: scope.companyId } : {}),
       };
@@ -321,6 +423,8 @@ export default function Designation() {
     setDesignationName(designation.name);
     setDepartmentName(designation.department_name || "");
     setDesignationType(designation.designation_type || "");
+    setDesignationCode(designation.designation_code || "");
+    setDesignationYear(designation.designation_year ?? "");
     setEditingId(designation.id);
     setError("");
     setPageError("");
@@ -361,11 +465,9 @@ export default function Designation() {
     try {
       await designationApi.deleteDesignation(designation.id);
 
-      setDesignations((previous) =>
-        previous.filter(
-          (item) => String(item.id) !== String(designation.id)
-        )
-      );
+      // Last row of a page removed: step back a page; otherwise just reload this one.
+      if (designations.length === 1 && page > 1) setPage(page - 1);
+      else await loadPageData();
 
       if (String(editingId) === String(designation.id)) {
         closeForm();
@@ -381,13 +483,39 @@ export default function Designation() {
     }
   }
 
-  function exportCSV() {
+  // Exports every designation (all pages), not just the page on screen.
+  async function exportCSV() {
+    setExporting(true);
+    let all = [];
+    try {
+      for (let current = 1; current <= 500; current += 1) {
+        const response = await designationApi.getDesignations({
+          ...scopeParams,
+          page: current,
+          page_size: 100,
+          ...(debouncedSearch ? { search: debouncedSearch } : {}),
+        });
+        const batch = extractList(response.data, ["items", "results", "designations"]).map(normalizeDesignation);
+        all.push(...batch);
+        const totalCount = Number(response.data?.total ?? 0);
+        if (!batch.length || !totalCount || all.length >= totalCount) break;
+      }
+    } catch (err) {
+      setPageError(getErrorMessage(err));
+      setExporting(false);
+      return;
+    }
+    setExporting(false);
+
     const rows = [
-      ["SL No.", "Designation Name", "Department"],
-      ...filteredDesignations.map((item, index) => [
+      ["SL No.", "Designation Name", "Designation Code", "Designation Year", "Department", "Type"],
+      ...all.map((item, index) => [
         index + 1,
         item.name,
+        item.designation_code,
+        item.designation_year,
         getDepartmentName(item),
+        typeLabel(item.designation_type),
       ]),
     ];
 
@@ -411,6 +539,146 @@ export default function Designation() {
     link.click();
 
     URL.revokeObjectURL(url);
+  }
+
+  // Excel template with headers + a sample row, so users only fill in data.
+  function downloadTemplate() {
+    const sheet = XLSX.utils.aoa_to_sheet([
+      TEMPLATE_HEADERS,
+      ["Software Engineer", "SE-01", 3, "Engineering", "manager"],
+    ]);
+    sheet["!cols"] = TEMPLATE_HEADERS.map(() => ({ wch: 24 }));
+
+    const guide = XLSX.utils.aoa_to_sheet([
+      ["Column", "Required", "Notes"],
+      ["Designation Name", "Yes", "Letters and spaces only, must start with an uppercase letter, max 100 characters"],
+      ["Designation Code", "Yes", "e.g. SE-01"],
+      ["Designation Year", "Yes", "Whole number of years, 0 to 99 (e.g. 3)"],
+      ["Department Name", "No", "Must match an existing department name exactly"],
+      ["Designation Type", "No", "hr, manager or ceo (leave blank for none)"],
+      [],
+      ["Delete the sample row in the Designations sheet before uploading."],
+    ]);
+    guide["!cols"] = [{ wch: 22 }, { wch: 10 }, { wch: 60 }];
+
+    const book = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(book, sheet, "Designations");
+    XLSX.utils.book_append_sheet(book, guide, "Instructions");
+    XLSX.writeFile(book, "designation_template.xlsx");
+  }
+
+  function closeBulk() {
+    if (bulkUploading) return;
+    setShowBulk(false);
+    setBulkResult(null);
+  }
+
+  // Valid rows are imported; invalid rows are reported and skipped.
+  async function handleBulkFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setBulkResult(null);
+
+    if (scope.isSuper && !scope.companyId) {
+      setBulkResult({ created: 0, errors: ["Select a company first — designations belong to one company."] });
+      return;
+    }
+
+    setBulkUploading(true);
+
+    try {
+      const book = XLSX.read(await file.arrayBuffer(), { type: "array" });
+      const rows = XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], {
+        header: 1,
+        defval: "",
+      });
+
+      const [header = [], ...body] = rows;
+      const normalized = header.map((h) => String(h).trim().toLowerCase());
+      const col = (label) => normalized.indexOf(label.toLowerCase());
+      const idx = Object.fromEntries(TEMPLATE_HEADERS.map((h) => [h, col(h)]));
+
+      const missingColumns = TEMPLATE_HEADERS.slice(0, 3).filter((h) => idx[h] === -1);
+      if (missingColumns.length) {
+        setBulkResult({
+          created: 0,
+          errors: [`Missing column(s): ${missingColumns.join(", ")}. Please use the template.`],
+        });
+        return;
+      }
+
+      const cell = (row, name) => (idx[name] === -1 ? "" : String(row[idx[name]] ?? "").trim());
+      const seen = new Set(
+        designations.map((d) => `${d.name.toLowerCase()}|${(d.department_name ?? "").toLowerCase()}`)
+      );
+      const deptByName = new Map(departments.map((d) => [d.name.toLowerCase(), d.name]));
+
+      const errors = [];
+      const valid = [];
+
+      body.forEach((row, i) => {
+        if (row.every((c) => String(c).trim() === "")) return;
+        const line = i + 2;
+
+        const name = cell(row, "Designation Name");
+        const code = cell(row, "Designation Code");
+        const yearText = cell(row, "Designation Year");
+        const deptInput = cell(row, "Department Name");
+        const typeInput = cell(row, "Designation Type").toLowerCase();
+        const year = Number(yearText);
+
+        const nameError = validateDesignationName(name);
+        if (nameError) return errors.push(`Row ${line}: ${nameError.replace("Designation name", "Designation Name")}`);
+        if (name.length > 100) return errors.push(`Row ${line}: Designation Name exceeds 100 characters.`);
+        if (!code) return errors.push(`Row ${line}: Designation Code is required.`);
+        if (yearText === "" || !Number.isInteger(year) || year < 0 || year > 99) {
+          return errors.push(`Row ${line}: Designation Year must be a whole number of years between 0 and 99.`);
+        }
+        const department = deptInput ? deptByName.get(deptInput.toLowerCase()) : "";
+        if (deptInput && !department) {
+          return errors.push(`Row ${line}: Department "${deptInput}" does not exist.`);
+        }
+        if (typeInput && !DESIGNATION_TYPES.some((t) => t.value === typeInput)) {
+          return errors.push(`Row ${line}: Designation Type must be hr, manager or ceo.`);
+        }
+        const key = `${name.toLowerCase()}|${(department || "").toLowerCase()}`;
+        if (seen.has(key)) {
+          return errors.push(`Row ${line}: "${name}" already exists${department ? ` in ${department}` : ""}.`);
+        }
+        seen.add(key);
+        // null (not "") so optional cells are truly empty in the sheet.
+        valid.push([name, code, year, department || null, typeInput || null]);
+      });
+
+      let created = 0;
+
+      if (valid.length) {
+        // Re-pack only the valid rows into a clean .xlsx and send it to the import API.
+        const sheet = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...valid]);
+        const out = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(out, sheet, "Designations");
+        const buffer = XLSX.write(out, { type: "array", bookType: "xlsx" });
+        const cleanFile = new File([buffer], "designations.xlsx", {
+          type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        });
+
+        try {
+          const response = await designationApi.importDesignations(cleanFile, scopeParams);
+          created = response.data?.created ?? valid.length;
+        } catch (err) {
+          errors.push(...getImportErrors(err));
+        }
+      }
+
+      setBulkResult({ created, errors });
+      if (created) await loadPageData();
+    } catch (err) {
+      setBulkResult({ created: 0, errors: [getErrorMessage(err)] });
+    } finally {
+      setBulkUploading(false);
+    }
   }
 
   // Keep the current department selectable even if it is not in the departments list.
@@ -486,7 +754,7 @@ export default function Designation() {
           </p>
 
           <p className="mt-3 text-3xl font-bold">
-            {designations.length}
+            {total}
           </p>
         </div>
       </div>
@@ -518,11 +786,23 @@ export default function Designation() {
             <button
               type="button"
               onClick={exportCSV}
-              disabled={!designations.length}
+              disabled={!total || exporting}
               className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium hover:bg-slate-100 disabled:opacity-50 dark:border-[#293a33] dark:bg-[#101a15] dark:hover:bg-[#14221b]"
             >
-              <Download size={16} />
+              {exporting ? <LoaderCircle size={16} className="animate-spin" /> : <Download size={16} />}
               Export CSV
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setBulkResult(null);
+                setShowBulk(true);
+              }}
+              className={buttonClass}
+            >
+              <Upload size={16} />
+              Bulk Upload
             </button>
           </div>
         </div>
@@ -533,6 +813,8 @@ export default function Designation() {
               <tr>
                 <th className="w-24 px-5 py-4">SL No.</th>
                 <th className="px-5 py-4">Designation Name</th>
+                <th className="px-5 py-4">Code</th>
+                <th className="px-5 py-4">Year</th>
                 <th className="px-5 py-4">Department</th>
                 <th className="px-5 py-4">Type</th>
                 <th className="w-44 px-5 py-4">Actions</th>
@@ -543,7 +825,7 @@ export default function Designation() {
               {loading ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={7}
                     className={`px-5 py-12 text-center ${mutedClass}`}
                   >
                     <LoaderCircle
@@ -560,11 +842,19 @@ export default function Designation() {
                     className="transition hover:bg-emerald-50/60 dark:hover:bg-[#15221b]"
                   >
                     <td className={`px-5 py-4 ${mutedClass}`}>
-                      {index + 1}
+                      {(page - 1) * pageSize + index + 1}
                     </td>
 
                     <td className="px-5 py-4 font-medium">
                       {designation.name}
+                    </td>
+
+                    <td className="px-5 py-4">
+                      {designation.designation_code || "—"}
+                    </td>
+
+                    <td className="px-5 py-4">
+                      {designation.designation_year !== "" ? designation.designation_year : "—"}
                     </td>
 
                     <td className="px-5 py-4">
@@ -624,7 +914,7 @@ export default function Designation() {
               {!loading && filteredDesignations.length === 0 && (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={7}
                     className={`px-5 py-12 text-center ${mutedClass}`}
                   >
                     {pageError
@@ -640,9 +930,48 @@ export default function Designation() {
         </div>
 
         <div
-          className={`border-t border-slate-200 px-5 py-4 text-right text-xs dark:border-[#25332c] ${mutedClass}`}
+          className={`flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 text-xs dark:border-[#25332c] ${mutedClass}`}
         >
-          Showing {filteredDesignations.length} of {designations.length} designations
+          <span>
+            Showing {total ? (page - 1) * pageSize + 1 : 0}–
+            {Math.min(page * pageSize, total)} of {total} designations
+          </span>
+
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2">
+              Rows
+              <select
+                value={pageSize}
+                onChange={(event) => {
+                  setPageSize(Number(event.target.value));
+                  setPage(1);
+                }}
+                className="rounded-lg border border-slate-300 bg-white px-2 py-1 dark:border-[#304238] dark:bg-[#0b1511]"
+              >
+                {[25, 50, 100].map((size) => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </label>
+
+            <button
+              type="button"
+              onClick={() => setPage(page - 1)}
+              disabled={page <= 1 || loading}
+              className="rounded-lg border border-slate-300 px-3 py-1 font-medium hover:bg-slate-100 disabled:opacity-50 dark:border-[#293a33] dark:hover:bg-[#14221b]"
+            >
+              Previous
+            </button>
+            <span>Page {page} of {Math.max(1, Math.ceil(total / pageSize))}</span>
+            <button
+              type="button"
+              onClick={() => setPage(page + 1)}
+              disabled={page >= Math.ceil(total / pageSize) || loading}
+              className="rounded-lg border border-slate-300 px-3 py-1 font-medium hover:bg-slate-100 disabled:opacity-50 dark:border-[#293a33] dark:hover:bg-[#14221b]"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </section>
 
@@ -737,11 +1066,54 @@ export default function Designation() {
                   setDesignationName(event.target.value);
                   setError("");
                 }}
-                placeholder="Enter designation name"
+                placeholder="e.g. Software Engineer"
+                pattern="^\p{L}+( \p{L}+)*$"
+                title="Letters and spaces only, starting with an uppercase letter"
                 className={inputClass}
                 maxLength={100}
                 required
               />
+            </div>
+
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <div>
+                <label htmlFor="designationCode" className="mb-2 block text-sm font-medium">
+                  Designation Code <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="designationCode"
+                  value={designationCode}
+                  onChange={(event) => {
+                    setDesignationCode(event.target.value);
+                    setError("");
+                  }}
+                  placeholder="e.g. SE-01"
+                  className={inputClass}
+                  maxLength={50}
+                  required
+                />
+              </div>
+
+              <div>
+                <label htmlFor="designationYear" className="mb-2 block text-sm font-medium">
+                  Designation Year <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="designationYear"
+                  type="number"
+                  min={0}
+                  max={99}
+                  step={1}
+                  value={designationYear}
+                  onChange={(event) => {
+                    setDesignationYear(event.target.value);
+                    setError("");
+                  }}
+                  placeholder="e.g. 3"
+                  className={inputClass}
+                  required
+                />
+              </div>
             </div>
 
             <div>
@@ -782,6 +1154,89 @@ export default function Designation() {
         </Modal>
       )}
 
+      {showBulk && (
+        <Modal
+          title="Bulk Upload Designations"
+          onClose={closeBulk}
+          footer={
+            <button
+              type="button"
+              onClick={closeBulk}
+              disabled={bulkUploading}
+              className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium hover:bg-slate-100 disabled:opacity-50 dark:border-[#293a33] dark:hover:bg-[#18251e]"
+            >
+              Close
+            </button>
+          }
+        >
+          <div className="space-y-4">
+            <div className="rounded-xl border border-slate-200 p-4 dark:border-[#25332c]">
+              <p className="text-sm font-semibold">1. Get the template</p>
+              <p className={`mt-1 text-sm ${mutedClass}`}>
+                Download the Excel template — headers are ready, just fill in your rows.
+              </p>
+              <button
+                type="button"
+                onClick={downloadTemplate}
+                className="mt-3 inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium hover:bg-slate-100 dark:border-[#293a33] dark:bg-[#101a15] dark:hover:bg-[#14221b]"
+              >
+                <FileSpreadsheet size={16} />
+                Export Template
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 p-4 dark:border-[#25332c]">
+              <p className="text-sm font-semibold">2. Upload the filled Excel</p>
+              <p className={`mt-1 text-sm ${mutedClass}`}>
+                Valid rows are added to the table; invalid rows are skipped and listed below.
+              </p>
+              <input
+                ref={bulkInputRef}
+                type="file"
+                accept=".xlsx"
+                onChange={handleBulkFile}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => bulkInputRef.current?.click()}
+                disabled={bulkUploading}
+                className={`${buttonClass} mt-3`}
+              >
+                {bulkUploading ? (
+                  <LoaderCircle size={16} className="animate-spin" />
+                ) : (
+                  <Upload size={16} />
+                )}
+                {bulkUploading ? "Uploading..." : "Choose Excel file"}
+              </button>
+            </div>
+
+            {bulkResult && (
+              <div className="space-y-2 text-sm">
+                {bulkResult.created > 0 && (
+                  <p className="font-medium text-emerald-700 dark:text-emerald-400">
+                    {bulkResult.created} designation(s) added successfully.
+                  </p>
+                )}
+                {bulkResult.errors.length > 0 && (
+                  <>
+                    <p className="font-medium text-red-600 dark:text-red-400">
+                      {bulkResult.errors.length} problem(s):
+                    </p>
+                    <ul className="max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5 text-red-600 dark:text-red-400">
+                      {bulkResult.errors.map((message, i) => (
+                        <li key={`${i}-${message}`}>{message}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
       {viewLoading && (
         <Modal
           title="Designation Details"
@@ -816,9 +1271,11 @@ export default function Designation() {
             <div>
               <p className={`text-sm ${mutedClass}`}>SL No.</p>
               <p className="mt-1 font-semibold">
-                {filteredDesignations.findIndex(
-                  (item) => String(item.id) === String(viewDesignation.id)
-                ) + 1}
+                {(page - 1) * pageSize +
+                  filteredDesignations.findIndex(
+                    (item) => String(item.id) === String(viewDesignation.id)
+                  ) +
+                  1}
               </p>
             </div>
 
@@ -835,6 +1292,20 @@ export default function Designation() {
               <p className={`text-sm ${mutedClass}`}>Designation Name</p>
               <p className="mt-1 font-semibold">
                 {viewDesignation.name}
+              </p>
+            </div>
+
+            <div>
+              <p className={`text-sm ${mutedClass}`}>Designation Code</p>
+              <p className="mt-1 font-semibold">
+                {viewDesignation.designation_code || "—"}
+              </p>
+            </div>
+
+            <div>
+              <p className={`text-sm ${mutedClass}`}>Designation Year</p>
+              <p className="mt-1 font-semibold">
+                {viewDesignation.designation_year !== "" ? viewDesignation.designation_year : "—"}
               </p>
             </div>
 
