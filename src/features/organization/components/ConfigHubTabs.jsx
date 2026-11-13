@@ -30,6 +30,7 @@ import {
   HOLIDAY_PAY_TYPES,
   parseHolidayExcel,
 } from "@/features/organization/components/HolidayBulkUploadDialog";
+import { LeaveTypeBulkUploadDialog } from "@/features/organization/components/LeaveTypeBulkUploadDialog";
 import { toast } from "sonner";
 import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 import { Card, CardContent } from "@/components/ui/card";
@@ -1807,6 +1808,7 @@ export function LeaveMasterTab({ section = "both" }) {
   const [cal, setCal] = useState(null);
   const [viewCal, setViewCal] = useState(null); // read-only "View" dialog
   const [bulkOpen, setBulkOpen] = useState(false); // Excel / CSV mass upload dialog
+  const [leaveBulkOpen, setLeaveBulkOpen] = useState(false);
   const showLeave = section !== "holidays";
   const showHol = section !== "leave";
 
@@ -2078,9 +2080,12 @@ export function LeaveMasterTab({ section = "both" }) {
                   and encashment rules live here.
                 </div>
               </div>
+              <Button size="sm" variant="outline" className="ml-auto" onClick={() => setLeaveBulkOpen(true)}>
+                <FileSpreadsheet className="h-4 w-4" /> Bulk upload
+              </Button>
               <Button
                 size="sm"
-                className="bg-gradient-emerald ml-auto text-white"
+                className="bg-gradient-emerald text-white"
                 onClick={() =>
                   setEdit({
                     id: `LM-${String(rows.reduce((m, r) => Math.max(m, Number(r.id.replace(/\D/g, "")) || 0), 0) + 1).padStart(2, "0")}`,
@@ -2198,6 +2203,19 @@ export function LeaveMasterTab({ section = "both" }) {
             </div>
           </CardContent>
         </Card>
+      )}
+      {showLeave && (
+        <LeaveTypeBulkUploadDialog
+          open={leaveBulkOpen}
+          onOpenChange={setLeaveBulkOpen}
+          leaveApi={leaveApi}
+          onDone={async () => {
+            const items = await leaveApi.list();
+            items.forEach((item) => saveLeaveMasterRow(item));
+            setLeaveOrder(items.map((item) => item.id));
+            setLeaveStatus("ready");
+          }}
+        />
       )}
       {showHol && (
         <Card className="shadow-card">
