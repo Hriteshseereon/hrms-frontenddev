@@ -46,6 +46,8 @@ import {
   KeyRound,
   SlidersHorizontal,
   Eye,
+  Layers,
+  Tags,
 } from "lucide-react";
 
 import { BrandLogo } from "@/components/brand/BrandLogo";
@@ -146,6 +148,16 @@ export const ORG_NAV_GROUPS = [
         to: "/org/designations",
         label: "Designation",
         icon: FileBadge,
+      },
+      {
+        to: "/org/grades",
+        label: "Department Grade",
+        icon: Layers,
+      },
+      {
+        to: "/org/categories",
+        label: "Category",
+        icon: Tags,
       },
     ],
   },

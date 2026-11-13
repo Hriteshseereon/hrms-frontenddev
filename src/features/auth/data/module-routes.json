@@ -1,5 +1,5 @@
 {
-  "employee": ["/org/employees", "/org/team", "/org/departments", "/org/designations", "/emp/movements"],
+  "employee": ["/org/employees", "/org/team", "/org/departments", "/org/designations", "/org/grades", "/org/categories", "/emp/movements"],
   "attendance": ["/org/attendance", "/emp/attendance", "/emp/holidays"],
   "leave": ["/org/leave", "/emp/leave"],
   "payroll": [
