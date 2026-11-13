@@ -321,6 +321,18 @@ export const PAGES = [
     title: "Designations",
     load: () => import("@/features/organization/Designation"),
   },
+  {
+    path: "/org/grades",
+    shell: "org",
+    title: "Department Grades",
+    load: () => import("@/features/organization/Grade"),
+  },
+  {
+    path: "/org/categories",
+    shell: "org",
+    title: "Categories",
+    load: () => import("@/features/organization/Category"),
+  },
 
   {
     path: "/org/delegation",
