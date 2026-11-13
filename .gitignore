@@ -21,3 +21,9 @@ test-results/
 !.vscode/extensions.json
 !.vscode/settings.json
 .idea/
+
+# spreadsheets (test data, exports) are not pushed; Excel's temp lock files are never pushed
+*.xlsx
+~$*
+# ...except the migration template that ships with the repo
+!migration-templates/WCS_HRMS_Data_Migration_Template.xlsx

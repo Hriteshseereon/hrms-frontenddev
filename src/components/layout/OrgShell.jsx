@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "@/lib/router";
 import { useEffect, useState } from "react";
 import { OrgSidebar } from "@/components/layout/OrgSidebar";
 import { OrgTopbar } from "@/components/layout/OrgTopbar";
-import { AIAssistant } from "@/components/layout/AIAssistant";
+// import { AIAssistant } from "@/components/layout/AIAssistant"; // chatbot disabled for now
 import { AccessDenied } from "@/components/common/AccessDenied";
 import {
   canOpenPath,
@@ -95,7 +95,7 @@ function OrgShell({ children }) {
         </main>
       </div>
       <GlobalCompanyPicker />
-      <AIAssistant />
+      {/* chatbot disabled for now: <AIAssistant /> */}
     </div>
   );
 }

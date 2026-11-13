@@ -29,7 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
-import { AIAssistant } from "@/components/layout/AIAssistant";
+// import { AIAssistant } from "@/components/layout/AIAssistant"; // chatbot disabled for now
 import { cn } from "@/lib/utils";
 import { initials } from "@/features/employees/data/employee-directory";
 import {
@@ -271,7 +271,7 @@ function HelpdeskShell({ children }) {
           <>{children}</>
         </main>
       </div>
-      <AIAssistant />
+      {/* chatbot disabled for now: <AIAssistant /> */}
     </div>
   );
 }

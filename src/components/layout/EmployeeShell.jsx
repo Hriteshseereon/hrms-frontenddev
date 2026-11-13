@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "@/lib/router";
 import { useEffect, useState } from "react";
 import { EmpSidebar } from "@/components/layout/EmpSidebar";
 import { EmpTopbar } from "@/components/layout/EmpTopbar";
-import { AIAssistant } from "@/components/layout/AIAssistant";
+// import { AIAssistant } from "@/components/layout/AIAssistant"; // chatbot disabled for now
 import { AccessDenied } from "@/components/common/AccessDenied";
 import {
   canOpenPath,
@@ -87,7 +87,7 @@ function EmpShell({ children }) {
           )}
         </main>
       </div>
-      <AIAssistant />
+      {/* chatbot disabled for now: <AIAssistant /> */}
     </div>
   );
 }
