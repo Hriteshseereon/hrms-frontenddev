@@ -271,7 +271,7 @@ async function parseEmployeeFile(file) {
   throw new Error("Choose a CSV or Excel .xlsx file.");
 }
 
-async function downloadEmployeeCsvTemplate() {
+async function downloadEmployeeTemplate() {
   let defaultDepartment = null;
   let defaultCompany = null;
   let defaultOrganization = null;
@@ -302,12 +302,16 @@ async function downloadEmployeeCsvTemplate() {
     designation: "", employment_type: "Full-time", probation_months: "3", ctc: "600000", daily_rate: "",
     wage_type: "Monthly", pf_applicable: "true", esi_applicable: "true", bank_account_type: "savings",
   };
-  const csvCell = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-  const csv = `${BULK_EMPLOYEE_COLUMNS.join(",")}\n${BULK_EMPLOYEE_COLUMNS.map((column) => csvCell(sample[column])).join(",")}\n`;
-  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  const link = document.createElement("a");
-  link.href = url; link.download = "employee-onboarding-template.csv"; link.click();
-  URL.revokeObjectURL(url);
+  // Generate an actual Excel workbook so the downloaded template matches the
+  // .xlsx format users can upload. wage_type is included with a valid example.
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    BULK_EMPLOYEE_COLUMNS,
+    BULK_EMPLOYEE_COLUMNS.map((column) => sample[column] ?? ""),
+  ]);
+  worksheet["!cols"] = BULK_EMPLOYEE_COLUMNS.map((column) => ({ wch: Math.max(column.length + 2, 18) }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Employees");
+  XLSX.writeFile(workbook, "employee-onboarding-template.xlsx");
 }
 
 function readableApiError(error) {
@@ -1158,7 +1162,7 @@ function BulkEmployeeUploadDialog({ open, onOpenChange, onCreated, orgName }) {
           <DialogTitle>Bulk upload</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <Button type="button" variant="outline" size="sm" onClick={downloadEmployeeCsvTemplate}><Download className="h-4 w-4" /> Download Template</Button>
+          <Button type="button" variant="outline" size="sm" onClick={downloadEmployeeTemplate}><Download className="h-4 w-4" /> Download Template</Button>
           <div className="rounded-lg border border-dashed p-5">
             <Label htmlFor="employee-bulk-csv">Employee file (CSV or Excel .xlsx)</Label>
             <Input ref={inputRef} id="employee-bulk-csv" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="mt-2" disabled={busy} onChange={(event) => { setFile(event.target.files?.[0] ?? null); setSummary(null); }} />

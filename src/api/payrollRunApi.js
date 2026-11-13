@@ -48,6 +48,7 @@ export const payrollRunApi = {
   sendBack: (id, remark) => axios.post(`${run(id)}/send-back`, { remark }).then(unwrap),
   process: (id) => axios.post(`${run(id)}/process`).then(unwrap),
   pay: (id, reference) => axios.post(`${run(id)}/payment`, { reference }).then(unwrap),
+  publishPayslips: (id) => axios.post(`${run(id)}/payslips/publish`).then(unwrap),
   reopen: (id) => axios.post(`${run(id)}/reopen`).then(unwrap),
 
   downloadRegister: (id, period) =>

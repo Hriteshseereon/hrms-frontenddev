@@ -34,6 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 import { payrollRunApi, detailText } from "@/api/payrollRunApi";
 import { useCan } from "@/features/auth/data/module-access";
+import { useSessionStore } from "@/features/auth/data/session-store";
 
 const STATUS_TONE = {
   Draft: "bg-muted text-muted-foreground border-border",
@@ -334,6 +335,7 @@ function Stepper({ run }) {
 
 function RunDetail({ runId, onBack, onChanged }) {
   const can = useCan();
+  const roles = useSessionStore((s) => s.roles);
   const [run, setRun] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -396,6 +398,10 @@ function RunDetail({ runId, onBack, onChanged }) {
   const canRun = can("payroll.run");
   const canApproveP = can("payroll.approve");
   const canProcess = can("payroll.process");
+  const isHrManager = roles.some((role) =>
+    String(typeof role === "string" ? role : role?.name ?? "").trim().toLowerCase() === "hr manager",
+  );
+  const canPublishPayslips = isHrManager && can("payroll.view");
   const next = run.next_action ?? {};
   const openWarnings = (run.checks ?? []).filter((c) => c.severity === "warning" && c.status === "open").length;
   const t = run.totals ?? {};
@@ -513,6 +519,23 @@ function RunDetail({ runId, onBack, onChanged }) {
             }
           >
             <Check className="h-4 w-4" /> Mark paid
+          </Button>
+        )}
+        {canPublishPayslips && s === "Paid" && (
+          <Button
+            size="sm"
+            disabled={busy || Boolean(run.payslips_published_at ?? run.payslips_published)}
+            onClick={() =>
+              quiet(
+                () => payrollRunApi.publishPayslips(run.id),
+                "Salary slips are available to employees",
+              )
+            }
+          >
+            <Check className="h-4 w-4" />
+            {run.payslips_published_at ?? run.payslips_published
+              ? "Salary slips published"
+              : "Generate salary slips"}
           </Button>
         )}
         {canRun && ["Rejected", "Checks Failed", "Checks Passed"].includes(s) && (

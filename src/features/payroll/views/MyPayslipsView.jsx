@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FileText, Download, Calendar, Eye } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -29,13 +29,100 @@ import {
 } from "@/features/attendance/data/attendance-pattern";
 import { PayslipBreakdown } from "@/features/payroll/components/PayslipBreakdown";
 import { downloadPayslip } from "@/features/payroll/components/PayslipsTab";
+import { useSessionStore } from "@/features/auth/data/session-store";
+import { payrollApi } from "@/services/api/endpoints";
 
 /** Payslips are computed from persisted stores — render them after hydration so the server HTML matches. */
 function EmpPayslipsPage() {
-  return useHydrated() ? (
+  const hydrated = useHydrated();
+  const apiSession = useSessionStore((s) => s.isAuthenticated);
+  if (apiSession) return <ApiEmpPayslips />;
+  return hydrated ? (
     <EmpPayslips />
   ) : (
     <div className="text-muted-foreground p-10 text-center text-sm">Loading payslips…</div>
+  );
+}
+
+function ApiEmpPayslips() {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [busyId, setBusyId] = useState("");
+  useEffect(() => {
+    let active = true;
+    payrollApi
+      .myPayslips()
+      .then((result) => active && setData(result))
+      .catch((e) => active && setError(e?.message || "Could not load your salary slips."));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const rows = data?.payslips ?? data?.slips ?? data?.history ?? data?.items ?? [];
+  const download = async (row) => {
+    const slip = row.slip ?? row;
+    const id = slip.slip_id ?? slip.id ?? row.slip_id ?? row.id;
+    if (!id) {
+      toast.error("This payslip is missing its download reference.");
+      return;
+    }
+    setBusyId(String(id));
+    try {
+      const blob = await payrollApi.myPayslipPdf(id, { responseType: "blob" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `payslip-${slip.period ?? row.period ?? id}.pdf`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(e?.message || "Could not download the salary slip.");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
+          <FileText className="text-primary h-6 w-6" /> My Payslips
+        </h1>
+        <p className="text-muted-foreground mt-1 text-sm">
+          Salary slips published by HR after payroll payment.
+        </p>
+      </div>
+      <Card className="shadow-card">
+        <CardContent className="space-y-3 p-5">
+          {error ? (
+            <p className="text-destructive text-sm">{error}</p>
+          ) : !data ? (
+            <p className="text-muted-foreground text-sm">Loading salary slips…</p>
+          ) : rows.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No salary slips have been published yet.</p>
+          ) : (
+            rows.map((row, index) => {
+              const slip = row.slip ?? row;
+              const id = slip.slip_id ?? slip.id ?? row.slip_id ?? row.id ?? index;
+              const period = slip.period_label ?? slip.period ?? row.period_label ?? row.period ?? "Salary slip";
+              const net = slip.net_pay ?? slip.net ?? row.net_pay ?? row.net;
+              return (
+                <div key={id} className="border-border flex flex-wrap items-center gap-3 rounded-lg border p-3">
+                  <div>
+                    <div className="font-medium">{period}</div>
+                    {net != null && <div className="text-muted-foreground text-xs">Net pay {inr(net)}</div>}
+                  </div>
+                  <Button size="sm" variant="outline" className="ml-auto" disabled={busyId === String(id)} onClick={() => download(row)}>
+                    <Download className="h-4 w-4" /> {busyId === String(id) ? "Preparing…" : "Download slip"}
+                  </Button>
+                </div>
+              );
+            })
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
