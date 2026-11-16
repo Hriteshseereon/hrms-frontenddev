@@ -8,6 +8,7 @@ const INITIAL_STATE = {
   refreshToken: null,
   tokenType: "bearer",
   userId: null, // login user.id (users table ID, NOT employee ID)
+  employeeId: null, // linked employee record ID, used by employee scoped APIs
   email: null,
   fullName: null,
   role: null, // "SUPER_ADMIN" | "COMPANY_ADMIN" | "BRANCH_ADMIN" | "EMPLOYEE"
@@ -107,6 +108,7 @@ export const useSessionStore = create()(
           refreshToken: refresh,
           tokenType: token_type,
           userId: user.id || null, // Note: userId is users-table ID, NOT employee_id
+          employeeId: user.employee_id ?? user.employee?.id ?? loginResponse.employee?.id ?? null,
           email: user.email || null,
           fullName: user.full_name || user.name || null,
           role: user.role || null,
@@ -132,6 +134,9 @@ export const useSessionStore = create()(
         if (!me) return;
         set({
           ...accessFields(me, true),
+          ...(me.employee_id || me.user?.employee_id || me.employee?.id
+            ? { employeeId: me.employee_id ?? me.user?.employee_id ?? me.employee?.id }
+            : {}),
           // GET /me says whether the temporary-password lock still applies (also after a reload).
           ...(typeof (me.must_change_password ?? me.user?.must_change_password) === "boolean"
             ? { mustChangePassword: me.must_change_password ?? me.user.must_change_password }

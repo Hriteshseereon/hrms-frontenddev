@@ -1,3 +1,4 @@
+import { nameError } from "@/lib/name-validation";
 // ---------------------------------------------------------------------------
 // Employee Hiring Lifecycle — auto-provisioning and re-hire.
 //
@@ -81,6 +82,10 @@ export const isWorkEmailTaken = (email) => existingEmails().has(email.trim().toL
 /** Shared validation for every hire entry point (record form, Hire / Re-hire dialog, welcome e-mail). Returns an error or null. */
 export function validateHireInput(input) {
   if (!input.firstName.trim()) return "First name is required.";
+  const firstNameProblem = nameError(input.firstName, "First name");
+  if (firstNameProblem) return firstNameProblem;
+  const lastNameProblem = nameError(input.lastName, "Last name");
+  if (lastNameProblem) return lastNameProblem;
   if (input.personalEmail?.trim() && !/^\S+@\S+\.\S+$/.test(input.personalEmail.trim()))
     return "Personal e-mail is not valid.";
   if (input.workEmail?.trim()) {
