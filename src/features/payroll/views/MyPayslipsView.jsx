@@ -31,6 +31,7 @@ import { PayslipBreakdown } from "@/features/payroll/components/PayslipBreakdown
 import { downloadPayslip } from "@/features/payroll/components/PayslipsTab";
 import { useSessionStore } from "@/features/auth/data/session-store";
 import { payrollApi } from "@/services/api/endpoints";
+import { payrollRunApi } from "@/api/payrollRunApi";
 
 /** Payslips are computed from persisted stores — render them after hydration so the server HTML matches. */
 function EmpPayslipsPage() {
@@ -50,30 +51,55 @@ function ApiEmpPayslips() {
   const [busyId, setBusyId] = useState("");
   useEffect(() => {
     let active = true;
-    payrollApi
-      .myPayslips()
-      .then((result) => active && setData(result))
-      .catch((e) => active && setError(e?.message || "Could not load your salary slips."));
+    const load = () =>
+      payrollApi
+        .myPayslips()
+        .then((result) => {
+          if (!active) return;
+          setData(result);
+          setError("");
+        })
+        .catch((e) => {
+          if (!active) return;
+          // Some backend versions return 404 until HR publishes the first payslip.
+          if (e?.response?.status === 404) {
+            setData({ items: [] });
+            setError("");
+          } else {
+            setError(e?.message || "Could not load your salary slips.");
+          }
+        });
+    load();
+    const refresh = () => load();
+    const timer = window.setInterval(load, 30000);
+    window.addEventListener("focus", refresh);
     return () => {
       active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
     };
   }, []);
 
-  const rows = data?.payslips ?? data?.slips ?? data?.history ?? data?.items ?? [];
+  const rows =
+    data?.payslips ?? data?.slips ?? data?.history ?? data?.items ??
+    data?.data?.payslips ?? data?.data?.slips ?? data?.data?.items ?? [];
+  const employeeId = data?.employee_id ?? data?.employeeId ?? data?.employee?.id ?? data?.employee?.employee_id;
   const download = async (row) => {
     const slip = row.slip ?? row;
-    const id = slip.slip_id ?? slip.id ?? row.slip_id ?? row.id;
-    if (!id) {
-      toast.error("This payslip is missing its download reference.");
+    const runId = slip.run_id ?? slip.runId ?? row.run_id ?? row.runId ?? row.run?.id ?? slip.run?.id;
+    const id = slip.employee_id ?? slip.employeeId ?? row.employee_id ?? row.employeeId ?? employeeId;
+    const busyKey = `${runId ?? ""}:${id ?? ""}`;
+    if (!runId || !id) {
+      toast.error("This payslip is missing its payroll run or employee ID.");
       return;
     }
-    setBusyId(String(id));
+    setBusyId(busyKey);
     try {
-      const blob = await payrollApi.myPayslipPdf(id, { responseType: "blob" });
+      const blob = await payrollRunApi.payslipPdf(runId, id);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `payslip-${slip.period ?? row.period ?? id}.pdf`;
+      link.download = `payslip-${slip.period ?? row.period ?? runId}.pdf`;
       link.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -89,7 +115,7 @@ function ApiEmpPayslips() {
         <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
           <FileText className="text-primary h-6 w-6" /> My Payslips
         </h1>
-        <p className="text-muted-foreground mt-1 text-sm">
+      <p className="text-muted-foreground mt-1 text-sm">
           Salary slips published by HR after payroll payment.
         </p>
       </div>
@@ -113,8 +139,8 @@ function ApiEmpPayslips() {
                     <div className="font-medium">{period}</div>
                     {net != null && <div className="text-muted-foreground text-xs">Net pay {inr(net)}</div>}
                   </div>
-                  <Button size="sm" variant="outline" className="ml-auto" disabled={busyId === String(id)} onClick={() => download(row)}>
-                    <Download className="h-4 w-4" /> {busyId === String(id) ? "Preparing…" : "Download slip"}
+                  <Button size="sm" variant="outline" className="ml-auto" disabled={busyId === `${slip.run_id ?? slip.runId ?? row.run_id ?? row.runId ?? row.run?.id ?? ""}:${slip.employee_id ?? slip.employeeId ?? row.employee_id ?? row.employeeId ?? employeeId ?? ""}`} onClick={() => download(row)}>
+                    <Download className="h-4 w-4" /> {busyId === `${slip.run_id ?? slip.runId ?? row.run_id ?? row.runId ?? row.run?.id ?? ""}:${slip.employee_id ?? slip.employeeId ?? row.employee_id ?? row.employeeId ?? employeeId ?? ""}` ? "Preparing…" : "Download slip"}
                   </Button>
                 </div>
               );

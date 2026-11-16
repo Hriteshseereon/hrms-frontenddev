@@ -48,7 +48,14 @@ export const payrollRunApi = {
   sendBack: (id, remark) => axios.post(`${run(id)}/send-back`, { remark }).then(unwrap),
   process: (id) => axios.post(`${run(id)}/process`).then(unwrap),
   pay: (id, reference) => axios.post(`${run(id)}/payment`, { reference }).then(unwrap),
-  publishPayslips: (id) => axios.post(`${run(id)}/payslips/publish`).then(unwrap),
+  publishPayslips: (id) =>
+    axios.post(`${run(id)}/payslips/publish`, undefined, { responseType: "blob" }).then((response) => response.data),
+  /** Download one generated payslip from its payroll run. */
+  payslipPdf: (runId, employeeId) =>
+    axios.get(`${run(runId)}/payslips/pdf`, {
+      params: { employee_id: employeeId },
+      responseType: "blob",
+    }).then((response) => response.data),
   reopen: (id) => axios.post(`${run(id)}/reopen`).then(unwrap),
 
   downloadRegister: (id, period) =>
