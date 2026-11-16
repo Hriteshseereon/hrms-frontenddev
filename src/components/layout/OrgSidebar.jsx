@@ -159,6 +159,11 @@ export const ORG_NAV_GROUPS = [
         label: "Category",
         icon: Tags,
       },
+      {
+        to: "/org/sections",
+        label: "Department Section",
+        icon: Network,
+      },
     ],
   },
   {
