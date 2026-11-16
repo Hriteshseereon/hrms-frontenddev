@@ -30,7 +30,6 @@ import {
 import { PayslipBreakdown } from "@/features/payroll/components/PayslipBreakdown";
 import { downloadPayslip } from "@/features/payroll/components/PayslipsTab";
 import { useSessionStore } from "@/features/auth/data/session-store";
-import { payrollApi } from "@/services/api/endpoints";
 import { payrollRunApi } from "@/api/payrollRunApi";
 
 /** Payslips are computed from persisted stores — render them after hydration so the server HTML matches. */
@@ -46,29 +45,42 @@ function EmpPayslipsPage() {
 }
 
 function ApiEmpPayslips() {
-  const [data, setData] = useState(null);
+  const employeeId = useSessionStore((s) => s.employeeId);
+  const [months, setMonths] = useState(null);
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const previous = new Date();
+    previous.setDate(1);
+    previous.setMonth(previous.getMonth() - 1);
+    return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
   useEffect(() => {
     let active = true;
-    const load = () =>
-      payrollApi
-        .myPayslips()
+    const load = () => {
+      if (!employeeId) {
+        setMonths([]);
+        setError("Your login is not linked to an employee record, so payslips cannot be loaded.");
+        return;
+      }
+      payrollRunApi
+        .myPayslipMonths(employeeId)
         .then((result) => {
           if (!active) return;
-          setData(result);
+          setMonths(result?.items ?? result?.months ?? result?.data?.items ?? []);
           setError("");
         })
         .catch((e) => {
           if (!active) return;
           // Some backend versions return 404 until HR publishes the first payslip.
           if (e?.response?.status === 404) {
-            setData({ items: [] });
+            setMonths([]);
             setError("");
           } else {
             setError(e?.message || "Could not load your salary slips.");
           }
         });
+    };
     load();
     const refresh = () => load();
     const timer = window.setInterval(load, 30000);
@@ -78,36 +90,22 @@ function ApiEmpPayslips() {
       window.clearInterval(timer);
       window.removeEventListener("focus", refresh);
     };
-  }, []);
+  }, [employeeId]);
 
-  const rows =
-    data?.payslips ?? data?.slips ?? data?.history ?? data?.items ??
-    data?.data?.payslips ?? data?.data?.slips ?? data?.data?.items ?? [];
-  const employeeId = data?.employee_id ?? data?.employeeId ?? data?.employee?.id ?? data?.employee?.employee_id;
-  const download = async (row) => {
-    const slip = row.slip ?? row;
-    const runId = slip.run_id ?? slip.runId ?? row.run_id ?? row.runId ?? row.run?.id ?? slip.run?.id;
-    const id = slip.employee_id ?? slip.employeeId ?? row.employee_id ?? row.employeeId ?? employeeId;
-    const busyKey = `${runId ?? ""}:${id ?? ""}`;
-    if (!runId || !id) {
-      toast.error("This payslip is missing its payroll run or employee ID.");
-      return;
-    }
-    setBusyId(busyKey);
+  const download = async (month) => {
+    setBusyId(month);
     try {
-      const blob = await payrollRunApi.payslipPdf(runId, id);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `payslip-${slip.period ?? row.period ?? runId}.pdf`;
-      link.click();
-      URL.revokeObjectURL(url);
+      await payrollRunApi.downloadMyPayslip(month, employeeId);
     } catch (e) {
       toast.error(e?.message || "Could not download the salary slip.");
     } finally {
       setBusyId("");
     }
   };
+
+  const visibleMonths = selectedMonth
+    ? months?.filter((item) => item.month === selectedMonth)
+    : months;
 
   return (
     <div className="space-y-6">
@@ -121,26 +119,46 @@ function ApiEmpPayslips() {
       </div>
       <Card className="shadow-card">
         <CardContent className="space-y-3 p-5">
+          {months?.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Input
+                  id="payslip-month"
+                  type="month"
+                  value={selectedMonth}
+                  onChange={(event) => setSelectedMonth(event.target.value)}
+                  className="w-[220px]"
+                  aria-label="Choose payslip month"
+                />
+                {selectedMonth && (
+                  <Button size="sm" variant="outline" onClick={() => setSelectedMonth("")}>
+                    All months
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
           {error ? (
             <p className="text-destructive text-sm">{error}</p>
-          ) : !data ? (
+          ) : !months ? (
             <p className="text-muted-foreground text-sm">Loading salary slips…</p>
-          ) : rows.length === 0 ? (
+          ) : months.length === 0 ? (
             <p className="text-muted-foreground text-sm">No salary slips have been published yet.</p>
+          ) : visibleMonths.length === 0 ? (
+            <p className="text-muted-foreground text-sm">No payslip is available for the selected month.</p>
           ) : (
-            rows.map((row, index) => {
-              const slip = row.slip ?? row;
-              const id = slip.slip_id ?? slip.id ?? row.slip_id ?? row.id ?? index;
-              const period = slip.period_label ?? slip.period ?? row.period_label ?? row.period ?? "Salary slip";
-              const net = slip.net_pay ?? slip.net ?? row.net_pay ?? row.net;
+            visibleMonths.map((item) => {
+              const month = item.month;
+              const period = item.label ?? month ?? "Salary slip";
+              const net = item.net_pay;
               return (
-                <div key={id} className="border-border flex flex-wrap items-center gap-3 rounded-lg border p-3">
+                <div key={month} className="border-border flex flex-wrap items-center gap-3 rounded-lg border p-3">
                   <div>
                     <div className="font-medium">{period}</div>
                     {net != null && <div className="text-muted-foreground text-xs">Net pay {inr(net)}</div>}
                   </div>
-                  <Button size="sm" variant="outline" className="ml-auto" disabled={busyId === `${slip.run_id ?? slip.runId ?? row.run_id ?? row.runId ?? row.run?.id ?? ""}:${slip.employee_id ?? slip.employeeId ?? row.employee_id ?? row.employeeId ?? employeeId ?? ""}`} onClick={() => download(row)}>
-                    <Download className="h-4 w-4" /> {busyId === `${slip.run_id ?? slip.runId ?? row.run_id ?? row.runId ?? row.run?.id ?? ""}:${slip.employee_id ?? slip.employeeId ?? row.employee_id ?? row.employeeId ?? employeeId ?? ""}` ? "Preparing…" : "Download slip"}
+                  <Button size="sm" variant="outline" className="ml-auto" disabled={busyId === month} onClick={() => download(month)}>
+                    <Download className="h-4 w-4" /> {busyId === month ? "Preparing…" : "Download slip"}
                   </Button>
                 </div>
               );

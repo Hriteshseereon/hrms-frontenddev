@@ -56,6 +56,13 @@ export const payrollRunApi = {
       params: { employee_id: employeeId },
       responseType: "blob",
     }).then((response) => response.data),
+  myPayslipMonths: (employeeId) =>
+    axios.get("/me/payslips/months", { params: employeeId ? { employee_id: employeeId } : {} }).then(unwrap),
+  downloadMyPayslip: (month, employeeId) =>
+    downloadFile("/me/payslips/download", {
+      month,
+      ...(employeeId ? { employee_id: employeeId } : {}),
+    }, `payslip-${month}.pdf`),
   reopen: (id) => axios.post(`${run(id)}/reopen`).then(unwrap),
 
   downloadRegister: (id, period) =>
