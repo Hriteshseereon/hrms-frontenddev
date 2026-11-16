@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Lock,
   Plus,
@@ -24,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -342,9 +345,13 @@ function RunDetail({ runId, onBack, onChanged }) {
   const [view, setView] = useState("register");
   const [q, setQ] = useState("");
   const [state, setState] = useState("");
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(20);
   const [prompt, setPrompt] = useState(null);
   const [lineId, setLineId] = useState(null);
   const [adjOpen, setAdjOpen] = useState(false);
+  const [downloadingSlipId, setDownloadingSlipId] = useState("");
+  const [publishedRunId, setPublishedRunId] = useState("");
 
   const load = useCallback(
     async (params) => {
@@ -363,6 +370,40 @@ function RunDetail({ runId, onBack, onChanged }) {
     const t = setTimeout(() => load({ q, state }), 250);
     return () => clearTimeout(t);
   }, [load, q, state]);
+
+  const slipsPublished = Boolean(
+    run?.payslips_published_at || run?.payslips_published || publishedRunId === run?.id,
+  );
+  const slipsAvailable = run?.status === "Paid" || slipsPublished;
+  const registerLines = run?.lines ?? [];
+  const totalPages = Math.max(1, Math.ceil(registerLines.length / limit));
+  const pageLines = registerLines.slice((page - 1) * limit, page * limit);
+
+  useEffect(() => {
+    setPage((current) => Math.min(current, totalPages));
+  }, [totalPages]);
+  const downloadEmployeePayslip = async (line) => {
+    if (!run?.id || !line.employee_id) {
+      toast.error("The payroll run or employee ID is missing for this payslip.");
+      return;
+    }
+    setDownloadingSlipId(String(line.employee_id));
+    try {
+      const blob = await payrollRunApi.payslipPdf(run.id, line.employee_id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `payslip-${line.employee_code || line.employee_id}-${run.period}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast.error(detailText(e, `Could not download payslip for ${line.employee_name}.`));
+    } finally {
+      setDownloadingSlipId("");
+    }
+  };
 
   /** Runs an action; its response is the refreshed run. A 409 means the state moved: show it and reload. */
   const act = async (fn, okMessage) => {
@@ -521,29 +562,40 @@ function RunDetail({ runId, onBack, onChanged }) {
             <Check className="h-4 w-4" /> Mark paid
           </Button>
         )}
-        {canPublishPayslips && s === "Paid" && (
-          <Button
-            size="sm"
-            disabled={busy || Boolean(run.payslips_published_at ?? run.payslips_published)}
-            onClick={() =>
-              quiet(
-                () => payrollRunApi.publishPayslips(run.id),
-                "Salary slips are available to employees",
-              )
-            }
-          >
-            <Check className="h-4 w-4" />
-            {run.payslips_published_at ?? run.payslips_published
-              ? "Salary slips published"
-              : "Generate salary slips"}
-          </Button>
-        )}
         {canRun && ["Rejected", "Checks Failed", "Checks Passed"].includes(s) && (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => quiet(() => payrollRunApi.reopen(run.id), "Run reopened as draft")}>
             <RotateCcw className="h-4 w-4" /> Reopen
           </Button>
         )}
         <div className="ml-auto flex gap-2">
+          {canPublishPayslips && s === "Paid" && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy || slipsPublished}
+              onClick={() =>
+                quiet(
+                  async () => {
+                    const blob = await payrollRunApi.publishPayslips(run.id);
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.download = `salary-slips-${run.period}.pdf`;
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    URL.revokeObjectURL(url);
+                    setPublishedRunId(run.id);
+                    return blob;
+                  },
+                  "Salary slips generated and downloaded",
+                )
+              }
+            >
+              <Download className="h-4 w-4" />
+              {slipsPublished ? "Salary slips generated" : "Generate salary slips"}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -585,7 +637,7 @@ function RunDetail({ runId, onBack, onChanged }) {
 
       <Tabs value={view} onValueChange={setView}>
         <TabsList>
-          <TabsTrigger value="register">Register ({run.lines?.length ?? 0})</TabsTrigger>
+              <TabsTrigger value="register">Register ({registerLines.length})</TabsTrigger>
           <TabsTrigger value="checks">
             Checks ({(run.checks ?? []).filter((c) => c.status === "open").length} open)
           </TabsTrigger>
@@ -598,9 +650,9 @@ function RunDetail({ runId, onBack, onChanged }) {
           <CardContent className="flex flex-wrap items-center gap-3 border-b p-3">
             <div className="border-border bg-muted/40 flex min-w-[220px] items-center gap-2 rounded-lg border px-3 py-1.5">
               <Search className="text-muted-foreground h-4 w-4" />
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or code…" className="h-6 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0" />
+              <Input value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder="Search name or code…" className="h-6 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0" />
             </div>
-            <select value={state} onChange={(e) => setState(e.target.value)} className="border-input bg-background h-9 rounded-md border px-2 text-sm">
+            <select value={state} onChange={(e) => { setState(e.target.value); setPage(1); }} className="border-input bg-background h-9 rounded-md border px-2 text-sm">
               <option value="">All rows</option>
               <option value="error">With errors</option>
               <option value="warning">With warnings</option>
@@ -621,17 +673,18 @@ function RunDetail({ runId, onBack, onChanged }) {
                   <th className="p-3 text-right">Gross</th>
                   <th className="p-3 text-right">Deductions</th>
                   <th className="p-3 text-right">Net</th>
+                  <th className="p-3 text-right">Payslip</th>
                 </tr>
               </thead>
               <tbody className="divide-border divide-y">
-                {(run.lines ?? []).length === 0 && (
+                {registerLines.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="text-muted-foreground p-8 text-center">
+                    <td colSpan={11} className="text-muted-foreground p-8 text-center">
                       No rows to show.
                     </td>
                   </tr>
                 )}
-                {(run.lines ?? []).map((l) => (
+                {pageLines.map((l) => (
                   <tr key={l.employee_id} className="hover:bg-muted/40 cursor-pointer" onClick={() => setLineId(l.employee_id)}>
                     <td className="p-3">
                       <div className="font-medium">{l.employee_name}</div>
@@ -646,10 +699,52 @@ function RunDetail({ runId, onBack, onChanged }) {
                     <td className="p-3 text-right tabular-nums">{money(l.earned_gross)}</td>
                     <td className="p-3 text-right tabular-nums">{money(l.total_deductions)}</td>
                     <td className="p-3 text-right font-semibold tabular-nums">{money(l.net)}</td>
+                    <td className="p-3 text-right" onClick={(event) => event.stopPropagation()}>
+                      {slipsAvailable ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={Boolean(downloadingSlipId)}
+                          onClick={() => downloadEmployeePayslip(l)}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          {downloadingSlipId === String(l.employee_id) ? "Preparing…" : "PDF"}
+                        </Button>
+                      ) : (
+                        <span className="text-muted-foreground text-xs">Not published</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-4 py-3 text-xs">
+            <div className="text-muted-foreground">
+              Showing <span className="font-medium text-foreground">{registerLines.length ? (page - 1) * limit + 1 : 0}</span> to{" "}
+              <span className="font-medium text-foreground">{Math.min(page * limit, registerLines.length)}</span> of{" "}
+              <span className="font-medium text-foreground">{registerLines.length}</span> employees
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">Rows per page:</span>
+                <Select value={String(limit)} onValueChange={(value) => { setLimit(Number(value)); setPage(1); }}>
+                  <SelectTrigger className="h-7 w-[68px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[10, 20, 50, 100].map((size) => <SelectItem key={size} value={String(size)}>{size}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} aria-label="Previous page">
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <span className="px-2 font-medium">Page {page} of {totalPages}</span>
+                <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} aria-label="Next page">
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
           </div>
         </Card>
       )}
