@@ -333,6 +333,12 @@ export const PAGES = [
     title: "Categories",
     load: () => import("@/features/organization/Category"),
   },
+  {
+    path: "/org/sections",
+    shell: "org",
+    title: "Department Sections",
+    load: () => import("@/features/organization/Section"),
+  },
 
   {
     path: "/org/delegation",
