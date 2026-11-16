@@ -6,9 +6,11 @@ import { BULK_CHUNK_SIZE } from "@/api/employeeBulkApi";
 export const IMPORT_COLUMNS = [
   "employee_code", "first_name", "last_name", "department", "designation", "branch_name", "shift",
   "attendance_pattern", "grade", "wage_type", "ctc", "daily_rate", "personal_email", "phone", "date_of_birth",
-  "gender", "marital_status", "blood_group", "nationality", "religion", "employment_type", "work_mode",
+  "gender", "marital_status", "blood_group", "nationality", "religion", "father_spouse_name", "place_of_birth",
+  "identification_mark", "employment_type", "work_mode",
   "date_of_joining", "probation_months", "notice_period_days", "skill_category", "pf_applicable",
   "esi_applicable", "pf_member_id", "pt_state", "uan_number", "esic_number", "aadhaar_number", "pan_number",
+  "nominee_name", "pension_scheme", "family_details", "service_book_number",
   "bank_account_holder_name", "bank_name", "bank_account_number", "ifsc_code", "emergency_contact_name",
   "emergency_contact_phone", "current_address", "permanent_address", "qualification", "institution",
   "year_of_passing", "education_score", "manager_employee_code", "hr_partner_employee_code",
@@ -26,6 +28,8 @@ const DIGIT_COLUMNS = new Set([
   "aadhaar_number", "bank_account_number", "uan_number", "esic_number", "phone", "emergency_contact_phone",
 ]);
 const DATE_COLUMNS = new Set(["date_of_birth", "date_of_joining"]);
+/** Free-text ids that Excel may store as a number (service book 100006): always sent as text. */
+const TEXT_COLUMNS = new Set(["service_book_number"]);
 
 export const normalizeHeader = (h) =>
   String(h ?? "").replace(/^\uFEFF/, "").trim().toLowerCase().replace(/[\s-]+/g, "_");
@@ -80,7 +84,8 @@ function normalizeValue(column, value) {
     const word = String(v).trim().toLowerCase();
     return word === "monthly" ? "Monthly" : word === "daily" ? "Daily" : v;
   }
-  if (column === "pan_number" || column === "ifsc_code") return String(v).trim().toUpperCase();
+  if (column === "pan_number" || column === "ifsc_code" || column === "pension_scheme") return String(v).trim().toUpperCase();
+  if (TEXT_COLUMNS.has(column)) return String(v).trim();
   if (column === "employee_code" || column === "manager_employee_code" || column === "hr_partner_employee_code") return String(v).trim();
   return v;
 }

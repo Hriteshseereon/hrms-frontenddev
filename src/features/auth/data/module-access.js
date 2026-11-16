@@ -12,6 +12,13 @@ const ROUTE_MODULE = new Map(
 
 export const moduleOfRoute = (to) => ROUTE_MODULE.get(String(to).split("?")[0]) ?? null;
 
+// Employee-portal pages that belong to a CORE module (always enabled for every company) and whose server routes carry
+// no module guard (`/emp/promotions/*` is in self_service_router: "self-service for every employee"). A role such as
+// Employee Self-Service does not list that module in `permitted_modules`, so without this the page would vanish for
+// every imported employee. The module map itself (module-routes.json) mirrors the backend and is left untouched.
+const OWN_DATA_ROUTES = new Set(["/emp/movements"]);
+const isOwnDataRoute = (to) => OWN_DATA_ROUTES.has(String(to).split("?")[0]);
+
 /** Older sessions stored objects; accept both shapes. */
 const keysOf = (list) =>
   (Array.isArray(list) ? list : []).map((m) => (typeof m === "string" ? m : (m?.key ?? m?.module_key))).filter(Boolean);
@@ -100,6 +107,7 @@ export function useRouteModuleOk(pathname) {
   const loaded = useSessionStore((s) => s.accessLoaded);
   const orgMode = useOrgMode();
   if (orgMode) return isOrgModePath(pathname);
+  if (isOwnDataRoute(pathname)) return true;
   const key = moduleOfRoute(pathname);
   return !apiSession || !loaded || !key || keysOf(permitted).includes(key);
 }
@@ -132,6 +140,7 @@ export function useModuleAccess() {
   return (to) => {
     if (!apiSession) return true; // mock / signed-out preview: no API session to gate by
     if (orgMode) return isOrgModePath(to);
+    if (isOwnDataRoute(to)) return true;
     const key = moduleOfRoute(to);
     if (key && !keys.has(key)) return false;
     // Organization payroll actions need a payroll.* permission. Employee routes such as
