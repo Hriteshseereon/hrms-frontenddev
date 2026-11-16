@@ -27,3 +27,6 @@ test-results/
 ~$*
 # ...except the migration template that ships with the repo
 !migration-templates/WCS_HRMS_Data_Migration_Template.xlsx
+
+# prompts written to be pasted into the backend repo are not pushed
+docs/*_PROMPT.md

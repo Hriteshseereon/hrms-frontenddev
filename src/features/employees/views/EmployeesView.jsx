@@ -763,6 +763,7 @@ const FORM_TO_API = {
   whatsapp: "whatsapp_number",
   emergencyName: "emergency_contact_name",
   emergencyPhone: "emergency_contact_phone",
+  emergencyRelation: "emergency_contact_relationship",
   currentAddress: "current_address",
   permanentAddress: "permanent_address",
   linkedin: "linkedin_url",
@@ -794,16 +795,32 @@ const FORM_TO_API = {
   dailyRate: "daily_rate",
   pfMemberId: "pf_member_id",
   ptState: "pt_state",
+  skillCategory: "skill_category",
+  fatherSpouse: "father_spouse_name",
+  placeOfBirth: "place_of_birth",
+  identificationMark: "identification_mark",
+  nominee: "nominee_name",
+  pensionScheme: "pension_scheme",
+  familyDetails: "family_details",
+  serviceBook: "service_book_number",
 };
+
+// Same four values the backend accepts for `skill_category` (and the bulk-import column).
+const SKILL_CATEGORIES = ["Unskilled", "Semi-skilled", "Skilled", "Highly skilled"];
+// Pension scheme on the workers' register (`pension_scheme`). A select cannot go back to empty by itself,
+// so "None" stands for empty: it is never sent on create, and clears the value ("null") on edit.
+const PENSION_SCHEMES = ["EPS", "NPS"];
+const PENSION_NONE = "none";
 
 const PERSONAL_KEYS = new Set([
   "first_name", "last_name", "date_of_birth", "gender", "marital_status", "blood_group", "nationality",
   "religion", "personal_email", "work_email", "phone", "whatsapp_number", "emergency_contact_name",
-  "emergency_contact_phone", "current_address", "permanent_address", "linkedin_url", "github_url",
-  "twitter_url", "website_url",
+  "emergency_contact_phone", "emergency_contact_relationship", "current_address", "permanent_address", "linkedin_url", "github_url",
+  "twitter_url", "website_url", "father_spouse_name", "place_of_birth", "identification_mark",
 ]);
 const LEGAL_KEYS = new Set([
   "pan_number", "aadhaar_number", "uan_number", "esic_number", "pf_member_id", "driving_license_number", "passport_number",
+  "nominee_name", "pension_scheme", "family_details", "service_book_number",
   "aadhaar_card", "pan_card", "driving_license", "passport", "resume", "offer_letter", "appointment_letter",
   "educational_certificate", "address_proof",
 ]);
@@ -1114,6 +1131,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       whatsapp: e.whatsapp_number ?? "",
       emergencyName: e.emergency_contact_name ?? "",
       emergencyPhone: e.emergency_contact_phone ?? "",
+      emergencyRelation: e.emergency_contact_relationship ?? "",
       currentAddress: e.current_address ?? "",
       permanentAddress: e.permanent_address ?? "",
       linkedin: e.linkedin_url ?? "",
@@ -1149,6 +1167,14 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       esiApplicable: e.esi_applicable !== false,
       pfMemberId: e.pf_member_id ?? "",
       ptState: e.pt_state ?? "",
+      skillCategory: e.skill_category || undefined,
+      fatherSpouse: e.father_spouse_name ?? "",
+      placeOfBirth: e.place_of_birth ?? "",
+      identificationMark: e.identification_mark ?? "",
+      nominee: e.nominee_name ?? "",
+      pensionScheme: e.pension_scheme || undefined,
+      familyDetails: e.family_details ?? "",
+      serviceBook: e.service_book_number ?? "",
       probationMonths: e.probation_months != null ? String(e.probation_months) : undefined,
       payFrequency: e.pay_frequency || undefined,
       grade: e.grade || undefined,
@@ -1444,7 +1470,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       return fail("PAN must be in the format ABCDE1234F", "legal");
     if (uan && uan !== employee?.uan_number && !/^\d{12}$/.test(uan)) return fail("UAN must be 12 digits", "legal");
     const esic = (v.esiNo ?? "").replace(/\s+/g, "");
-    if (esic && esic !== employee?.esic_number && !/^\d{17}$/.test(esic)) return fail("ESIC number must be 17 digits", "legal");
+    if (esic && esic !== employee?.esic_number && !/^\d{10}$/.test(esic)) return fail("ESIC number must be 10 digits", "legal");
     if (acct && acct !== employee?.bank_account_number && !/^\d{9,18}$/.test(acct)) return fail("Account number must be 9–18 digits", "bank");
     if (acct && acct !== (v.accountNo2 ?? "").replace(/\s+/g, ""))
       return fail("The re-entered account number does not match", "bank");
@@ -1529,6 +1555,14 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       esi_applicable: String(esiApplicable),
       pf_member_id: v.pfMemberId?.trim() || undefined,
       pt_state: v.ptState?.trim() || undefined,
+      skill_category: v.skillCategory || undefined,
+      father_spouse_name: v.fatherSpouse?.trim() || undefined,
+      place_of_birth: v.placeOfBirth?.trim() || undefined,
+      identification_mark: v.identificationMark?.trim() || undefined,
+      nominee_name: v.nominee?.trim() || undefined,
+      pension_scheme: v.pensionScheme && v.pensionScheme !== PENSION_NONE ? v.pensionScheme : undefined,
+      family_details: v.familyDetails?.trim() || undefined,
+      service_book_number: v.serviceBook?.trim() || undefined,
       attendance_pattern_id: v.patternId || undefined,
       notice_period_days: v.noticeDays || undefined,
       work_mode: v.workMode || undefined,
@@ -1546,6 +1580,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       whatsapp_number: v.whatsapp || undefined,
       emergency_contact_name: v.emergencyName || undefined,
       emergency_contact_phone: v.emergencyPhone || undefined,
+      emergency_contact_relationship: v.emergencyRelation?.trim() || undefined,
       current_address: v.currentAddress || undefined,
       permanent_address: v.permanentAddress || undefined,
       linkedin_url: v.linkedin || undefined,
@@ -1621,8 +1656,9 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
         "last_name", "personal_email", "phone", "date_of_birth", "gender", "grade", "pan_number",
         "aadhaar_number", "uan_number", "esic_number", "pf_member_id", "pt_state", "bank_name", "bank_account_number", "ifsc_code",
         "marital_status", "blood_group", "nationality", "religion", "whatsapp_number",
-        "emergency_contact_name", "emergency_contact_phone", "current_address", "permanent_address",
-        "linkedin_url", "github_url", "twitter_url", "website_url", "qualification", "institution",
+        "emergency_contact_name", "emergency_contact_phone", "emergency_contact_relationship", "skill_category",
+        "father_spouse_name", "place_of_birth", "identification_mark", "nominee_name", "pension_scheme", "family_details",
+        "service_book_number", "current_address", "permanent_address", "linkedin_url", "github_url", "twitter_url", "website_url", "qualification", "institution",
         "year_of_passing", "education_score", "driving_license_number", "passport_number",
         "bank_account_holder_name", "bank_branch", "bank_account_type", "payment_mode",
         "department", "department_id", "designation", "designation_id", // department / designation are optional
@@ -1643,7 +1679,8 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
           const next = String(apiFields[key] ?? "").trim();
           const prev = String(prevValue(key) ?? "").trim();
           if (next === prev) return;
-          if (next !== "" && prev !== "" && !isNaN(next) && !isNaN(prev) && Number(next) === Number(prev)) return;
+          // "5" and "5.0" are the same amount, but a service book number is text: "0100" is not "100".
+          if (key !== "service_book_number" && next !== "" && prev !== "" && !isNaN(next) && !isNaN(prev) && Number(next) === Number(prev)) return;
           if (next === "") {
             if (clearable.has(key) && prev !== "") formData.append(key, "null");
             return;
@@ -2064,6 +2101,20 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                   <Input name="religion" defaultValue={init.religion} placeholder="—" />
                 </Field>
               </FieldRow>
+              <FieldRow>
+                <Field label="Father / Mother / Spouse Name (Optional)">
+                  <Input name="fatherSpouse" defaultValue={init.fatherSpouse} maxLength={100} placeholder="Full name" />
+                </Field>
+                <Field label="Place of Birth (Optional)">
+                  <Input name="placeOfBirth" defaultValue={init.placeOfBirth} maxLength={100} placeholder="Town / village" />
+                </Field>
+              </FieldRow>
+              <Field label="Mark of Identification (Optional)">
+                <Input
+                  name="identificationMark" defaultValue={init.identificationMark} maxLength={200}
+                  placeholder="e.g. Mole on left cheek"
+                />
+              </Field>
 
               <Separator />
               <SectionTitle icon={Phone} title="Contact" desc="How we reach the employee" />
@@ -2105,6 +2156,11 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                 </Field>
                 <Field label="Emergency Contact Number">
                   <Input name="emergencyPhone" defaultValue={init.emergencyPhone} placeholder="+91 98450 00000" />
+                </Field>
+              </FieldRow>
+              <FieldRow>
+                <Field label="Emergency Contact Relationship">
+                  <Input name="emergencyRelation" defaultValue={init.emergencyRelation} maxLength={50} placeholder="e.g. Spouse, Father" />
                 </Field>
               </FieldRow>
 
@@ -2287,8 +2343,8 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                 <Field label="UAN (12 digits)">
                   <Input name="uan" defaultValue={init.uan} inputMode="numeric" placeholder="1000 1234 5678" />
                 </Field>
-                <Field label="ESI No. (17 digits)">
-                  <Input name="esiNo" defaultValue={init.esiNo} inputMode="numeric" placeholder="—" />
+                <Field label="ESI No. (10 digits)">
+                  <Input name="esiNo" defaultValue={init.esiNo} inputMode="numeric" maxLength={10} placeholder="10 digits" />
                 </Field>
               </FieldRow>
               <FieldRow>
@@ -2296,6 +2352,45 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                   <Input name="pfMemberId" defaultValue={init.pfMemberId} maxLength={30} placeholder="Optional" />
                 </Field>
               </FieldRow>
+
+              <Separator />
+              <SectionTitle
+                icon={Users}
+                title="Nomination, Pension & Service Record"
+                desc="From the statutory workers' register — all optional"
+              />
+              <FieldRow>
+                <Field label="Nominee Name (Optional)">
+                  <Input name="nominee" defaultValue={init.nominee} maxLength={100} placeholder="Full name" />
+                </Field>
+                <Field label="Pension Scheme (Optional)">
+                  <Select name="pensionScheme" defaultValue={init.pensionScheme}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={PENSION_NONE}>None</SelectItem>
+                      {PENSION_SCHEMES.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              </FieldRow>
+              <FieldRow>
+                <Field label="Service Book No. (Optional)">
+                  <Input name="serviceBook" defaultValue={init.serviceBook} maxLength={30} placeholder="Optional" />
+                </Field>
+              </FieldRow>
+              <Field label="Family Details (Optional)">
+                <Textarea
+                  name="familyDetails" defaultValue={init.familyDetails} maxLength={500}
+                  placeholder="Names of family members, separated by ;"
+                  rows={2}
+                />
+              </Field>
 
               <Separator />
               <SectionTitle
@@ -2932,6 +3027,20 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                     placeholder="e.g. Odisha"
                     onChange={(e) => setPtStateDraft(e.target.value.trim())}
                   />
+                </Field>
+                <Field label="Skill category">
+                  <Select name="skillCategory" defaultValue={init.skillCategory}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select skill category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SKILL_CATEGORIES.map((s) => (
+                        <SelectItem key={s} value={s}>
+                          {s}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
               </FieldRow>
 

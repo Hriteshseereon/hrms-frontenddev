@@ -124,11 +124,19 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
   const moduleOn = useModuleAccess();
   const permittedModules = useSessionStore((s) => s.permittedModules);
   const permissions = useSessionStore((s) => s.permissions);
+  const roles = useSessionStore((s) => s.roles);
   const apiSession = useSessionStore((s) => s.isAuthenticated);
+  // The built-in Employee Self-Service role (what every imported / onboarded employee gets) grants own-data screens
+  // in attendance, leave and payroll. Those already live in this portal under /emp, so for an employee whose only
+  // role is Self-Service the org screens of those modules must not be listed as "Assigned modules".
+  const selfServiceOnly =
+    Array.isArray(roles) &&
+    roles.length > 0 &&
+    roles.every((r) => /^employee[\s-]*self[\s-]*service$/i.test(String(r?.name ?? "").trim()));
   // Org screens of the modules this employee's role grants (e.g. an HR role with the Employee module).
   const granted = grantedModules({ permissions });
   const assigned =
-    apiSession && me.role === "Employee"
+    apiSession && me.role === "Employee" && !selfServiceOnly
       ? ORG_NAV_GROUPS.flatMap((g) => g.items).filter((i) => {
           const key = moduleOfRoute(i.to);
           return (

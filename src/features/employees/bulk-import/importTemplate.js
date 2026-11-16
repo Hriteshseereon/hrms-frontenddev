@@ -26,6 +26,8 @@ const SAMPLE = {
   personal_email: "asha.patel@example.com", phone: "9876543210", date_of_birth: "1995-04-12", gender: "Female",
   employment_type: "Full-time", work_mode: "office", date_of_joining: "2026-12-01", pf_applicable: "Yes",
   esi_applicable: "No", aadhaar_number: "123412341234", pan_number: "ABCDE1234F",
+  father_spouse_name: "Ramesh Patel", place_of_birth: "Ahmedabad", identification_mark: "Mole on left cheek",
+  nominee_name: "Meena Patel", pension_scheme: "EPS", family_details: "Meena Patel; Karan Patel", service_book_number: "100006",
   bank_account_holder_name: "Asha Patel", bank_name: "HDFC Bank", bank_account_number: "50100123456789",
   ifsc_code: "HDFC0001234",
 };
@@ -38,6 +40,7 @@ const FIXED_VALUES = {
   skill_category: ["Unskilled", "Semi-skilled", "Skilled", "Highly skilled"],
   pf_applicable: ["Yes", "No"],
   esi_applicable: ["Yes", "No"],
+  pension_scheme: ["EPS", "NPS"],
 };
 
 /** Returns the list of master lists that could not be loaded, so the caller can tell the user. */
@@ -82,6 +85,8 @@ export async function downloadImportTemplate() {
     ["department, designation, branch_name, shift, attendance_pattern and grade must match a name on the 'Valid values' sheet."],
     ["A designation must belong to the department on the same row."],
     ["Dates are yyyy-mm-dd. Format phone, Aadhaar, account numbers, UAN and ESIC columns as Text so Excel keeps every digit."],
+    ["esic_number is the 10-digit ESIC insurance number. pension_scheme is EPS or NPS. service_book_number is optional."],
+    ["father_spouse_name, place_of_birth, identification_mark, nominee_name and family_details are optional free text (family_details: names separated by ;)."],
     ["manager_employee_code and hr_partner_employee_code are employee codes of people in this file or already in the system."],
   ]);
   notes["!cols"] = [{ wch: 130 }];

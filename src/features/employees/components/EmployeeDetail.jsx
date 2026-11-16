@@ -354,10 +354,13 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 ["Blood Group", merged.blood_group || "—"],
                 ["Nationality", merged.nationality || "—"],
                 ["Religion", merged.religion || "—"],
+                ["Father / Mother / Spouse Name", merged.father_spouse_name || "—"],
+                ["Place of Birth", merged.place_of_birth || "—"],
+                ["Mark of Identification", merged.identification_mark || "—"],
                 ["WhatsApp", merged.whatsapp_number || "—"],
                 [
                   "Emergency Contact",
-                  [merged.emergency_contact_name, merged.emergency_contact_phone]
+                  [merged.emergency_contact_name, merged.emergency_contact_relationship, merged.emergency_contact_phone]
                     .filter(Boolean)
                     .join(" · ") || "—",
                 ],
@@ -417,6 +420,7 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 ["Probation", `${probationMonths} months`],
                 ["Salary Grade", grade || "—"],
                 ["Wage Type", wageType || "—"],
+                ["Skill Category", merged.skill_category || "—"],
                 ["Status", status],
               ]}
             />
@@ -438,6 +442,10 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 ],
                 ["UAN Number", merged.uan_number || p.payroll.statutory.uan || "—"],
                 ["ESIC Number", merged.esic_number || p.payroll.statutory.esiNo || "—"],
+                ["Pension Scheme", merged.pension_scheme || "—"],
+                ["Nominee", merged.nominee_name || "—"],
+                ["Family Details", merged.family_details || "—"],
+                ["Service Book No.", merged.service_book_number || "—"],
                 ["Driving License No.", merged.driving_license_number || "—"],
                 ["Passport No.", merged.passport_number || "—"],
                 ["Account Holder", merged.bank_account_holder_name || "—"],
