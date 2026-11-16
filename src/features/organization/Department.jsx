@@ -531,9 +531,13 @@ export default function Department() {
             created += 1;
           } catch (err) {
             const detail = err?.response?.data?.detail;
+            // The import API rejects with detail = { message, errors: [{ row, column, error }] } (an object, not a list).
+            // Each row is sent as its own one-row file, so the API's row number is always 2: show column + reason only.
             const messages = Array.isArray(detail)
               ? detail.map((item) => (typeof item === "string" ? item : item?.msg || JSON.stringify(item)))
-              : [getErrorMessage(err)];
+              : Array.isArray(detail?.errors) && detail.errors.length
+                ? detail.errors.map((e) => `${e.column ? `${e.column} — ` : ""}${e.error ?? e.msg ?? JSON.stringify(e)}`)
+                : [getErrorMessage(err)];
             errors.push(`${label}: ${messages.join("; ")}`);
           }
         }
