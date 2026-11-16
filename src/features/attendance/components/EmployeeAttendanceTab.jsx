@@ -456,7 +456,7 @@ export function EmployeeAttendanceTab() {
             <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
               <tr>
                 <th className="bg-muted/40 sticky left-0 p-3 text-left">Employee</th>
-                <th className="p-3 text-left">Branch</th>
+                {/* Branch column hidden for now: <th className="p-3 text-left">Branch</th> */}
                 {view === "daily" ? (
                   <>
                     <th className="p-3 text-left">Shift</th>
@@ -504,7 +504,7 @@ export function EmployeeAttendanceTab() {
                   <td className="bg-card sticky left-0 p-3 font-medium whitespace-nowrap">
                     {e.employee_display ?? e.employee_name}
                   </td>
-                  <td className="text-muted-foreground p-3 whitespace-nowrap">{e.branch_name ?? "—"}</td>
+                  {/* Branch column hidden for now: <td className="text-muted-foreground p-3 whitespace-nowrap">{e.branch_name ?? "—"}</td> */}
                   {view === "daily" ? (
                     <>
                       <td className="text-muted-foreground p-3 whitespace-nowrap">{e.shift_name ?? "—"}</td>
