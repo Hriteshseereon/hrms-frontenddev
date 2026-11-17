@@ -9,8 +9,11 @@ const Employee_leaveRequest = {
   getTeamMembers: (params) =>
     SuperAdmin_axios.get(`${BASE}/team-members`, { params }),
 
+  // Read-only list of the active leave types the company admin created.
   getLeaveTypes: (params) =>
-    SuperAdmin_axios.get(`${BASE}/leave-types`, { params }),
+    SuperAdmin_axios.get(`${BASE}/leave-types`, {
+      params: { active: true, page: 1, page_size: 100, ...params },
+    }),
 
   create: (formData, params) =>
     SuperAdmin_axios.post(BASE, formData, { params }),
