@@ -221,6 +221,9 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
   const doj = merged.date_of_joining || p.job.dateOfJoining;
   const probationMonths =
     merged.probation_months !== undefined ? merged.probation_months : p.job.probationMonths;
+  const ctcPending = session.isAuthenticated && !apiData;
+  const ctcDisplay = ctcPending ? (loadingBackend ? "Loading…" : "—") : inr(ctc);
+  const monthlyGrossDisplay = ctcPending ? "—" : inr(Math.round(ctc / 12));
 
   const totalEarnings = p.payroll.earnings.reduce((s, e) => s + e.amount, 0);
   const totalDeductions = p.payroll.deductions.reduce((s, e) => s + e.amount, 0);
@@ -298,8 +301,8 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           label="Annual CTC"
-          value={inr(ctc)}
-          sub={`${inr(Math.round(ctc / 12))} monthly gross`}
+          value={ctcDisplay}
+          sub={`${monthlyGrossDisplay} monthly gross`}
           icon={Wallet}
         />
         <Stat
@@ -522,7 +525,7 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 <div className="text-muted-foreground text-[11px] tracking-wider uppercase">
                   Annual CTC
                 </div>
-                <div className="text-lg font-semibold">{inr(ctc)}</div>
+                <div className="text-lg font-semibold">{ctcDisplay}</div>
               </div>
               <div>
                 <div className="text-muted-foreground text-[11px] tracking-wider uppercase">
