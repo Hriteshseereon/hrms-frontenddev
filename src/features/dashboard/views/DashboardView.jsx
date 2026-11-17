@@ -21,7 +21,6 @@ import { usePunches, todayIso } from "@/features/attendance/data/attendance-self
 import { useLeaveApplications } from "@/features/leave/data/leave-engine";
 import { usePayrollRuns, periodLabel } from "@/features/payroll/data/payroll-engine";
 import { useExitRequests } from "@/features/exit/data/exit-data";
-import { useHolidaysLegacy } from "@/features/organization/data/hr-masters";
 import {
   announcementsFor,
   useAnnouncements,
@@ -46,6 +45,7 @@ import { useMemo } from "react";
 import { ProbationWidget } from "@/features/employees/components/ProbationWidget";
 import { CelebrationsWidget } from "@/features/employees/components/CelebrationsWidget";
 import { useScope, useScopeMatch } from "@/features/organization/data/tenancy";
+import { useDashboardSummary } from "@/features/dashboard/data/dashboardAdapter";
 
 function OrgDashboard() {
   // Collective view (a group Super Admin looking at every company) → the group dashboard.
@@ -70,6 +70,17 @@ function EntityDashboard() {
     .sort((a, b) => (a.period < b.period ? 1 : -1));
   const announcements = announcementsFor(useAnnouncements(), orgId);
   const today = todayIso();
+  // Real data for the modules that are already on the backend (employees, attendance, payroll, promotions).
+  // A section stays `null` (card shows "—") while loading or if its API fails; other cards are unaffected.
+  const { data: live } = useDashboardSummary({
+    date: today,
+    allow: {
+      employees: canOpen(me.role, "/org/employees"),
+      attendance: canOpen(me.role, "/org/attendance"),
+      payroll: canOpen(me.role, "/org/finance"),
+      promotions: canOpen(me.role, "/org/employees"),
+    },
+  });
   const ids = useMemo(() => new Set(employees.map((e) => e.id)), [employees]);
   // Tenant scope — every people-linked store is filtered to the active entity's employees / the entity's tickets.
   const exits = useExitRequests().filter((x) => ids.has(x.empId));
@@ -104,7 +115,7 @@ function EntityDashboard() {
   const stats = [
     {
       label: "Total Employees",
-      value: String(employees.length),
+      value: live.employees?.total != null ? String(live.employees.total) : "—",
       delta: `${org?.name ?? ORGANIZATION.name}`,
       icon: Users,
       tone: "emerald",
@@ -112,39 +123,34 @@ function EntityDashboard() {
     },
     {
       label: "Present Today",
-      value: String(presentToday),
-      delta: employees.length
-        ? `${Math.round((presentToday / employees.length) * 100)}% punched in`
-        : "—",
+      value: live.attendance?.present != null ? String(live.attendance.present) : "—",
+      delta: live.attendance?.percent != null ? `${live.attendance.percent}% present` : "—",
       icon: Clock,
       tone: "emerald",
       to: "/org/attendance",
     },
     {
       label: "On Leave Today",
-      value: String(onLeaveToday.length),
-      delta: onLeaveToday.length
-        ? onLeaveToday
-            .map((l) => l.employee.split(" ")[0])
-            .slice(0, 3)
-            .join(", ")
-        : "no approved leave today",
+      value: live.attendance?.onLeave != null ? String(live.attendance.onLeave) : "—",
+      delta: live.attendance?.onLeave ? "on approved leave" : "no approved leave today",
       icon: Plane,
       tone: "gold",
       to: "/org/leave",
     },
     {
       label: "Payroll (latest run)",
-      value: latestRun ? inr(latestRun.totals.net) : "—",
-      delta: latestRun ? `${periodLabel(latestRun.period)} · ${latestRun.status}` : "no runs",
+      value: live.payroll?.latest?.net != null ? inr(live.payroll.latest.net) : "—",
+      delta: live.payroll?.latest
+        ? `${periodLabel(live.payroll.latest.period)} · ${live.payroll.latest.status}`
+        : "no runs",
       icon: DollarSign,
       tone: "emerald",
       to: "/org/finance",
     },
     {
       label: "Promotions in progress",
-      value: String(pendingPromotions),
-      delta: `${promotions.length} in cycle`,
+      value: live.promotions ? String(live.promotions.inProgress) : "—",
+      delta: live.promotions ? `${live.promotions.total} in cycle` : "—",
       icon: TrendingUp,
       tone: "gold",
       to: "/org/employees",
@@ -181,7 +187,7 @@ function EntityDashboard() {
   const candidates = useCandidates();
   const assets = useAssets();
   const filings = useFilings().filter((f) => inScope(f.orgId));
-  const holidays = useHolidaysLegacy();
+  const holidays = live.holidays ?? [];
   const byDept = useMemo(
     () =>
       Object.entries(employees.reduce((m, e) => ((m[e.dept] = (m[e.dept] ?? 0) + 1), m), {}))
@@ -426,7 +432,7 @@ function EntityDashboard() {
 
       <ProbationWidget />
 
-      <CelebrationsWidget />
+      <CelebrationsWidget people={live.employees?.people ?? []} />
 
       {seesPeople && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
