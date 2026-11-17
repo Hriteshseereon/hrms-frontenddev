@@ -121,6 +121,8 @@ const statusLabel = (value) =>
   value ??
   "—";
 
+const EMPLOYEE_PAGE_SIZE = 20;
+
 export function PayrollAttendanceLockPanel({
   period,
   payrollOrgId,
@@ -137,6 +139,7 @@ export function PayrollAttendanceLockPanel({
   const registerRows = NO_REGISTER_ROWS;
   const [locks, setLocks] = useState({});
   const [query, setQuery] = useState("");
+  const [employeePage, setEmployeePage] = useState(1);
   const [selected, setSelected] = useState(null);
   const [punches, setPunches] = useState([]);
   const [punchesLoading, setPunchesLoading] = useState(false);
@@ -296,6 +299,14 @@ export function PayrollAttendanceLockPanel({
       ),
     [allRows, query],
   );
+  const pageCount = Math.max(1, Math.ceil(rows.length / EMPLOYEE_PAGE_SIZE));
+  const visibleRows = rows.slice(
+    (employeePage - 1) * EMPLOYEE_PAGE_SIZE,
+    employeePage * EMPLOYEE_PAGE_SIZE,
+  );
+  useEffect(() => {
+    setEmployeePage((page) => Math.min(page, pageCount));
+  }, [pageCount]);
   const readyToLock =
     allRows.length > 0 &&
     allRows.every(({ report, hours }) => {
@@ -580,7 +591,10 @@ export function PayrollAttendanceLockPanel({
               <Search className="text-muted-foreground h-4 w-4" />
               <Input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setEmployeePage(1);
+                }}
                 placeholder="Search employee or department"
                 className="h-7 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
               />
@@ -620,7 +634,7 @@ export function PayrollAttendanceLockPanel({
                     </td>
                   </tr>
                 ) : (
-                  rows.map((row) => {
+                  visibleRows.map((row) => {
                     const report = row.report;
                     const hours = row.hours;
                     return (
@@ -675,6 +689,35 @@ export function PayrollAttendanceLockPanel({
               </tbody>
             </table>
           </div>
+          {!loading && rows.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t px-4 py-3 text-sm">
+              <span className="text-muted-foreground">
+                Showing {(employeePage - 1) * EMPLOYEE_PAGE_SIZE + 1}–
+                {Math.min(employeePage * EMPLOYEE_PAGE_SIZE, rows.length)} of {rows.length} employees
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={employeePage <= 1}
+                  onClick={() => setEmployeePage((page) => Math.max(1, page - 1))}
+                >
+                  Previous
+                </Button>
+                <span className="text-muted-foreground tabular-nums">
+                  Page {employeePage} of {pageCount}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={employeePage >= pageCount}
+                  onClick={() => setEmployeePage((page) => Math.min(pageCount, page + 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
