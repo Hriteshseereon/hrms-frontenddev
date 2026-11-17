@@ -1,6 +1,7 @@
 import {
   listMyLeaveRequests,
   getMyLeaveRequest,
+  loadEmployeeLeaveTypes,
 } from "@/features/leave/data/leaveRequestAdapter";
 import { useState, useEffect, useCallback } from "react";
 import { Plane, Plus, Paperclip, RefreshCw } from "lucide-react";
@@ -23,6 +24,7 @@ import {
   LOP_TYPE,
 } from "@/features/leave/data/leave-engine";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 import {
   RecordDetailDialog,
   clickableRow,
@@ -32,51 +34,6 @@ import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { LeaveApplyForm } from "@/features/leave/components/LeavePieces";
 import { CompOffCard } from "@/features/attendance/components/CompOffCard";
 import { leaveApi } from "@/api/leaveApi";
-import Employee_leaveRequest from "@/api/leave_request";
-
-// GET /leave-requests/leave-types — the EMPLOYEE leave-type endpoint.
-// (GET /leave-types is Super Admin only and returns 403 "Insufficient role" for employees.)
-// Works whether the backend returns plain names or full leave-type objects;
-// fields the response doesn't include are simply not shown on the cards.
-async function loadEmployeeLeaveTypes() {
-  const res = await Employee_leaveRequest.getLeaveTypes();
-
-  let d = res?.data ?? res;
-  if (d?.data != null) d = d.data;
-
-  const list = Array.isArray(d)
-    ? d
-    : d?.items ?? d?.results ?? d?.leave_types ?? [];
-
-  const seen = new Set();
-
-  return list
-    .map((o) => {
-      if (typeof o === "string") {
-        return { id: o, name: o.trim(), code: "", paid: null, annual: null };
-      }
-
-      const annual = Number(o?.annual_days ?? o?.annual);
-
-      return {
-        id: String(o?.id ?? o?.code ?? o?.name ?? o?.value ?? o?.label ?? ""),
-        name: String(o?.name ?? o?.label ?? o?.value ?? "").trim(),
-        code: o?.code ?? "",
-        paid: o?.paid_leave ?? o?.paid ?? null,
-        annual: Number.isFinite(annual) ? annual : null,
-        creditFrequency: o?.credit ?? o?.credit_frequency ?? "",
-        applicableTo: o?.applicable_to ?? "",
-        active: o?.active,
-      };
-    })
-    .filter((t) => {
-      if (!t.name || t.active === false) return false;
-      const key = t.name.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-}
 
 const tone = {
   Pending: "border-gold/40 bg-gold/10 text-gold",
@@ -105,6 +62,8 @@ function EmpLeave() {
   const [open, setOpen] = useState(false);
   const [openBehalf, setOpenBehalf] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [withdrawTarget, setWithdrawTarget] = useState(null);
+  const [withdrawing, setWithdrawing] = useState(false);
 
   const user = useCurrentUser();
   const isHr = ["HR", "CHRO", "Admin", "SuperAdmin"].includes(user.role);
@@ -154,6 +113,59 @@ function EmpLeave() {
   //     // Keep the existing data if the detail API fails.
   //   }
   // };
+
+  // Withdraw a pending request / cancel an upcoming approved one (after the confirm dialog).
+  const confirmWithdraw = async () => {
+    const r = withdrawTarget;
+    if (!r) return;
+    const verb = r.status === "Pending" ? "Withdraw" : "Cancel";
+    setWithdrawing(true);
+
+    try {
+      // Use the backend id (UUID), not the display code.
+      const res = await leaveApi.cancelApplication(r._apiId ?? r.id);
+      toast.success(res?.message || `Leave request ${r.id} ${verb === "Withdraw" ? "withdrawn" : "cancelled"}.`);
+    } catch (err) {
+      if (r._apiId == null) {
+        // Local demo row only.
+        const res = cancelLeaveApplication(r.id, user);
+        toast[res.ok ? "success" : "error"](res.message);
+      } else {
+        const d = err?.response?.data?.detail;
+        const message =
+          (typeof d === "string" && d) ||
+          err?.userMessage ||
+          `Could not ${verb.toLowerCase()} this request.`;
+        if (err?.response?.status === 400 && /already/i.test(message)) {
+          // Already withdrawn / rejected elsewhere: not an error, just out of date.
+          toast.info(`${message}. Refreshing your requests.`);
+        } else if (err?.response?.status >= 500) {
+          // The cancel endpoint saves the change and then crashes while building its reply
+          // (backend bug), so a 500 can still mean it worked. Check the real status.
+          let nowCancelled = false;
+          try {
+            const fresh = await listMyLeaveRequests();
+            nowCancelled = fresh.some(
+              (x) => x._apiId === r._apiId && x.status === "Cancelled",
+            );
+          } catch {
+            // keep the generic error below
+          }
+          if (nowCancelled) {
+            toast.success(`Leave request ${r.id} ${verb === "Withdraw" ? "withdrawn" : "cancelled"}.`);
+          } else {
+            toast.error(`${message}. Please refresh and check the request status.`);
+          }
+        } else {
+          toast.error(message);
+        }
+      }
+    } finally {
+      setWithdrawing(false);
+      setWithdrawTarget(null);
+      fetchLeaveData();
+    }
+  };
 
   const handleOpenDetail = async (r) => {
   setDetail(r);
@@ -299,7 +311,8 @@ function EmpLeave() {
 
       const used = live ? toNum(live.used) : daysWith("Approved");
       const pending = live ? toNum(live.pending) : daysWith("Pending");
-      const entitled = live ? toNum(live.entitled ?? live.total) : 0;
+      // Shown exactly as the server has it (the server enforces this balance when applying).
+      const entitled = live ? toNum(live.entitled ?? live.total) : toNum(t.annual);
       const available =
         live && live.available != null
           ? toNum(live.available)
@@ -483,7 +496,7 @@ function EmpLeave() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold">{l.type}</span>
                   <Badge variant="outline">
-                    {l.available} available
+                    {l.available >= 999 ? "No limit" : `${l.available} available`}
                   </Badge>
                 </div>
 
@@ -497,7 +510,8 @@ function EmpLeave() {
                 />
 
                 <div className="text-muted-foreground text-xs">
-                  {l.used} used · {l.pending} on hold · {l.entitled} entitled
+                  {l.used} used · {l.pending} on hold ·{" "}
+                  {l.available >= 999 ? "no limit" : `${l.entitled} entitled`}
                 </div>
               </CardContent>
             </Card>
@@ -575,34 +589,7 @@ function EmpLeave() {
                         size="sm"
                         variant="outline"
                         className="text-destructive"
-                        onClick={async () => {
-                          const verb =
-                            r.status === "Pending" ? "Withdraw" : "Cancel";
-
-                          if (
-                            !window.confirm(
-                              `${verb} leave request ${r.id}?`,
-                            )
-                          ) {
-                            return;
-                          }
-
-                          try {
-                            const res = await leaveApi.cancelApplication(r.id);
-
-                            toast.success(
-                              res?.message || `${verb} successful`,
-                            );
-
-                            fetchLeaveData();
-                          } catch (err) {
-                            const res = cancelLeaveApplication(r.id, user);
-
-                            toast[res.ok ? "success" : "error"](res.message);
-
-                            fetchLeaveData();
-                          }
-                        }}
+                        onClick={() => setWithdrawTarget(r)}
                       >
                         {r.status === "Pending" ? "Withdraw" : "Cancel"}
                       </Button>
@@ -627,6 +614,25 @@ function EmpLeave() {
           </table>
         </div>
       </Card>
+
+      <ConfirmDeleteDialog
+        open={withdrawTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !withdrawing) setWithdrawTarget(null);
+        }}
+        title={withdrawTarget?.status === "Pending" ? "Withdraw leave request?" : "Cancel leave request?"}
+        description={
+          withdrawTarget
+            ? `${withdrawTarget.leaveType} · ${withdrawTarget.from} → ${withdrawTarget.to} (${withdrawTarget.days} day${Number(withdrawTarget.days) === 1 ? "" : "s"}). ${
+                withdrawTarget.status === "Pending"
+                  ? "It will be withdrawn before anyone approves it and the days return to your balance."
+                  : "The approved leave will be cancelled and the days return to your balance."
+              }`
+            : ""
+        }
+        confirmLabel={withdrawTarget?.status === "Pending" ? "Withdraw" : "Cancel request"}
+        onConfirm={confirmWithdraw}
+      />
 
       {/* Existing leave request detail dialog — unchanged. */}
       {detail && (

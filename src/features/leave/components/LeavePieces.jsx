@@ -1,13 +1,12 @@
 // Shared leave pieces: the detailed apply form (employee self-service / HR on behalf from My Workspace) and the
 // employee leave side-sheet (balances, ledger, approvals trail) used by Balance Leave and the Employees list.
 import {
-  loadLeaveTypeOptions,
+  loadEmployeeLeaveTypes,
   loadReasonCategories,
   loadTeamMembers,
   applyForLeave as submitEmployeeLeaveRequest,
 } from "@/features/leave/data/leaveRequestAdapter";
 
-import { getEmployeeLeaveTypes } from "@/features/leave/data/employeeLeaveTypeAdapter";
 import { useEffect, useMemo, useState } from "react";
 import { leaveApi } from "@/api/leaveApi";
 import { AttachmentChips } from "@/components/common/AttachmentViewer";
@@ -164,7 +163,7 @@ const statusTone = (s) =>
 
 //   const submit = async () => {
 //     if (!check.ok) return toast.error(check.errors[0] ?? "Check the application.");
-//     if (needsDoc) return toast.error("Attach a medical certificate for sick leave beyond 2 days.");
+//     if (needsDoc) return toast.error(`Attach a supporting document for ${leaveType} beyond ${attachAfter} day(s).`);
 //     if (!emp) return toast.error("Choose the employee.");
 //     const e = emp;
 
@@ -379,7 +378,7 @@ const statusTone = (s) =>
 //           label="Supporting documents"
 //           hint={
 //             needsDoc
-//               ? "Medical certificate required for sick leave beyond 2 days"
+//               ? `Supporting document required for ${leaveType} beyond ${attachAfter} day(s)`
 //               : "Medical certificate, invitation, travel proof…"
 //           }
 //           className="sm:col-span-3"
@@ -753,7 +752,7 @@ const statusTone = (s) =>
 //     if (!valid) {
 //       if (needsDoc) {
 //         return toast.error(
-//           "Attach a medical certificate for sick leave beyond 2 days."
+//           `Attach a supporting document for ${leaveType} beyond ${attachAfter} day(s).`
 //         );
 //       }
 
@@ -1051,7 +1050,7 @@ const statusTone = (s) =>
 //           label="Supporting documents"
 //           hint={
 //             needsDoc
-//               ? "Medical certificate required for sick leave beyond 2 days"
+//               ? `Supporting document required for ${leaveType} beyond ${attachAfter} day(s)`
 //               : "PDF/JPG/JPEG/PNG · Maximum 5 MB each · Maximum 10 files"
 //           }
 //           className="sm:col-span-3"
@@ -1202,7 +1201,6 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
   const me = useCurrentUser();
 
   const [allRows] = useLeaveApplications();
-  const [leaveTypes] = useLeaveTypes();
 
   const allDir = useDirectory();
   const scoped = useScopedEmployees();
@@ -1234,6 +1232,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
 
   // Dropdown data.
   const [apiLeaveTypes, setApiLeaveTypes] = useState([]);
+  const [apiLeaveTypeObjs, setApiLeaveTypeObjs] = useState([]);
   const [reasonCategories, setReasonCategories] = useState([]);
   const [handoverMembers, setHandoverMembers] = useState([]);
   const [dropdownLoading, setDropdownLoading] = useState(true);
@@ -1263,7 +1262,11 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
         ),
       );
 
-      const entitled = b ? num(b.entitled ?? b.total ?? b.credited) : 0;
+      // No balance line yet: use the annual entitlement the admin configured.
+      const annual = num(
+        apiLeaveTypeObjs.find((t) => t.name === name)?.annual,
+      );
+      const entitled = b ? num(b.entitled ?? b.total ?? b.credited) : annual;
       const used = b ? num(b.used) : 0;
       const pending = b ? num(b.pending) : 0;
       const available =
@@ -1273,7 +1276,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
 
       return { type: name, entitled, used, pending, available };
     });
-  }, [apiLeaveTypes, liveBalances]);
+  }, [apiLeaveTypes, apiLeaveTypeObjs, liveBalances]);
 
   // Load leave types from Super Admin's GET /leave-types API.
   // Reason categories and team members continue using the existing
@@ -1292,7 +1295,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
       //     loadTeamMembers(),
       //   ]);
       const [typesRes, reasonsRes, membersRes, balRes] = await Promise.allSettled([
-  loadLeaveTypeOptions(),
+  loadEmployeeLeaveTypes(),
   loadReasonCategories(),
   loadTeamMembers(),
   // Existing balances API (same one My Leave uses). Only for the employee's own form.
@@ -1323,6 +1326,9 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
         ];
 
         setApiLeaveTypes(names);
+        setApiLeaveTypeObjs(
+          typesRes.value.filter((item) => item && typeof item === "object"),
+        );
 
         // Clear a previously selected type if it is no longer active.
         setLeaveType((previous) =>
@@ -1330,7 +1336,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
         );
       } else {
         console.error(
-          "Could not load Super Admin leave types:",
+          "Could not load leave types:",
           typesRes.reason,
         );
       }
@@ -1392,9 +1398,8 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           documents,
         });
 
-        if (res?.data) {
-          setBackendCheck(res.data);
-        }
+        const body = res?.data ?? res;
+        setBackendCheck(body && typeof body === "object" && "ok" in body ? body : null);
       } catch (err) {
         setBackendCheck(null);
       } finally {
@@ -1405,21 +1410,15 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
     return () => clearTimeout(timer);
   }, [leaveType, from, to, dayPart, documents]);
 
-  // Existing local calculation retained.
-  const localCheck = empId
-    ? validateLeaveApplication(
-        empId,
-        {
-          leaveType,
-          from,
-          to,
-          attachment: documents[0]?.name,
-          dayPart,
-        },
-        allRows,
-        leaveTypes,
-      )
-    : { ok: false, errors: [], warnings: [], days: 0 };
+  // No local business rules: only the backend validation result is shown.
+  // The day count falls back to a plain calendar-day count until the backend answers.
+  const calendarDays =
+    from && to && to >= from
+      ? Math.round((new Date(`${to}T00:00:00`) - new Date(`${from}T00:00:00`)) / 86400000) +
+        1
+      : 0;
+  const approxDays =
+    dayPart && dayPart !== "Full day" && calendarDays === 1 ? 0.5 : calendarDays;
 
   const check = backendCheck
     ? {
@@ -1427,18 +1426,17 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
         errors: backendCheck.errors || [],
         warnings: backendCheck.warnings || [],
         days:
-          typeof backendCheck.days === "number"
-            ? backendCheck.days
-            : localCheck.days,
+          typeof backendCheck.days === "number" ? backendCheck.days : approxDays,
       }
-    : localCheck;
+    : { ok: true, errors: [], warnings: [], days: approxDays };
 
   const days = check.days;
 
-  const needsDoc =
-    /sick|medical/i.test(leaveType) &&
-    days > 2 &&
-    documents.length === 0;
+  // Supporting document rule comes from the leave type the admin configured
+  // (attachment_after_days; 0 = never required).
+  const selectedType = apiLeaveTypeObjs.find((t) => t.name === leaveType);
+  const attachAfter = Number(selectedType?.attachmentAfterDays) || 0;
+  const needsDoc = attachAfter > 0 && days > attachAfter && documents.length === 0;
 
   const dateRangeValid =
     Boolean(from && to) && to >= from;
@@ -1526,7 +1524,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
     if (!valid) {
       if (needsDoc) {
         return toast.error(
-          "Attach a medical certificate for sick leave beyond 2 days."
+          `Attach a supporting document for ${leaveType} beyond ${attachAfter} day(s).`
         );
       }
 
@@ -1823,7 +1821,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           label="Supporting documents"
           hint={
             needsDoc
-              ? "Medical certificate required for sick leave beyond 2 days"
+              ? `Supporting document required for ${leaveType} beyond ${attachAfter} day(s)`
               : "PDF/JPG/JPEG/PNG · Maximum 5 MB each · Maximum 10 files"
           }
           className="sm:col-span-3"
