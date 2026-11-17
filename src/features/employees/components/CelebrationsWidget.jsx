@@ -5,6 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import {
+  upcomingBirthdays,
+  upcomingAnniversaries,
+  upcomingRetirements,
   useUpcomingBirthdays,
   useUpcomingAnniversaries,
   useUpcomingRetirements,
@@ -14,11 +17,36 @@ function EmptyRow({ text }) {
   return <div className="text-muted-foreground py-3 text-sm">{text}</div>;
 }
 
-export function CelebrationsWidget() {
+/**
+ * `people` ([{ id, name, dept, dob, doj }]) = real employees from the API (Company Admin dashboard).
+ * Without it the widget falls back to the local stores, as before.
+ * Birthdays need `dob` and anniversaries need `doj`; a person missing that date is skipped for that list.
+ */
+export function CelebrationsWidget({ people }) {
   const activeOrgId = useActiveOrgId();
-  const birthdays = useUpcomingBirthdays(activeOrgId, 7);
-  const anniversaries = useUpcomingAnniversaries(activeOrgId, 7);
-  const retirements = useUpcomingRetirements(activeOrgId, undefined, 90);
+  const storeBirthdays = useUpcomingBirthdays(activeOrgId, 7);
+  const storeAnniversaries = useUpcomingAnniversaries(activeOrgId, 7);
+  const storeRetirements = useUpcomingRetirements(activeOrgId, undefined, 90);
+  const live = Array.isArray(people);
+  const birthdays = live
+    ? upcomingBirthdays(
+        people.filter((p) => p.dob),
+        7,
+      )
+    : storeBirthdays;
+  const anniversaries = live
+    ? upcomingAnniversaries(
+        people.filter((p) => p.doj),
+        7,
+      )
+    : storeAnniversaries;
+  const retirements = live
+    ? upcomingRetirements(
+        people.filter((p) => p.dob),
+        undefined,
+        90,
+      )
+    : storeRetirements;
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
