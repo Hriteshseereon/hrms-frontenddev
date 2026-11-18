@@ -2,6 +2,7 @@ import {
   listMyLeaveRequests,
   getMyLeaveRequest,
   loadEmployeeLeaveTypes,
+  withdrawLeaveRequest,
 } from "@/features/leave/data/leaveRequestAdapter";
 import { useState, useEffect, useCallback } from "react";
 import { Plane, Plus, Paperclip, RefreshCw } from "lucide-react";
@@ -15,16 +16,15 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
-  cancelLeaveApplication,
-  todayLocal,
-  useLeaveApplications,
   LOP_TYPE,
 } from "@/features/leave/data/leave-engine";
 import { toast } from "sonner";
-import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 import {
   RecordDetailDialog,
   clickableRow,
@@ -45,10 +45,6 @@ const tone = {
 function EmpLeave() {
   const me = useCurrentEmployee();
 
-  // Existing local leave data.
-  const [allRows] = useLeaveApplications();
-  const localRows = allRows.filter((a) => a.empId === me.id);
-
   // Existing backend leave data.
   const [liveBalances, setLiveBalances] = useState(null);
   const [liveRows, setLiveRows] = useState(null);
@@ -64,6 +60,7 @@ function EmpLeave() {
   const [detail, setDetail] = useState(null);
   const [withdrawTarget, setWithdrawTarget] = useState(null);
   const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawRemark, setWithdrawRemark] = useState("");
 
   const user = useCurrentUser();
   const isHr = ["HR", "CHRO", "Admin", "SuperAdmin"].includes(user.role);
@@ -118,51 +115,34 @@ function EmpLeave() {
   const confirmWithdraw = async () => {
     const r = withdrawTarget;
     if (!r) return;
-    const verb = r.status === "Pending" ? "Withdraw" : "Cancel";
+    const remark = withdrawRemark.trim();
+    if (!remark) {
+      toast.error("Please enter a remark for withdrawing this leave.");
+      return;
+    }
     setWithdrawing(true);
 
     try {
-      // Use the backend id (UUID), not the display code.
-      const res = await leaveApi.cancelApplication(r._apiId ?? r.id);
-      toast.success(res?.message || `Leave request ${r.id} ${verb === "Withdraw" ? "withdrawn" : "cancelled"}.`);
+      // POST /leave-requests/{id}/withdraw with the remark (only a Pending request can be withdrawn).
+      await withdrawLeaveRequest(r._apiId ?? r.id, remark);
+      toast.success(`Leave request ${r.id} withdrawn.`);
     } catch (err) {
-      if (r._apiId == null) {
-        // Local demo row only.
-        const res = cancelLeaveApplication(r.id, user);
-        toast[res.ok ? "success" : "error"](res.message);
+      const d = err?.response?.data?.detail;
+      const message =
+        (typeof d === "string" && d) ||
+        (Array.isArray(d) && d[0]?.msg) ||
+        err?.userMessage ||
+        "Could not withdraw this request.";
+      if (err?.response?.status === 409) {
+        // Already decided (or already withdrawn) since this page was loaded.
+        toast.info(`${message}. Refreshing your requests.`);
       } else {
-        const d = err?.response?.data?.detail;
-        const message =
-          (typeof d === "string" && d) ||
-          err?.userMessage ||
-          `Could not ${verb.toLowerCase()} this request.`;
-        if (err?.response?.status === 400 && /already/i.test(message)) {
-          // Already withdrawn / rejected elsewhere: not an error, just out of date.
-          toast.info(`${message}. Refreshing your requests.`);
-        } else if (err?.response?.status >= 500) {
-          // The cancel endpoint saves the change and then crashes while building its reply
-          // (backend bug), so a 500 can still mean it worked. Check the real status.
-          let nowCancelled = false;
-          try {
-            const fresh = await listMyLeaveRequests();
-            nowCancelled = fresh.some(
-              (x) => x._apiId === r._apiId && x.status === "Cancelled",
-            );
-          } catch {
-            // keep the generic error below
-          }
-          if (nowCancelled) {
-            toast.success(`Leave request ${r.id} ${verb === "Withdraw" ? "withdrawn" : "cancelled"}.`);
-          } else {
-            toast.error(`${message}. Please refresh and check the request status.`);
-          }
-        } else {
-          toast.error(message);
-        }
+        toast.error(message);
       }
     } finally {
       setWithdrawing(false);
       setWithdrawTarget(null);
+      setWithdrawRemark("");
       fetchLeaveData();
     }
   };
@@ -321,10 +301,8 @@ function EmpLeave() {
       return { type: t.name, key: t.id, used, pending, entitled, available };
     });
 
-  const rows =
-    liveRows && liveRows.length > 0
-      ? liveRows
-      : localRows;
+  // Only the employee's real requests from GET /leave-requests (no local demo rows).
+  const rows = liveRows ?? [];
 
   return (
     <div className="space-y-6">
@@ -465,7 +443,7 @@ function EmpLeave() {
 
                   {leaveType.annual != null && (
                     <div className="text-muted-foreground text-xs">
-                      Annual entitlement: {leaveType.annual} day(s)
+                      No. of days:{leaveType.annual} day(s)
                     </div>
                   )}
 
@@ -568,7 +546,7 @@ function EmpLeave() {
 
                     {r.decisionReason && (
                       <div className="text-muted-foreground mt-0.5 text-xs">
-                        Reason: {r.decisionReason}
+                        {r.status === "Cancelled" ? "Withdrawal remark" : "Reason"}: {r.decisionReason}
                       </div>
                     )}
                   </td>
@@ -577,24 +555,31 @@ function EmpLeave() {
                     <Badge variant="outline" className={tone[r.status]}>
                       {r.status}
                     </Badge>
+                    {r.status === "Cancelled" && (
+                      <div className="text-muted-foreground mt-1 text-[11px]">Withdrawn by you</div>
+                    )}
                   </td>
 
                   <td
                     className="p-3 text-right"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {r.status === "Pending" ||
-                    (r.status === "Approved" && r.from > todayLocal()) ? (
+                    {/* Only a pending request can be withdrawn. Once it is Approved (or Rejected / Cancelled)
+                        the employee just sees the status, with no Cancel option. */}
+                    {r.status === "Pending" ? (
                       <Button
                         size="sm"
                         variant="outline"
                         className="text-destructive"
-                        onClick={() => setWithdrawTarget(r)}
+                        onClick={() => {
+                          setWithdrawRemark("");
+                          setWithdrawTarget(r);
+                        }}
                       >
-                        {r.status === "Pending" ? "Withdraw" : "Cancel"}
+                        Withdraw
                       </Button>
                     ) : (
-                      <span className="text-muted-foreground text-xs">—</span>
+                      <span className="text-muted-foreground text-xs">Closed</span>
                     )}
                   </td>
                 </tr>
@@ -615,24 +600,46 @@ function EmpLeave() {
         </div>
       </Card>
 
-      <ConfirmDeleteDialog
+      <Dialog
         open={withdrawTarget !== null}
         onOpenChange={(open) => {
           if (!open && !withdrawing) setWithdrawTarget(null);
         }}
-        title={withdrawTarget?.status === "Pending" ? "Withdraw leave request?" : "Cancel leave request?"}
-        description={
-          withdrawTarget
-            ? `${withdrawTarget.leaveType} · ${withdrawTarget.from} → ${withdrawTarget.to} (${withdrawTarget.days} day${Number(withdrawTarget.days) === 1 ? "" : "s"}). ${
-                withdrawTarget.status === "Pending"
-                  ? "It will be withdrawn before anyone approves it and the days return to your balance."
-                  : "The approved leave will be cancelled and the days return to your balance."
-              }`
-            : ""
-        }
-        confirmLabel={withdrawTarget?.status === "Pending" ? "Withdraw" : "Cancel request"}
-        onConfirm={confirmWithdraw}
-      />
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Withdraw leave request?</DialogTitle>
+            <DialogDescription>
+              {withdrawTarget
+                ? `${withdrawTarget.leaveType} · ${withdrawTarget.from} → ${withdrawTarget.to} (${withdrawTarget.days} day${Number(withdrawTarget.days) === 1 ? "" : "s"}). The request will be closed and the days return to your balance.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5 py-2">
+            <Label className="text-muted-foreground text-xs font-medium">
+              Remark <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              rows={4}
+              value={withdrawRemark}
+              onChange={(e) => setWithdrawRemark(e.target.value)}
+              placeholder="Why are you withdrawing this leave?"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={withdrawing} onClick={() => setWithdrawTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!withdrawRemark.trim() || withdrawing}
+              onClick={confirmWithdraw}
+            >
+              {withdrawing ? "Withdrawing..." : "Withdraw"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Existing leave request detail dialog — unchanged. */}
       {detail && (

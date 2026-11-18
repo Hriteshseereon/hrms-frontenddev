@@ -1968,7 +1968,7 @@ export function LeaveMasterTab({ section = "both" }) {
   // The 6 standard leave types every company starts with. Company admins can edit / delete them.
   const DEFAULT_LEAVES = [
     { name: "Casual Leave", code: "CL", annual: 12, creditFrequency: "Quarterly pro-rata", maxConsecutive: 3, applicableTo: "All" },
-    { name: "Sick Leave", code: "SL", annual: 12, creditFrequency: "Quarterly pro-rata", attachmentAfterDays: 2, applicableTo: "All" },
+    { name: "Sick Leave", code: "SL", annual: 12, creditFrequency: "Quarterly pro-rata", applicableTo: "All" },
     { name: "Earned Leave", code: "EL", annual: 15, creditFrequency: "Monthly pro-rata", maxCarry: 30, encashable: true, applicableTo: "All" },
     { name: "Maternity Leave", code: "ML", annual: 182, creditFrequency: "On event", applicableTo: "Female employees" },
     { name: "Paternity Leave", code: "PL", annual: 15, creditFrequency: "On event", applicableTo: "Male employees" },
@@ -2255,13 +2255,12 @@ export function LeaveMasterTab({ section = "both" }) {
                   <tr>
                     {[
                       "Type",
-                      "Annual",
+                      "No. of days",
                       "Credit",
                       "Carry fwd",
                       "Encash",
                       "Clubbable",
                       "Max consecutive",
-                      "Attachment",
                       "Approval",
                       "Validity",
                       "Paid",
@@ -2287,9 +2286,6 @@ export function LeaveMasterTab({ section = "both" }) {
                       </td>
                       <td className="p-2 text-xs">{r.clubbable ? "Yes" : "No"}</td>
                       <td className="p-2">{r.maxConsecutive || "—"}</td>
-                      <td className="p-2 text-xs">
-                        {r.needsAttachment ? `> ${r.attachmentAfterDays} d` : "—"}
-                      </td>
                       <td className="p-2 text-xs">{r.approvalChain}</td>
                       <td className="p-2 text-xs">
                         {r.validityDays ? `${r.validityDays} days` : "—"}
@@ -2495,7 +2491,7 @@ export function LeaveMasterTab({ section = "both" }) {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Annual days</Label>
+                <Label className="text-xs">No. of days</Label>
                 <Input
                   className="h-8"
                   type="number"
@@ -2561,21 +2557,6 @@ export function LeaveMasterTab({ section = "both" }) {
                   type="number"
                   value={edit.validityDays}
                   onChange={(e) => setEdit({ ...edit, validityDays: Number(e.target.value) })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Attachment after (days)</Label>
-                <Input
-                  className="h-8"
-                  type="number"
-                  value={edit.attachmentAfterDays}
-                  onChange={(e) =>
-                    setEdit({
-                      ...edit,
-                      attachmentAfterDays: Number(e.target.value),
-                      needsAttachment: Number(e.target.value) > 0,
-                    })
-                  }
                 />
               </div>
               <div className="space-y-1">
@@ -2651,13 +2632,9 @@ export function LeaveMasterTab({ section = "both" }) {
                 !!nameError(edit?.name, "Leave name") ||
                 !edit?.code.trim() ||
                 rows.some((r) => r.id !== edit.id && r.code === edit.code.trim()) ||
-                [
-                  edit.annual,
-                  edit.maxConsecutive,
-                  edit.validityDays,
-                  edit.attachmentAfterDays,
-                  edit.maxCarry,
-                ].some((n) => n < 0) ||
+                [edit.annual, edit.maxConsecutive, edit.validityDays, edit.maxCarry].some(
+                  (n) => n < 0,
+                ) ||
                 savingLeave
               }
               onClick={submitLeaveType}
@@ -2678,7 +2655,7 @@ export function LeaveMasterTab({ section = "both" }) {
             <dl className="divide-border divide-y text-sm">
               {[
                 ["Code", viewLeave.code || "—"],
-                ["Annual days", viewLeave.annual],
+                ["No. of days", viewLeave.annual],
                 ["Credit", viewLeave.creditFrequency || "—"],
                 ["Carry forward", viewLeave.carryForward ? `≤ ${viewLeave.maxCarry}` : "No"],
                 [
@@ -2687,10 +2664,6 @@ export function LeaveMasterTab({ section = "both" }) {
                 ],
                 ["Clubbable", viewLeave.clubbable ? "Yes" : "No"],
                 ["Max consecutive", viewLeave.maxConsecutive || "—"],
-                [
-                  "Attachment",
-                  viewLeave.needsAttachment ? `> ${viewLeave.attachmentAfterDays} d` : "—",
-                ],
                 ["Approval chain", viewLeave.approvalChain || "—"],
                 ["Validity", viewLeave.validityDays ? `${viewLeave.validityDays} days` : "—"],
                 ["Paid", viewLeave.paid ? "Yes" : "LOP"],

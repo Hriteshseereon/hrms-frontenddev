@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "@/lib/router";
-import { Info, Search, Check, X, Paperclip, Download, FileText } from "lucide-react";
-import { leaveApi } from "@/api/leaveApi";
+import { Info, Search, Check, X, Paperclip, Download, FileText, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,23 +16,17 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { useMemo } from "react";
-import {
-  balanceFor,
-  canDecideLeave,
-  decideLeaveApplication,
-  leaveOrgOf,
-  leaveStepOf,
-  useLeaveApplications,
-} from "@/features/leave/data/leave-engine";
-import { useCurrentUser } from "@/features/auth/data/auth-session";
-import { useTeamScope } from "@/features/attendance/data/attendance-live";
+import { listLeaveApprovals, decideLeaveApproval } from "@/features/leave/data/leaveApprovalAdapter";
 import { exportCsv, exportReportPdf } from "@/lib/export-utils";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
-import { useScopeMatch } from "@/features/organization/data/tenancy";
 
 /**
- * @typedef {{ row: LeaveApplication, action: "Approved" | "Rejected" } | null} Decision
+ * Leave Applications (approver view), two steps:
+ *  1. Manager  — GET /leave-approvals,    POST /leave-approvals/{id}/approve | reject
+ *  2. HR       — GET /hr-leave-approvals, POST /hr-leave-approvals/{id}/approve | reject
+ * A manager's approval passes the request to the HR Manager ("Approved by Manager, Pending at HR Manager");
+ * a manager's rejection ends it and HR never sees it. Which buttons show comes from the server
+ * (`actions.can_approve` / `can_reject`), so a person only acts on the step that belongs to them.
  */
 
 const leaveStatusTone = (s) =>
@@ -45,54 +38,64 @@ const leaveStatusTone = (s) =>
         ? "border-border bg-muted text-muted-foreground"
         : "border-gold/30 bg-gold/10 text-gold";
 
+const errorText = (err, fallback) => {
+  const d = err?.response?.data?.detail;
+  if (typeof d === "string" && d) return d;
+  if (Array.isArray(d) && d[0]?.msg) return d[0].msg;
+  return err?.userMessage || fallback;
+};
+
 export function LeaveApplicationsTab() {
-  const [allRows] = useLeaveApplications();
-  const me = useCurrentUser();
-  const inScope = useScopeMatch();
-  const team = useTeamScope();
-  // Tenant scope (active entity, or the whole group in group view) and, for Managers / HODs, their reporting line plus
-  // anything that is currently waiting on them — the queue used to list every entity's requests to every role.
-  const rows = useMemo(
-    () =>
-      allRows.filter(
-        (a) =>
-          inScope(leaveOrgOf(a), a.empId) &&
-          (!team || team.has(a.empId) || canDecideLeave(a, me).ok),
-      ),
-    [allRows, inScope, team, me],
-  );
+  const [rows, setRows] = useState([]);
+  const [loadState, setLoadState] = useState("loading"); // loading | ready | failed
   const [decision, setDecision] = useState(null);
   const [reason, setReason] = useState("");
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const load = useCallback(async () => {
+    setLoadState((s) => (s === "ready" ? s : "loading"));
+    try {
+      const { items } = await listLeaveApprovals();
+      setRows(items);
+      setLoadState("ready");
+    } catch (err) {
+      console.error("Could not load leave approvals:", err);
+      setLoadState("failed");
+      toast.error(errorText(err, "Unable to load leave applications."));
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
   const commit = async () => {
     if (!decision) return;
     setSubmitting(true);
     try {
-      const action = decision.action === "Approved" ? "APPROVE" : "REJECT";
-      await leaveApi.decideApplication(decision.row.id, {
-        action,
-        remarks: reason.trim(),
-      });
-      // also update local engine store for consistency
-      decideLeaveApplication(decision.row.id, me, decision.action, reason);
-      toast.success(`Leave request ${decision.action.toLowerCase()}`);
+      const saved = await decideLeaveApproval(decision.row, decision.action, reason);
+      setRows((list) => list.map((r) => (r._apiId === saved._apiId ? saved : r)));
+      toast.success(
+        decision.action === "Approved"
+          ? saved.stage === "hr"
+            ? `Leave request ${decision.row.id} approved and sent to the HR Manager`
+            : `Leave request ${decision.row.id} approved`
+          : `Leave request ${decision.row.id} rejected`,
+      );
       setDecision(null);
       setReason("");
     } catch (err) {
-      console.warn("Backend decideApplication failed, falling back to local engine:", err);
-      const r = decideLeaveApplication(decision.row.id, me, decision.action, reason);
-      if (!r.ok) {
-        toast.error(r.message);
-        return;
+      toast.error(errorText(err, "Could not save the decision."));
+      // 409 / 404: someone else already decided it — show the real state.
+      if ([404, 409].includes(err?.response?.status)) {
+        setDecision(null);
+        setReason("");
       }
-      toast.success(r.message);
-      setDecision(null);
-      setReason("");
     } finally {
       setSubmitting(false);
+      load();
     }
   };
 
@@ -172,12 +175,21 @@ export function LeaveApplicationsTab() {
             />
           </div>
           <div className="text-muted-foreground text-xs">
-            {rows.filter((r) => r.status === "Pending").length} pending approval
+            {rows.filter((r) => r.status === "Pending" && r.canApprove).length} awaiting your decision
           </div>
           <Button
             size="sm"
             variant="outline"
             className="ml-auto"
+            disabled={loadState === "loading"}
+            onClick={load}
+            title="Reload leave applications"
+          >
+            <RefreshCw className={`h-4 w-4 ${loadState === "loading" ? "animate-spin" : ""}`} />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
             onClick={() => {
               exportCsv("leave-applications", columns, reportRows);
               toast.success("CSV exported");
@@ -220,7 +232,11 @@ export function LeaveApplicationsTab() {
             </thead>
             <tbody className="divide-border divide-y">
               {filtered.map((a) => (
-                <tr key={a.id} className={`${clickableRow} align-top`} onClick={() => setDetail(a)}>
+                <tr
+                  key={a._apiId ?? a.id}
+                  className={`${clickableRow} align-top`}
+                  onClick={() => setDetail(a)}
+                >
                   <td className="p-3 font-medium">{a.id}</td>
                   <td className="p-3">
                     <div className="font-semibold">{a.employee}</div>
@@ -232,26 +248,20 @@ export function LeaveApplicationsTab() {
                   </td>
                   <td className="p-3">
                     {a.days}
-                    {a.status === "Pending" &&
-                      (() => {
-                        // The full ledger, not the scoped queue — an HOD sees only the rows waiting on them, which left the
-                        // employee's other pending requests out of the hold and overstated the balance.
-                        const b = balanceFor(a.empId, a.leaveType, allRows);
-                        return b && Number.isFinite(b.available) ? (
-                          <div
-                            className={`text-[11px] ${a.days > b.available + Math.min(a.days, b.pending) ? "text-destructive" : "text-muted-foreground"}`}
-                          >
-                            {b.available + Math.min(a.days, b.pending)} avail.
-                          </div>
-                        ) : null;
-                      })()}
+                    {a.status === "Pending" && a.available != null && (
+                      <div
+                        className={`text-[11px] ${a.days > a.available ? "text-destructive" : "text-muted-foreground"}`}
+                      >
+                        {a.available} avail.
+                      </div>
+                    )}
                   </td>
                   <td className="max-w-[220px] p-3">
                     <div>{a.description}</div>
                     {a.decisionReason && (
                       <div className="text-muted-foreground mt-1 text-xs">
-                        Note: {a.decisionReason}
-                        {a.decidedBy ? ` — ${a.decidedBy}, ${a.decidedOn}` : ""}
+                        {a.status === "Cancelled" ? "Withdrawal remark" : "Note"}: {a.decisionReason}
+                        {a.decidedOn ? ` — ${a.decidedOn}` : ""}
                       </div>
                     )}
                   </td>
@@ -269,47 +279,60 @@ export function LeaveApplicationsTab() {
                     <Badge variant="outline" className={leaveStatusTone(a.status)}>
                       {a.status}
                     </Badge>
-                    {a.status === "Pending" && (
-                      <div className="text-muted-foreground mt-1 text-[11px] whitespace-nowrap">
-                        Awaiting {leaveStepOf(a).current}
-                        {leaveStepOf(a).steps.length > 1
-                          ? ` (${leaveStepOf(a).index + 1}/${leaveStepOf(a).steps.length})`
-                          : ""}
+                    {a.status === "Cancelled" && (
+                      <div className="text-muted-foreground mt-1 text-[11px] font-medium">
+                        Withdrawn by employee
+                      </div>
+                    )}
+                    {a.status !== "Pending" && a.status !== "Cancelled" && a.statusLabel && a.statusLabel !== a.status && (
+                      // e.g. "Rejected by Manager", "Approved by HR Manager"
+                      <div className="text-muted-foreground mt-1 text-[11px] font-medium">
+                        {a.statusLabel}
+                      </div>
+                    )}
+                    {a.status === "Pending" && (a.statusLabel || a.statusNote) && (
+                      <div
+                        className={`mt-1 text-[11px] ${
+                          a.stage === "hr" ? "text-primary font-medium" : "text-muted-foreground"
+                        }`}
+                      >
+                        {a.statusLabel || a.statusNote}
                       </div>
                     )}
                   </td>
                   <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    {a.status === "Pending" && !canDecideLeave(a, me).ok ? (
-                      <span
-                        className="text-muted-foreground text-xs"
-                        title={canDecideLeave(a, me).reason}
-                      >
-                        {canDecideLeave(a, me).reason}
-                      </span>
-                    ) : a.status === "Pending" ? (
+                    {a.status === "Pending" && (a.canApprove || a.canReject) ? (
                       <div className="flex flex-wrap justify-end gap-2">
-                        <Button
-                          size="sm"
-                          className="bg-gradient-emerald shadow-premium text-white"
-                          onClick={() => {
-                            setReason("");
-                            setDecision({ row: a, action: "Approved" });
-                          }}
-                        >
-                          <Check className="h-4 w-4" /> Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                          onClick={() => {
-                            setReason("");
-                            setDecision({ row: a, action: "Rejected" });
-                          }}
-                        >
-                          <X className="h-4 w-4" /> Reject
-                        </Button>
+                        {a.canApprove && (
+                          <Button
+                            size="sm"
+                            className="bg-gradient-emerald shadow-premium text-white"
+                            onClick={() => {
+                              setReason("");
+                              setDecision({ row: a, action: "Approved" });
+                            }}
+                          >
+                            <Check className="h-4 w-4" /> Approve
+                          </Button>
+                        )}
+                        {a.canReject && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                            onClick={() => {
+                              setReason("");
+                              setDecision({ row: a, action: "Rejected" });
+                            }}
+                          >
+                            <X className="h-4 w-4" /> Reject
+                          </Button>
+                        )}
                       </div>
+                    ) : a.status === "Pending" ? (
+                      <span className="text-muted-foreground text-xs">
+                        {a.actionMessage || "You can't decide this request."}
+                      </span>
                     ) : (
                       <span className="text-muted-foreground text-xs">Closed</span>
                     )}
@@ -319,7 +342,13 @@ export function LeaveApplicationsTab() {
               {filtered.length === 0 && (
                 <tr>
                   <td colSpan={9} className="text-muted-foreground p-10 text-center text-sm">
-                    No leave applications match your search.
+                    {loadState === "loading"
+                      ? "Loading leave applications…"
+                      : loadState === "failed"
+                        ? "Could not load leave applications. Use the reload button to try again."
+                        : term
+                          ? "No leave applications match your search."
+                          : "No leave applications to review yet."}
                   </td>
                 </tr>
               )}
@@ -328,7 +357,7 @@ export function LeaveApplicationsTab() {
         </div>
       </Card>
 
-      <Dialog open={!!decision} onOpenChange={(o) => !o && setDecision(null)}>
+      <Dialog open={!!decision} onOpenChange={(o) => !o && !submitting && setDecision(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
@@ -356,7 +385,7 @@ export function LeaveApplicationsTab() {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDecision(null)}>
+            <Button variant="outline" disabled={submitting} onClick={() => setDecision(null)}>
               Cancel
             </Button>
             <Button
@@ -391,18 +420,12 @@ export function LeaveApplicationsTab() {
             empId: "Employee ID",
             from: "From date",
             to: "To date",
-            dayPart: "Day part",
-            reasonCategory: "Reason category",
-            contactDuringLeave: "Contact during leave",
-            locationDuringLeave: "Location during leave",
-            handoverTo: "Handover to",
-            handoverNotes: "Handover notes",
-            approvalChain: "Approval chain",
-            chainStep: "Current step",
-            chainLog: "Approval log",
+            appliedOn: "Applied on",
+            statusNote: "Current step",
+            statusLabel: "Stage",
             decisionReason: "Decision note",
-            decidedBy: "Decided by",
             decidedOn: "Decided on",
+            available: "Balance available",
           }}
           sections={[
             {
@@ -411,38 +434,24 @@ export function LeaveApplicationsTab() {
                 "id",
                 "employee",
                 "empId",
+                "department",
+                "designation",
                 "leaveType",
                 "from",
                 "to",
                 "days",
-                "dayPart",
+                "available",
                 "appliedOn",
-                "appliedBy",
                 "status",
               ],
             },
             {
               title: "Reason & details",
-              keys: [
-                "reasonCategory",
-                "description",
-                "contactDuringLeave",
-                "locationDuringLeave",
-                "attachment",
-                "documents",
-              ],
+              keys: ["description", "attachment", "documents"],
             },
-            { title: "Handover", keys: ["handoverTo", "handoverNotes"] },
             {
               title: "Approval",
-              keys: [
-                "approvalChain",
-                "chainStep",
-                "decisionReason",
-                "decidedBy",
-                "decidedOn",
-                "chainLog",
-              ],
+              keys: ["statusLabel", "decisionReason", "decidedOn"],
             },
           ]}
         />
