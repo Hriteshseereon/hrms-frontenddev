@@ -54,10 +54,10 @@ export function ModuleExplorer({ portal, compact = false }) {
             <div className="flex items-center gap-2 font-semibold">
               <LayoutGrid className="text-primary h-4 w-4" /> Modules
             </div>
-            <div className="text-muted-foreground text-xs">
+            {/* <div className="text-muted-foreground text-xs">
               Click a module to see its sub-modules —{" "}
               {modules.reduce((s, m) => s + m.children.length, 0)} screens available to your role.
-            </div>
+            </div> */}
           </div>
         </div>
         <div

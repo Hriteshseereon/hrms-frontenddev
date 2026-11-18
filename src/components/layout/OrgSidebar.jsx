@@ -92,18 +92,18 @@ export const ORG_NAV_GROUPS = [
     items: [
       { to: "/org/dashboard", label: "Dashboard", icon: LayoutDashboard },
       { to: "/org/masters", label: "Master Data", icon: Building },
-      { to: "/org/announcements", label: "Announcements", icon: Megaphone },
-      { to: "/org/notifications", label: "Notification Centre", icon: BellRing },
+      // { to: "/org/announcements", label: "Announcements", icon: Megaphone },
+      // { to: "/org/notifications", label: "Notification Centre", icon: BellRing },
     ],
   },
   {
     label: "Administration",
     items: [
       { to: "/org/roles", label: "Roles & Permissions", icon: ShieldCheck },
-      { to: "/org/users", label: "Users & Logins", icon: KeyRound },
-      { to: "/org/delegation", label: "Role Delegation", icon: UserCog },
-      { to: "/org/archive", label: "System Archive & Soft Delete", icon: Archive },
-      { to: "/org/settings", label: "Settings", icon: Settings },
+      // { to: "/org/users", label: "Users & Logins", icon: KeyRound },
+      // { to: "/org/delegation", label: "Role Delegation", icon: UserCog },
+      // { to: "/org/archive", label: "System Archive & Soft Delete", icon: Archive },
+      // { to: "/org/settings", label: "Settings", icon: Settings },
     ],
   },
   {
@@ -170,54 +170,54 @@ export const ORG_NAV_GROUPS = [
     label: "People",
     items: [
       { to: "/org/employees", label: "Employees", icon: Users },
-      { to: "/org/recruitment", label: "Recruitment", icon: KanbanSquare },
-      { to: "/org/exits", label: "Exit, Retention & F&F", icon: DoorOpen },
-      { to: "/org/grievances", label: "Grievance Redressal", icon: Scale },
-      { to: "/org/training", label: "Training", icon: GraduationCap },
+      // { to: "/org/recruitment", label: "Recruitment", icon: KanbanSquare },
+      // { to: "/org/exits", label: "Exit, Retention & F&F", icon: DoorOpen },
+      // { to: "/org/grievances", label: "Grievance Redressal", icon: Scale },
+      // { to: "/org/training", label: "Training", icon: GraduationCap },
     ],
   },
   {
     label: "Time & Leave",
     items: [
       { to: "/org/attendance", label: "Attendance & Shifts", icon: Clock },
-      { to: "/org/leave", label: "Leave & Comp-off", icon: Plane },
-      { to: "/org/timesheets", label: "Timesheets", icon: Timer },
-      { to: "/org/tours", label: "Tours & Travel", icon: PlaneIcon },
+      // { to: "/org/leave", label: "Leave & Comp-off", icon: Plane },
+      // { to: "/org/timesheets", label: "Timesheets", icon: Timer },
+      // { to: "/org/tours", label: "Tours & Travel", icon: PlaneIcon },
     ],
   },
   {
     label: "Payroll & Finance",
     items: [
       { to: "/org/finance", label: "Payroll, Payslips & Loans", icon: DollarSign },
-      { to: "/org/claims", label: "Claims & Insurance", icon: ReceiptText },
-      { to: "/org/expenditure", label: "Expenditure Booking", icon: IndianRupee },
-      { to: "/org/tax", label: "Proof of Investment", icon: FileBadge },
-      { to: "/org/compliance", label: "Statutory Compliance", icon: ShieldCheck },
+      // { to: "/org/claims", label: "Claims & Insurance", icon: ReceiptText },
+      // { to: "/org/expenditure", label: "Expenditure Booking", icon: IndianRupee },
+      // { to: "/org/tax", label: "Proof of Investment", icon: FileBadge },
+      // { to: "/org/compliance", label: "Statutory Compliance", icon: ShieldCheck },
     ],
   },
-  {
-    label: "Performance",
-    items: [
-      { to: "/org/performance", label: "Reviews & Appraisals", icon: Target },
-      { to: "/org/goals", label: "Goals", icon: Flag },
-    ],
-  },
-  {
-    label: "Work & Assets",
-    items: [
-      { to: "/org/projects", label: "Projects & Assignments", icon: FolderKanban },
-      { to: "/org/tasks", label: "Tasks", icon: ListTodo },
-      { to: "/org/assets", label: "Asset Lifecycle", icon: Boxes },
-      { to: "/helpdesk", label: "Helpdesk", icon: LifeBuoy },
-    ],
-  },
-  {
-    label: "Reports",
-    items: [
-      { to: "/org/reports", label: "Reports & Analytics", icon: BarChart3 },
-      { to: "/org/payroll-reports", label: "Payroll Reports", icon: FileBarChart },
-    ],
-  },
+  // {
+  //   label: "Performance",
+  //   items: [
+  //     { to: "/org/performance", label: "Reviews & Appraisals", icon: Target },
+  //     { to: "/org/goals", label: "Goals", icon: Flag },
+  //   ],
+  // },
+  // {
+  //   label: "Work & Assets",
+  //   items: [
+  //     { to: "/org/projects", label: "Projects & Assignments", icon: FolderKanban },
+  //     { to: "/org/tasks", label: "Tasks", icon: ListTodo },
+  //     { to: "/org/assets", label: "Asset Lifecycle", icon: Boxes },
+  //     { to: "/helpdesk", label: "Helpdesk", icon: LifeBuoy },
+  //   ],
+  // },
+  // {
+  //   label: "Reports",
+  //   items: [
+  //     { to: "/org/reports", label: "Reports & Analytics", icon: BarChart3 },
+  //     { to: "/org/payroll-reports", label: "Payroll Reports", icon: FileBarChart },
+  //   ],
+  // },
   {
     label: "My Workspace",
     items: [
@@ -226,8 +226,8 @@ export const ORG_NAV_GROUPS = [
       { to: "/emp/attendance", label: "My Attendance", icon: Clock },
       { to: "/emp/leave", label: "My Leave", icon: PlaneIcon },
       { to: "/emp/payslips", label: "My Payslips", icon: Wallet },
-      { to: "/emp/reimbursements", label: "My Claims", icon: ReceiptText },
-      { to: "/emp/goals", label: "My Goals & Appraisals", icon: Flag },
+      // { to: "/emp/reimbursements", label: "My Claims", icon: ReceiptText },
+      // { to: "/emp/goals", label: "My Goals & Appraisals", icon: Flag },
       { to: "/emp/handbook", label: "Employee Handbook", icon: BookOpen },
       { to: "/helpdesk/tickets", label: "My Helpdesk Tickets", icon: LifeBuoy },
     ],
