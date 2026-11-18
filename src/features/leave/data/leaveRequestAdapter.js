@@ -206,6 +206,16 @@ export async function loadTeamMembers() {
 }
 
 /**
+ * POST /leave-requests/{id}/withdraw
+ * The employee withdraws their own Pending request with a remark (Pending -> Cancelled, days go back to the
+ * balance). The remark is stored as the request's decision_reason, so managers and HR see it too.
+ */
+export async function withdrawLeaveRequest(id, remarks) {
+  const res = await Employee_leaveRequest.withdraw(id, { remarks: clean(remarks) });
+  return fromApi(unwrap(res));
+}
+
+/**
  * GET /leave-requests/leave-types
  * Active leave types created by the company admin (read-only for employees).
  * Works with plain names or full leave-type objects.

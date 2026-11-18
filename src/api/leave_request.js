@@ -23,6 +23,10 @@ const Employee_leaveRequest = {
 
   getById: (id, params) =>
     SuperAdmin_axios.get(`${BASE}/${id}`, { params }),
+
+  // Employee withdraws their own Pending request. Body: { remarks }.
+  withdraw: (id, payload, params) =>
+    SuperAdmin_axios.post(`${BASE}/${encodeURIComponent(id)}/withdraw`, payload, { params }),
 };
 
 export default Employee_leaveRequest;

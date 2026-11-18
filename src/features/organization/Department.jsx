@@ -157,7 +157,7 @@ function SelectField({ id, label, value, onChange, options, loading, emptyText, 
   return (
     <div>
       <label htmlFor={id} className="mb-2 block text-sm font-medium">
-        {label} <span className="text-destructive">*</span>
+        {label}
       </label>
 
       <select
@@ -167,7 +167,6 @@ function SelectField({ id, label, value, onChange, options, loading, emptyText, 
         className={inputClass}
         disabled={loading}
         autoFocus={autoFocus}
-        required
       >
         <option value="">
           {loading ? "Loading..." : options.length ? `Select ${label.toLowerCase()}` : emptyText}
@@ -308,9 +307,6 @@ export default function Department() {
     const name = departmentName.trim();
 
     const missing = [
-      [gradeId, "Department grade"],
-      [categoryId, "Category"],
-      [sectionId, "Section"],
       [name, "Department name"],
       [departmentCode.trim(), "Department code"],
     ].find(([value]) => !value);
@@ -357,24 +353,21 @@ export default function Department() {
     setPageError("");
 
     try {
+      // Optional UUID fields are omitted when empty (the API rejects null/"" for UUIDs).
+      const payload = {
+        department_code: departmentCode.trim(),
+        department_name: name,
+        ...(gradeId ? { grade_id: gradeId } : {}),
+        ...(categoryId ? { category_id: categoryId } : {}),
+        ...(sectionId
+          ? { section_code_id: sectionId, section_name_id: sectionId }
+          : {}),
+      };
+
       if (editingId !== null) {
-        await departmentApi.updateDepartment(editingId, {
-          grade_id: gradeId,
-          category_id: categoryId,
-          department_code: departmentCode.trim(),
-          department_name: name,
-          section_code_id: sectionId,
-          section_name_id: sectionId,
-        });
+        await departmentApi.updateDepartment(editingId, payload);
       } else {
-        await departmentApi.createDepartment({
-          grade_id: gradeId,
-          category_id: categoryId,
-          department_code: departmentCode.trim(),
-          department_name: name,
-          section_code_id: sectionId,
-          section_name_id: sectionId,
-        });
+        await departmentApi.createDepartment(payload);
       }
 
       closeForm();
