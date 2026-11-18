@@ -443,7 +443,7 @@ function EmpLeave() {
 
                   {leaveType.annual != null && (
                     <div className="text-muted-foreground text-xs">
-                      Annual entitlement: {leaveType.annual} day(s)
+                      No. of days:{leaveType.annual} day(s)
                     </div>
                   )}
 
