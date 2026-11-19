@@ -258,6 +258,8 @@ export default function Department() {
           ...base,
           page,
           page_size: 100,
+          sort_by: "created_at",
+          sort_order: "desc",
         });
         const items = extractDepartments(response.data);
         all.push(...items);
@@ -267,7 +269,9 @@ export default function Department() {
         page += 1;
       }
 
-      setDepartments(all.map(normalizeDepartment));
+      // Newest first, so a freshly added department lands in row 1.
+      const time = (item) => Date.parse(item.created_at ?? "") || 0;
+      setDepartments(all.map(normalizeDepartment).sort((x, y) => time(y) - time(x)));
     } catch (err) {
       setPageError(getErrorMessage(err));
     } finally {
