@@ -3,7 +3,7 @@ import {
   Users,
   Clock,
   Plane,
-  DollarSign,
+  IndianRupee,
   TrendingUp,
   UserMinus,
   Megaphone,
@@ -143,7 +143,7 @@ function EntityDashboard() {
       delta: live.payroll?.latest
         ? `${periodLabel(live.payroll.latest.period)} · ${live.payroll.latest.status}`
         : "no runs",
-      icon: DollarSign,
+      icon: IndianRupee,
       tone: "emerald",
       to: "/org/finance",
     },
@@ -430,7 +430,7 @@ function EntityDashboard() {
 
       <ModuleExplorer portal="org" />
 
-      <ProbationWidget />
+      {/* <ProbationWidget /> */}
 
       <CelebrationsWidget people={live.employees?.people ?? []} />
 

@@ -206,17 +206,59 @@ export async function loadTeamMembers() {
 }
 
 /**
- * GET /leave-requests/leave-types
- * Load leave types configured by Super Admin.
+ * POST /leave-requests/{id}/withdraw
+ * The employee withdraws their own Pending request with a remark (Pending -> Cancelled, days go back to the
+ * balance). The remark is stored as the request's decision_reason, so managers and HR see it too.
  */
-export async function loadLeaveTypeOptions() {
-  const items = readItems(
-    await Employee_leaveRequest.getLeaveTypes()
-  );
+export async function withdrawLeaveRequest(id, remarks) {
+  const res = await Employee_leaveRequest.withdraw(id, { remarks: clean(remarks) });
+  return fromApi(unwrap(res));
+}
+
+/**
+ * GET /leave-requests/leave-types
+ * Active leave types created by the company admin (read-only for employees).
+ * Works with plain names or full leave-type objects.
+ */
+export async function loadEmployeeLeaveTypes() {
+  const items = readItems(await Employee_leaveRequest.getLeaveTypes());
+  const seen = new Set();
 
   return items
-    .map((o) => clean(optionName(o)))
-    .filter(Boolean);
+    .map((o) => {
+      if (typeof o === "string") {
+        return { id: clean(o), name: clean(o), code: "", paid: null, annual: null, creditFrequency: "", applicableTo: "", maxConsecutive: 0, attachmentAfterDays: 0, active: true };
+      }
+
+      const annual = Number(o?.annual_days ?? o?.annual);
+      const maxConsecutive = Number(o?.max_consecutive);
+      const attachmentAfterDays = Number(o?.attachment_after_days);
+
+      return {
+        id: clean(o?.id ?? o?.code ?? optionName(o)),
+        name: clean(optionName(o)),
+        code: clean(o?.code),
+        paid: o?.paid_leave ?? o?.paid ?? null,
+        annual: Number.isFinite(annual) ? annual : null,
+        creditFrequency: o?.credit ?? o?.credit_frequency ?? "",
+        applicableTo: o?.applicable_to ?? "",
+        maxConsecutive: Number.isFinite(maxConsecutive) ? maxConsecutive : 0,
+        attachmentAfterDays: Number.isFinite(attachmentAfterDays) ? attachmentAfterDays : 0,
+        active: o?.active,
+      };
+    })
+    .filter((t) => {
+      if (!t.name || t.active === false) return false;
+      const key = t.name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+/** Leave type names only (the POST /leave-requests body takes the name). */
+export async function loadLeaveTypeOptions() {
+  return (await loadEmployeeLeaveTypes()).map((t) => t.name);
 }
 
 /**

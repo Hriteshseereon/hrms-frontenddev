@@ -127,9 +127,10 @@ export function RecruitmentMasters() {
           {/* <TabsTrigger value="brand">
             <Palette className="h-4 w-4" /> Brand Settings
           </TabsTrigger> */}
+          {/* HIDDEN (go-live): About Company
           <TabsTrigger value="about">
             <Building className="h-4 w-4" /> About Company
-          </TabsTrigger>
+          </TabsTrigger> */}
           <TabsTrigger value="offer">
             <FileSignature className="h-4 w-4" /> Offer Letter Template
           </TabsTrigger>
@@ -229,9 +230,10 @@ export function RecruitmentMasters() {
         {/* <TabsContent value="brand" className="mt-6">
           <BrandSettings />
         </TabsContent> */}
+        {/* HIDDEN (go-live): About Company
         <TabsContent value="about" className="mt-6">
           <AboutCompany />
-        </TabsContent>
+        </TabsContent> */}
         <TabsContent value="offer" className="mt-6">
           <OfferTemplate />
         </TabsContent>

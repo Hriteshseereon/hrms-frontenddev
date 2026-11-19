@@ -10,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,6 +73,7 @@ export function PatternsTab() {
   const [edit, setEdit] = useState(null);
 const [viewPattern, setViewPattern] = useState(null);
 const [deletingPatternId, setDeletingPatternId] = useState(null);
+const [deleteTarget, setDeleteTarget] = useState(null);
 const [period, setPeriod] = useState("2026-07");
 const [detail, setDetail] = useState(null);
   const editable = can(me.role, "employee.manage");
@@ -165,11 +167,14 @@ async function deletePattern(p) {
     return;
   }
 
-  const confirmed = window.confirm(
-    `Are you sure you want to delete "${p.name}"? This action cannot be undone.`
-  );
+  // Ask for confirmation in the app's own dialog; confirmDeletePattern runs the delete.
+  setDeleteTarget(p);
+}
 
-  if (!confirmed) return;
+async function confirmDeletePattern() {
+  const p = deleteTarget;
+  setDeleteTarget(null);
+  if (!p) return;
 
   setDeletingPatternId(p.id);
 
@@ -250,8 +255,18 @@ async function deletePattern(p) {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Card className="shadow-card lg:col-span-2">
+      <ConfirmDeleteDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        title="Delete attendance pattern?"
+        description={`Are you sure you want to delete "${deleteTarget?.name ?? ""}"? This action cannot be undone.`}
+        onConfirm={confirmDeletePattern}
+      />
+
+      <div className="grid grid-cols-1 gap-4">
+        <Card className="shadow-card">
           <CardContent className="p-6">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -283,7 +298,7 @@ async function deletePattern(p) {
               )}
             </div>
 
-<div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+<div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
   {patterns.map((p) => (
     <div
       key={p.id}
@@ -364,10 +379,12 @@ async function deletePattern(p) {
           <div className="font-semibold">{p.workingDays}</div>
         </div>
 
+        {/* HIDDEN: Paid absences
         <div>
           <div className="text-muted-foreground">Paid absences</div>
           <div className="font-semibold">{p.paidLeaveDays}</div>
         </div>
+        */}
 
         <div>
           <div className="text-muted-foreground">Assigned</div>
@@ -547,6 +564,7 @@ async function deletePattern(p) {
           />
         </div>
 
+        {/* HIDDEN: Paid absences / month
         <div className="space-y-1.5">
           <Label className="text-muted-foreground text-xs">
             Paid absences / month
@@ -557,6 +575,7 @@ async function deletePattern(p) {
             readOnly
           />
         </div>
+        */}
 
         <div className="space-y-1.5">
           <Label className="text-muted-foreground text-xs">
@@ -643,6 +662,7 @@ async function deletePattern(p) {
                   onChange={(e) => setEdit({ ...edit, workingDays: Number(e.target.value) })}
                 />
               </div>
+              {/* HIDDEN: Paid absences / month (value still sent to the API, kept at its default / existing value)
               <div className="space-y-1.5">
                 <Label className="text-muted-foreground text-xs">Paid absences / month</Label>
                 <Input
@@ -651,6 +671,7 @@ async function deletePattern(p) {
                   onChange={(e) => setEdit({ ...edit, paidLeaveDays: Number(e.target.value) })}
                 />
               </div>
+              */}
               <div className="space-y-1.5">
                 <Label className="text-muted-foreground text-xs">Weekly offs / month</Label>
                 <Input
@@ -691,7 +712,8 @@ async function deletePattern(p) {
                 edit.workingDays > 31 ||
                 edit.paidLeaveDays < 0 ||
                 edit.weeklyOffs < 0 ||
-                edit.paidLeaveDays > edit.workingDays ||
+                // HIDDEN: paid absences field is not shown, so it is not validated
+                // edit.paidLeaveDays > edit.workingDays ||
                 edit.workingDays + edit.weeklyOffs > 31 ||
                 savingPattern
               }

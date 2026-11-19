@@ -243,11 +243,31 @@ export function CrudSection({
     )
     .some((field) => !(Number(form[field.key]) >= 0));
 
+  // Client-side duplicate check for fields flagged `unique: true` (case-insensitive,
+  // ignores the row being edited). The backend still validates on save.
+  const duplicateErrors = Object.fromEntries(
+    fields
+      .filter((field) => field.unique)
+      .map((field) => {
+        const value = String(form[field.key] ?? "").trim().toLowerCase();
+        const exists =
+          value !== "" &&
+          rows.some(
+            (row) =>
+              row.id !== editingId &&
+              String(row[field.key] ?? "").trim().toLowerCase() === value,
+          );
+        return [field.key, exists ? `${field.label} "${String(form[field.key]).trim()}" already exists.` : ""];
+      }),
+  );
+  const hasDuplicate = Object.values(duplicateErrors).some(Boolean);
+
   const valid =
     fields
       .filter((field) => field.required)
       .every((field) => String(form[field.key] ?? "").trim() !== "") &&
-    !badNumber;
+    !badNumber &&
+    !hasDuplicate;
 
   /**
    * GET /pay-grades/{id}
@@ -623,6 +643,12 @@ export function CrudSection({
                           }
                           placeholder={field.placeholder}
                         />
+                      )}
+
+                      {duplicateErrors[field.key] && (
+                        <p className="text-destructive text-xs">
+                          {duplicateErrors[field.key]}
+                        </p>
                       )}
                     </div>
                   ))}

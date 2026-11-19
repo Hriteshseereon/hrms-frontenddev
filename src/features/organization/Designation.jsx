@@ -357,7 +357,7 @@ export default function Designation() {
       return;
     }
 
-    if (designationYear === "" || !Number.isInteger(year) || year < 0 || year > 99) {
+    if (designationYear !== "" && (!Number.isInteger(year) || year < 0 || year > 99)) {
       setError("Designation year must be a whole number of years between 0 and 99.");
       return;
     }
@@ -399,7 +399,7 @@ export default function Designation() {
         department: departmentName || null,
         designation_type: designationType || null,
         designation_code: code,
-        designation_year: year,
+        designation_year: designationYear === "" ? null : year,
         is_active: existing?.is_active ?? true,
         ...(scope.isSuper && editingId === null ? { company_id: scope.companyId } : {}),
       };
@@ -553,7 +553,7 @@ export default function Designation() {
       ["Column", "Required", "Notes"],
       ["Designation Name", "Yes", "Letters and spaces only, must start with an uppercase letter, max 100 characters"],
       ["Designation Code", "Yes", "e.g. SE-01"],
-      ["Designation Year", "Yes", "Whole number of years, 0 to 99 (e.g. 3)"],
+      ["Designation Year", "No", "Whole number of years, 0 to 99 (e.g. 3)"],
       ["Department Name", "No", "Must match an existing department name exactly"],
       ["Designation Type", "No", "hr, manager or ceo (leave blank for none)"],
       [],
@@ -633,7 +633,7 @@ export default function Designation() {
         if (nameError) return errors.push(`Row ${line}: ${nameError.replace("Designation name", "Designation Name")}`);
         if (name.length > 100) return errors.push(`Row ${line}: Designation Name exceeds 100 characters.`);
         if (!code) return errors.push(`Row ${line}: Designation Code is required.`);
-        if (yearText === "" || !Number.isInteger(year) || year < 0 || year > 99) {
+        if (yearText !== "" && (!Number.isInteger(year) || year < 0 || year > 99)) {
           return errors.push(`Row ${line}: Designation Year must be a whole number of years between 0 and 99.`);
         }
         const department = deptInput ? deptByName.get(deptInput.toLowerCase()) : "";
@@ -649,7 +649,7 @@ export default function Designation() {
         }
         seen.add(key);
         // null (not "") so optional cells are truly empty in the sheet.
-        valid.push([name, code, year, department || null, typeInput || null]);
+        valid.push([name, code, yearText === "" ? null : year,department || null, typeInput || null]);
       });
 
       let created = 0;
@@ -1096,7 +1096,7 @@ export default function Designation() {
 
               <div>
                 <label htmlFor="designationYear" className="mb-2 block text-sm font-medium">
-                  Designation Year <span className="text-red-500">*</span>
+                  Promotional Year
                 </label>
                 <input
                   id="designationYear"
@@ -1111,7 +1111,6 @@ export default function Designation() {
                   }}
                   placeholder="e.g. 3"
                   className={inputClass}
-                  required
                 />
               </div>
             </div>

@@ -1838,12 +1838,13 @@ const GROUPS = [
         icon: Wallet,
         perm: "payroll.manage",
       },
-      {
-        key: "payroll",
-        label: "Pay components",
-        icon: Coins,
-        perm: "payroll.manage",
-      },
+      // HIDDEN (go-live): Pay components
+      // {
+      //   key: "payroll",
+      //   label: "Pay components",
+      //   icon: Coins,
+      //   perm: "payroll.manage",
+      // },
       {
         key: "statutory",
         label: "Statutory configuration — PF methods, ESI, TDS",
@@ -1856,26 +1857,30 @@ const GROUPS = [
         icon: MapPinned,
         perm: "statutory.configure",
       },
-      { key: "insurance", label: "Insurance & benefit plans", icon: ShieldPlus },
-      {
-        key: "loanpolicy",
-        label: "Loan & advance policy",
-        icon: Wallet,
-        perm: "finance.manage",
-      },
-      { key: "reimcat", label: "Reimbursement categories", icon: Receipt },
+      // HIDDEN (go-live): Insurance & benefit plans
+      // { key: "insurance", label: "Insurance & benefit plans", icon: ShieldPlus },
+      // HIDDEN (go-live): Loan & advance policy
+      // {
+      //   key: "loanpolicy",
+      //   label: "Loan & advance policy",
+      //   icon: Wallet,
+      //   perm: "finance.manage",
+      // },
+      // HIDDEN (go-live): Reimbursement categories
+      // { key: "reimcat", label: "Reimbursement categories", icon: Receipt },
     ],
   },
-  {
-    group: "Performance",
-    items: [
-      {
-        key: "perfmasters",
-        label: "Indicators, categories, goal types, review cycles",
-        icon: Layers,
-      },
-    ],
-  },
+  // HIDDEN (go-live): Performance masters (Indicators, categories, goal types, review cycles)
+  // {
+  //   group: "Performance",
+  //   items: [
+  //     {
+  //       key: "perfmasters",
+  //       label: "Indicators, categories, goal types, review cycles",
+  //       icon: Layers,
+  //     },
+  //   ],
+  // },
   {
     group: "Assets",
     items: [
@@ -1897,11 +1902,12 @@ const GROUPS = [
       // },
       { key: "termination", label: "Termination types", icon: UserX },
       { key: "warning", label: "Warning types", icon: AlertTriangle },
-      {
-        key: "complaint",
-        label: "Complaint types",
-        icon: MessageSquareWarning,
-      },
+      // HIDDEN (go-live): Complaint types
+      // {
+      //   key: "complaint",
+      //   label: "Complaint types",
+      //   icon: MessageSquareWarning,
+      // },
     ],
   },
   // {
@@ -2180,6 +2186,7 @@ function Masters() {
                   key: "name",
                   label: "Grade code",
                   required: true,
+                  unique: true,
                   placeholder: "e.g. G4",
                 },
                 {
@@ -2307,12 +2314,14 @@ function Masters() {
 
           {tab === "salaryconfig" && <SalaryConfigTab />}
 
+          {/* HIDDEN (go-live): Pay components */}
           {/* {tab === "payroll" && <PayrollConfigTab />} */}
 
           {tab === "statutory" && <StatutoryConfigTab />}
 
           {tab === "states" && <StatePolicyTab />}
 
+          {/* HIDDEN (go-live): Insurance & benefit plans
           {tab === "insurance" && (
             <div className="space-y-4">
               <InsurancePlansTab />
@@ -2335,10 +2344,12 @@ function Masters() {
                 store={insuranceCategoryStore}
               />
             </div>
-          )}
+          )} */}
 
-          {tab === "loanpolicy" && <LoanPolicyCard />}
+          {/* HIDDEN (go-live): Loan & advance policy */}
+          {/* {tab === "loanpolicy" && <LoanPolicyCard />} */}
 
+          {/* HIDDEN (go-live): Reimbursement categories
           {tab === "reimcat" && (
             <NamedMasterTab
               icon={Receipt}
@@ -2348,9 +2359,10 @@ function Masters() {
               prefix="RMC"
               store={reimbursementCategoryStore}
             />
-          )}
+          )} */}
 
-          {tab === "perfmasters" && <PerformanceMastersTab />}
+          {/* HIDDEN (go-live): Performance masters */}
+          {/* {tab === "perfmasters" && <PerformanceMastersTab />} */}
 
           {tab === "assetmaster" && <AssetMasterTab />}
 
@@ -2382,6 +2394,7 @@ function Masters() {
             />
           )}
 
+          {/* HIDDEN (go-live): Complaint types
           {tab === "complaint" && (
             <MasterTable
               icon={MessageSquareWarning}
@@ -2392,7 +2405,7 @@ function Masters() {
               addLabel="Add Complaint Type"
               api={complaintTypeApi}
             />
-          )}
+          )} */}
 
           {/* {tab === "helpdesk" && <DeskSettings />} */}
 
