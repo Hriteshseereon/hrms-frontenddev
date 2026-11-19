@@ -1,7 +1,8 @@
 import {
   createLeaveTypeApi,
 } from "@/features/leave/data/leaveMasterAdapters";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { nameError } from "@/lib/name-validation";
 import { companiesOf, useCurrentTenant } from "@/features/organization/data/tenancy";
 import { useOrgs, useActiveOrgId } from "@/features/organization/data/group-data";
@@ -1886,9 +1887,7 @@ export function LeaveMasterTab({ section = "both" }) {
   const rows =
     leaveStatus === "ready"
       ? leaveOrder.map((id) => storeRows.find((r) => r.id === id)).filter(Boolean)
-      : leaveStatus === "failed"
-        ? storeRows
-        : [];
+      : [];
 
   // GET /leave-types/{id}: open the leave type with its latest server values.
   // Used by both View (mode "view") and Edit (mode "edit").
@@ -1916,7 +1915,26 @@ export function LeaveMasterTab({ section = "both" }) {
 
   // DELETE /leave-types/{id}, then drop the row from the local leave master store.
   function deleteLeaveType(r) {
+    leaveDialogName.current = r.name;
     setLeaveToDelete(r);
+  }
+
+  // PATCH active=false: hides the leave type from employees without removing their records.
+  async function confirmDeactivateLeaveType() {
+    const r = leaveToDeactivate;
+    setLeaveToDeactivate(null);
+    if (!r) return;
+    setDeletingLeaveId(r.id);
+    try {
+      const saved = await leaveApi.patch(r.id, { ...r, active: false }, r);
+      saveLeaveMasterRow({ ...saved, active: false });
+      toast.success(`${r.name} deactivated. Employees can no longer see or apply for it.`);
+    } catch (error) {
+      console.error("Failed to deactivate leave type:", error);
+      toast.error(apiErrorMessage(error, "Unable to deactivate the leave type."));
+    } finally {
+      setDeletingLeaveId(null);
+    }
   }
 
   async function confirmDeleteLeaveType() {
@@ -1933,10 +1951,82 @@ export function LeaveMasterTab({ section = "both" }) {
       toast.success(`${r.name} deleted`);
     } catch (error) {
       console.error("Failed to delete leave type:", error);
-      toast.error(apiErrorMessage(error, "Unable to delete the leave type."));
+      const message = apiErrorMessage(error, "Unable to delete the leave type.");
+
+      // The server refuses to delete a type once employees have balances / requests for it
+      // (opening My Leave already creates a balance row). Offer to deactivate instead.
+      if (fromServer && error?.response?.status && /deactivate/i.test(message)) {
+        setLeaveToDeactivate(r);
+      } else {
+        toast.error(message);
+      }
     } finally {
       setDeletingLeaveId(null);
     }
+  }
+
+  // The 6 standard leave types every company starts with. Company admins can edit / delete them.
+  const DEFAULT_LEAVES = [
+    { name: "Casual Leave", code: "CL", annual: 12, creditFrequency: "Quarterly pro-rata", maxConsecutive: 3, applicableTo: "All" },
+    { name: "Sick Leave", code: "SL", annual: 12, creditFrequency: "Quarterly pro-rata", applicableTo: "All" },
+    { name: "Earned Leave", code: "EL", annual: 15, creditFrequency: "Monthly pro-rata", maxCarry: 30, encashable: true, applicableTo: "All" },
+    { name: "Maternity Leave", code: "ML", annual: 182, creditFrequency: "On event", applicableTo: "Female employees" },
+    { name: "Paternity Leave", code: "PL", annual: 15, creditFrequency: "On event", applicableTo: "Male employees" },
+    { name: "Bereavement Leave", code: "BL", annual: 5, creditFrequency: "On event", applicableTo: "All" },
+  ];
+  const keyOf = (v) => String(v ?? "").trim().toLowerCase();
+  // Leave codes are unique across ALL companies in the database, so each default gets a short
+  // company suffix (e.g. CL-049218). Falls back to the plain code when the company id is unknown.
+  const companyId = useSessionStore((st) => st.companyId);
+  const codeSuffix = String(companyId ?? "").replace(/-/g, "").slice(0, 6).toUpperCase();
+  const defaultCode = (d) => (codeSuffix ? `${d.code}-${codeSuffix}` : d.code);
+  const missingDefaults = DEFAULT_LEAVES.filter(
+    (d) =>
+      !rows.some(
+        (r) => keyOf(r.name) === keyOf(d.name) || keyOf(r.code) === keyOf(defaultCode(d)),
+      ),
+  );
+  const [addingDefaults, setAddingDefaults] = useState(false);
+
+  // POST /leave-types once per missing default (existing ones are skipped).
+  async function addDefaultLeaves() {
+    if (leaveStatus !== "ready" || !missingDefaults.length) return;
+    setAddingDefaults(true);
+    let added = 0;
+    let failed = 0;
+    for (const d of missingDefaults) {
+      try {
+        const saved = await leaveApi.create({
+          carryForward: false,
+          maxCarry: 0,
+          encashable: false,
+          encashOn: "Gross",
+          clubbable: true,
+          minDays: 0.5,
+          maxConsecutive: 0,
+          needsAttachment: false,
+          attachmentAfterDays: 0,
+          approvalChain: "Manager → HR",
+          validityDays: 0,
+          paid: true,
+          active: true,
+          ...d,
+          code: defaultCode(d),
+        });
+        saveLeaveMasterRow(saved);
+        setLeaveOrder((previous) =>
+          (previous ?? []).includes(saved.id) ? previous : [...(previous ?? []), saved.id],
+        );
+        added += 1;
+      } catch (error) {
+        failed += 1;
+        console.error(`Failed to add default leave ${d.name}:`, error);
+        toast.error(apiErrorMessage(error, `Unable to add ${d.name}.`));
+      }
+    }
+    setAddingDefaults(false);
+    if (added) toast.success(`${added} default leave type${added > 1 ? "s" : ""} added`);
+    if (!added && !failed) toast.info("All default leave types already exist");
   }
 
   // POST for a new leave type, PATCH (changed fields only) for an existing one.
@@ -1954,11 +2044,8 @@ export function LeaveMasterTab({ section = "both" }) {
       return;
     }
 
-    // Server unreachable: keep the previous local-only behaviour.
     if (leaveStatus === "failed") {
-      saveLeaveMasterRow({ ...edit, code: edit.code.trim() });
-      setEdit(null);
-      toast.success("Leave type saved");
+      toast.error("Leave types could not be loaded from the server. Please refresh and try again.");
       return;
     }
 
@@ -1982,7 +2069,13 @@ export function LeaveMasterTab({ section = "both" }) {
       toast.success("Leave type saved");
     } catch (error) {
       console.error("Failed to save leave type:", error);
-      toast.error(apiErrorMessage(error, "Unable to save the leave type."));
+      // A 500 here is almost always a leave code that is already taken (codes are unique across all
+      // companies in the database, including deleted leave types).
+      toast.error(
+        error?.response?.status === 500
+          ? `Could not save: the code "${edit.code.trim()}" is probably already used by another company or a deleted leave type. Please use a different code.`
+          : apiErrorMessage(error, "Unable to save the leave type."),
+      );
     } finally {
       setSavingLeave(false);
     }
@@ -2021,6 +2114,8 @@ export function LeaveMasterTab({ section = "both" }) {
   const [loadingCalId, setLoadingCalId] = useState(null);
   const [calToDelete, setCalToDelete] = useState(null);
   const [leaveToDelete, setLeaveToDelete] = useState(null);
+  const [leaveToDeactivate, setLeaveToDeactivate] = useState(null);
+  const leaveDialogName = useRef(""); // keeps the name visible while the dialog fades out
   const openCalendar = async (c, mode) => {
     const open = (record) =>
       mode === "edit"
@@ -2076,8 +2171,18 @@ export function LeaveMasterTab({ section = "both" }) {
           if (!open) setLeaveToDelete(null);
         }}
         title="Delete leave type?"
-        description={`Are you sure you want to delete "${leaveToDelete?.name ?? ""}"? This action cannot be undone.`}
+        description={`Are you sure you want to delete "${leaveToDelete?.name ?? leaveDialogName.current}"? This action cannot be undone.`}
         onConfirm={confirmDeleteLeaveType}
+      />
+      <ConfirmDeleteDialog
+        open={leaveToDeactivate !== null}
+        onOpenChange={(open) => {
+          if (!open) setLeaveToDeactivate(null);
+        }}
+        title="This leave type can't be deleted"
+        description={`"${leaveToDeactivate?.name ?? leaveDialogName.current}" already has employee leave records (balances or requests), so it can't be deleted. You can deactivate it instead: employees will no longer see it or be able to apply for it, and their existing records are kept.`}
+        confirmLabel="Deactivate"
+        onConfirm={confirmDeactivateLeaveType}
       />
       {showLeave && <LeavePolicyCard />}
       {showLeave && (
@@ -2093,7 +2198,25 @@ export function LeaveMasterTab({ section = "both" }) {
                   and encashment rules live here.
                 </div>
               </div>
-              <Button size="sm" variant="outline" className="ml-auto" onClick={() => setLeaveBulkOpen(true)}>
+              {leaveStatus === "ready" && missingDefaults.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto"
+                  disabled={addingDefaults}
+                  onClick={addDefaultLeaves}
+                  title={`Adds: ${missingDefaults.map((d) => d.name).join(", ")}`}
+                >
+                  <Plus className="h-4 w-4" />
+                  {addingDefaults ? "Adding…" : `Add default leaves (${missingDefaults.length})`}
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className={leaveStatus === "ready" && missingDefaults.length > 0 ? "" : "ml-auto"}
+                onClick={() => setLeaveBulkOpen(true)}
+              >
                 <FileSpreadsheet className="h-4 w-4" /> Bulk upload
               </Button>
               <Button
@@ -2132,13 +2255,12 @@ export function LeaveMasterTab({ section = "both" }) {
                   <tr>
                     {[
                       "Type",
-                      "Annual",
+                      "No. of days",
                       "Credit",
                       "Carry fwd",
                       "Encash",
                       "Clubbable",
                       "Max consecutive",
-                      "Attachment",
                       "Approval",
                       "Validity",
                       "Paid",
@@ -2164,9 +2286,6 @@ export function LeaveMasterTab({ section = "both" }) {
                       </td>
                       <td className="p-2 text-xs">{r.clubbable ? "Yes" : "No"}</td>
                       <td className="p-2">{r.maxConsecutive || "—"}</td>
-                      <td className="p-2 text-xs">
-                        {r.needsAttachment ? `> ${r.attachmentAfterDays} d` : "—"}
-                      </td>
                       <td className="p-2 text-xs">{r.approvalChain}</td>
                       <td className="p-2 text-xs">
                         {r.validityDays ? `${r.validityDays} days` : "—"}
@@ -2211,6 +2330,17 @@ export function LeaveMasterTab({ section = "both" }) {
                       </td>
                     </tr>
                   ))}
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={12} className="text-muted-foreground p-8 text-center text-sm">
+                        {leaveStatus === "loading"
+                          ? "Loading leave types…"
+                          : leaveStatus === "failed"
+                            ? "Could not load leave types from the server. Please refresh."
+                            : "No leave types yet. Add one with the Leave type button."}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -2353,7 +2483,7 @@ export function LeaveMasterTab({ section = "both" }) {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Code</Label>
+                <Label className="text-xs">Code *</Label>
                 <Input
                   className="h-8"
                   value={edit.code}
@@ -2361,7 +2491,7 @@ export function LeaveMasterTab({ section = "both" }) {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Annual days</Label>
+                <Label className="text-xs">No. of days</Label>
                 <Input
                   className="h-8"
                   type="number"
@@ -2427,21 +2557,6 @@ export function LeaveMasterTab({ section = "both" }) {
                   type="number"
                   value={edit.validityDays}
                   onChange={(e) => setEdit({ ...edit, validityDays: Number(e.target.value) })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Attachment after (days)</Label>
-                <Input
-                  className="h-8"
-                  type="number"
-                  value={edit.attachmentAfterDays}
-                  onChange={(e) =>
-                    setEdit({
-                      ...edit,
-                      attachmentAfterDays: Number(e.target.value),
-                      needsAttachment: Number(e.target.value) > 0,
-                    })
-                  }
                 />
               </div>
               <div className="space-y-1">
@@ -2517,13 +2632,9 @@ export function LeaveMasterTab({ section = "both" }) {
                 !!nameError(edit?.name, "Leave name") ||
                 !edit?.code.trim() ||
                 rows.some((r) => r.id !== edit.id && r.code === edit.code.trim()) ||
-                [
-                  edit.annual,
-                  edit.maxConsecutive,
-                  edit.validityDays,
-                  edit.attachmentAfterDays,
-                  edit.maxCarry,
-                ].some((n) => n < 0) ||
+                [edit.annual, edit.maxConsecutive, edit.validityDays, edit.maxCarry].some(
+                  (n) => n < 0,
+                ) ||
                 savingLeave
               }
               onClick={submitLeaveType}
@@ -2544,7 +2655,7 @@ export function LeaveMasterTab({ section = "both" }) {
             <dl className="divide-border divide-y text-sm">
               {[
                 ["Code", viewLeave.code || "—"],
-                ["Annual days", viewLeave.annual],
+                ["No. of days", viewLeave.annual],
                 ["Credit", viewLeave.creditFrequency || "—"],
                 ["Carry forward", viewLeave.carryForward ? `≤ ${viewLeave.maxCarry}` : "No"],
                 [
@@ -2553,10 +2664,6 @@ export function LeaveMasterTab({ section = "both" }) {
                 ],
                 ["Clubbable", viewLeave.clubbable ? "Yes" : "No"],
                 ["Max consecutive", viewLeave.maxConsecutive || "—"],
-                [
-                  "Attachment",
-                  viewLeave.needsAttachment ? `> ${viewLeave.attachmentAfterDays} d` : "—",
-                ],
                 ["Approval chain", viewLeave.approvalChain || "—"],
                 ["Validity", viewLeave.validityDays ? `${viewLeave.validityDays} days` : "—"],
                 ["Paid", viewLeave.paid ? "Yes" : "LOP"],

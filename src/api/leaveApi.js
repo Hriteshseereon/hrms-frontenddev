@@ -54,8 +54,9 @@ export const leaveApi = {
   },
 
   // 9. Cancel / Withdraw Leave Application
-  cancelApplication: async (id) => {
-    const { data } = await axios.post(`${BASE}/applications/${id}/cancel`);
+  cancelApplication: async (id, remarks) => {
+    const body = remarks ? { remarks } : undefined;
+    const { data } = await axios.post(`${BASE}/applications/${id}/cancel`, body);
     return data;
   },
 

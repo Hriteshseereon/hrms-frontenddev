@@ -321,6 +321,23 @@ export function EmployeeAttendanceTab() {
   if (blocked) return <ErrorState kind={blocked} />;
 
   const employees = list?.employees ?? [];
+  // Count calendar dates, not employee-days: a date is included once when at
+  // least one employee in the current result has that status.
+  const monthlyStatusTotals = useMemo(() => {
+    const dates = { week_off: new Set(), leave: new Set(), holiday: new Set() };
+    employees.forEach((employeeRow) => {
+      (employeeRow.attendance ?? []).forEach(({ date, status: dayStatus }) => {
+        if (dayStatus === "WO") dates.week_off.add(date);
+        else if (dayStatus === "L") dates.leave.add(date);
+        else if (dayStatus === "H") dates.holiday.add(date);
+      });
+    });
+    return {
+      week_off: dates.week_off.size,
+      leave: dates.leave.size,
+      holiday: dates.holiday.size,
+    };
+  }, [employees]);
   const dates =
     view === "daily"
       ? []
@@ -341,9 +358,9 @@ export function EmployeeAttendanceTab() {
           ["Employees", summary?.total_employees],
           ["Present days", summary?.present],
           ["Absent days", summary?.absent],
-          ["Week-off days", summary?.week_off],
-          ["Leave days", summary?.leave],
-          ["Holiday days", summary?.holiday],
+          ["Week-off days", monthlyStatusTotals.week_off],
+          ["Leave days", monthlyStatusTotals.leave],
+          ["Holiday days", monthlyStatusTotals.holiday],
           ["Attendance", pct(summary?.attendance_percentage)],
         ];
 

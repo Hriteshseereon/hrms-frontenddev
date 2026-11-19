@@ -1,6 +1,8 @@
 import {
   listMyLeaveRequests,
   getMyLeaveRequest,
+  loadEmployeeLeaveTypes,
+  withdrawLeaveRequest,
 } from "@/features/leave/data/leaveRequestAdapter";
 import { useState, useEffect, useCallback } from "react";
 import { Plane, Plus, Paperclip, RefreshCw } from "lucide-react";
@@ -14,12 +16,12 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import {
-  cancelLeaveApplication,
-  todayLocal,
-  useLeaveApplications,
   LOP_TYPE,
 } from "@/features/leave/data/leave-engine";
 import { toast } from "sonner";
@@ -32,51 +34,6 @@ import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { LeaveApplyForm } from "@/features/leave/components/LeavePieces";
 import { CompOffCard } from "@/features/attendance/components/CompOffCard";
 import { leaveApi } from "@/api/leaveApi";
-import Employee_leaveRequest from "@/api/leave_request";
-
-// GET /leave-requests/leave-types — the EMPLOYEE leave-type endpoint.
-// (GET /leave-types is Super Admin only and returns 403 "Insufficient role" for employees.)
-// Works whether the backend returns plain names or full leave-type objects;
-// fields the response doesn't include are simply not shown on the cards.
-async function loadEmployeeLeaveTypes() {
-  const res = await Employee_leaveRequest.getLeaveTypes();
-
-  let d = res?.data ?? res;
-  if (d?.data != null) d = d.data;
-
-  const list = Array.isArray(d)
-    ? d
-    : d?.items ?? d?.results ?? d?.leave_types ?? [];
-
-  const seen = new Set();
-
-  return list
-    .map((o) => {
-      if (typeof o === "string") {
-        return { id: o, name: o.trim(), code: "", paid: null, annual: null };
-      }
-
-      const annual = Number(o?.annual_days ?? o?.annual);
-
-      return {
-        id: String(o?.id ?? o?.code ?? o?.name ?? o?.value ?? o?.label ?? ""),
-        name: String(o?.name ?? o?.label ?? o?.value ?? "").trim(),
-        code: o?.code ?? "",
-        paid: o?.paid_leave ?? o?.paid ?? null,
-        annual: Number.isFinite(annual) ? annual : null,
-        creditFrequency: o?.credit ?? o?.credit_frequency ?? "",
-        applicableTo: o?.applicable_to ?? "",
-        active: o?.active,
-      };
-    })
-    .filter((t) => {
-      if (!t.name || t.active === false) return false;
-      const key = t.name.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-}
 
 const tone = {
   Pending: "border-gold/40 bg-gold/10 text-gold",
@@ -87,10 +44,6 @@ const tone = {
 
 function EmpLeave() {
   const me = useCurrentEmployee();
-
-  // Existing local leave data.
-  const [allRows] = useLeaveApplications();
-  const localRows = allRows.filter((a) => a.empId === me.id);
 
   // Existing backend leave data.
   const [liveBalances, setLiveBalances] = useState(null);
@@ -105,6 +58,9 @@ function EmpLeave() {
   const [open, setOpen] = useState(false);
   const [openBehalf, setOpenBehalf] = useState(false);
   const [detail, setDetail] = useState(null);
+  const [withdrawTarget, setWithdrawTarget] = useState(null);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawRemark, setWithdrawRemark] = useState("");
 
   const user = useCurrentUser();
   const isHr = ["HR", "CHRO", "Admin", "SuperAdmin"].includes(user.role);
@@ -154,6 +110,42 @@ function EmpLeave() {
   //     // Keep the existing data if the detail API fails.
   //   }
   // };
+
+  // Withdraw a pending request / cancel an upcoming approved one (after the confirm dialog).
+  const confirmWithdraw = async () => {
+    const r = withdrawTarget;
+    if (!r) return;
+    const remark = withdrawRemark.trim();
+    if (!remark) {
+      toast.error("Please enter a remark for withdrawing this leave.");
+      return;
+    }
+    setWithdrawing(true);
+
+    try {
+      // POST /leave-requests/{id}/withdraw with the remark (only a Pending request can be withdrawn).
+      await withdrawLeaveRequest(r._apiId ?? r.id, remark);
+      toast.success(`Leave request ${r.id} withdrawn.`);
+    } catch (err) {
+      const d = err?.response?.data?.detail;
+      const message =
+        (typeof d === "string" && d) ||
+        (Array.isArray(d) && d[0]?.msg) ||
+        err?.userMessage ||
+        "Could not withdraw this request.";
+      if (err?.response?.status === 409) {
+        // Already decided (or already withdrawn) since this page was loaded.
+        toast.info(`${message}. Refreshing your requests.`);
+      } else {
+        toast.error(message);
+      }
+    } finally {
+      setWithdrawing(false);
+      setWithdrawTarget(null);
+      setWithdrawRemark("");
+      fetchLeaveData();
+    }
+  };
 
   const handleOpenDetail = async (r) => {
   setDetail(r);
@@ -299,7 +291,8 @@ function EmpLeave() {
 
       const used = live ? toNum(live.used) : daysWith("Approved");
       const pending = live ? toNum(live.pending) : daysWith("Pending");
-      const entitled = live ? toNum(live.entitled ?? live.total) : 0;
+      // Shown exactly as the server has it (the server enforces this balance when applying).
+      const entitled = live ? toNum(live.entitled ?? live.total) : toNum(t.annual);
       const available =
         live && live.available != null
           ? toNum(live.available)
@@ -308,10 +301,8 @@ function EmpLeave() {
       return { type: t.name, key: t.id, used, pending, entitled, available };
     });
 
-  const rows =
-    liveRows && liveRows.length > 0
-      ? liveRows
-      : localRows;
+  // Only the employee's real requests from GET /leave-requests (no local demo rows).
+  const rows = liveRows ?? [];
 
   return (
     <div className="space-y-6">
@@ -452,7 +443,7 @@ function EmpLeave() {
 
                   {leaveType.annual != null && (
                     <div className="text-muted-foreground text-xs">
-                      Annual entitlement: {leaveType.annual} day(s)
+                      No. of days:{leaveType.annual} day(s)
                     </div>
                   )}
 
@@ -483,7 +474,7 @@ function EmpLeave() {
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-semibold">{l.type}</span>
                   <Badge variant="outline">
-                    {l.available} available
+                    {l.available >= 999 ? "No limit" : `${l.available} available`}
                   </Badge>
                 </div>
 
@@ -497,7 +488,8 @@ function EmpLeave() {
                 />
 
                 <div className="text-muted-foreground text-xs">
-                  {l.used} used · {l.pending} on hold · {l.entitled} entitled
+                  {l.used} used · {l.pending} on hold ·{" "}
+                  {l.available >= 999 ? "no limit" : `${l.entitled} entitled`}
                 </div>
               </CardContent>
             </Card>
@@ -554,7 +546,7 @@ function EmpLeave() {
 
                     {r.decisionReason && (
                       <div className="text-muted-foreground mt-0.5 text-xs">
-                        Reason: {r.decisionReason}
+                        {r.status === "Cancelled" ? "Withdrawal remark" : "Reason"}: {r.decisionReason}
                       </div>
                     )}
                   </td>
@@ -563,51 +555,31 @@ function EmpLeave() {
                     <Badge variant="outline" className={tone[r.status]}>
                       {r.status}
                     </Badge>
+                    {r.status === "Cancelled" && (
+                      <div className="text-muted-foreground mt-1 text-[11px]">Withdrawn by you</div>
+                    )}
                   </td>
 
                   <td
                     className="p-3 text-right"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    {r.status === "Pending" ||
-                    (r.status === "Approved" && r.from > todayLocal()) ? (
+                    {/* Only a pending request can be withdrawn. Once it is Approved (or Rejected / Cancelled)
+                        the employee just sees the status, with no Cancel option. */}
+                    {r.status === "Pending" ? (
                       <Button
                         size="sm"
                         variant="outline"
                         className="text-destructive"
-                        onClick={async () => {
-                          const verb =
-                            r.status === "Pending" ? "Withdraw" : "Cancel";
-
-                          if (
-                            !window.confirm(
-                              `${verb} leave request ${r.id}?`,
-                            )
-                          ) {
-                            return;
-                          }
-
-                          try {
-                            const res = await leaveApi.cancelApplication(r.id);
-
-                            toast.success(
-                              res?.message || `${verb} successful`,
-                            );
-
-                            fetchLeaveData();
-                          } catch (err) {
-                            const res = cancelLeaveApplication(r.id, user);
-
-                            toast[res.ok ? "success" : "error"](res.message);
-
-                            fetchLeaveData();
-                          }
+                        onClick={() => {
+                          setWithdrawRemark("");
+                          setWithdrawTarget(r);
                         }}
                       >
-                        {r.status === "Pending" ? "Withdraw" : "Cancel"}
+                        Withdraw
                       </Button>
                     ) : (
-                      <span className="text-muted-foreground text-xs">—</span>
+                      <span className="text-muted-foreground text-xs">Closed</span>
                     )}
                   </td>
                 </tr>
@@ -627,6 +599,47 @@ function EmpLeave() {
           </table>
         </div>
       </Card>
+
+      <Dialog
+        open={withdrawTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !withdrawing) setWithdrawTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Withdraw leave request?</DialogTitle>
+            <DialogDescription>
+              {withdrawTarget
+                ? `${withdrawTarget.leaveType} · ${withdrawTarget.from} → ${withdrawTarget.to} (${withdrawTarget.days} day${Number(withdrawTarget.days) === 1 ? "" : "s"}). The request will be closed and the days return to your balance.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5 py-2">
+            <Label className="text-muted-foreground text-xs font-medium">
+              Remark <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              rows={4}
+              value={withdrawRemark}
+              onChange={(e) => setWithdrawRemark(e.target.value)}
+              placeholder="Why are you withdrawing this leave?"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={withdrawing} onClick={() => setWithdrawTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!withdrawRemark.trim() || withdrawing}
+              onClick={confirmWithdraw}
+            >
+              {withdrawing ? "Withdrawing..." : "Withdraw"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Existing leave request detail dialog — unchanged. */}
       {detail && (

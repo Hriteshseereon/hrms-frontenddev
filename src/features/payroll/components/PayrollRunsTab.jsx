@@ -863,6 +863,7 @@ export function PayrollRunsTab() {
   const can = useCan();
   const [status, setStatus] = useState("");
   const [period, setPeriod] = useState("");
+  const [defaultPeriodLoaded, setDefaultPeriodLoaded] = useState(false);
   const [page, setPage] = useState(1);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -877,13 +878,30 @@ export function PayrollRunsTab() {
     setLoading(true);
     payrollRunApi
       .list({ status, period, page, limit: 20 })
-      .then((d) => alive && setData(d))
-      .catch((e) => alive && (setData({ items: [], total: 0 }), toast.error(detailText(e))))
+      .then((d) => {
+        if (!alive) return;
+        setData(d);
+        if (!defaultPeriodLoaded) {
+          const latestPeriod = (d?.items ?? [])
+            .map((item) => item.period)
+            .filter((value) => /^\d{4}-\d{2}$/.test(value ?? ""))
+            .sort()
+            .at(-1);
+          setDefaultPeriodLoaded(true);
+          if (!period && latestPeriod) setPeriod(latestPeriod);
+        }
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setData({ items: [], total: 0 });
+        setDefaultPeriodLoaded(true);
+        toast.error(detailText(e));
+      })
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
     };
-  }, [status, period, page, version]);
+  }, [status, period, page, version, defaultPeriodLoaded]);
 
   const createRun = async () => {
     setCreating(true);

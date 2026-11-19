@@ -229,7 +229,7 @@ function Login() {
             © 2026 Seereon Consulting &amp; IT Services · Seereon HRMS
           </span> */}
           <span>
-  © 2026 Seereon Consulting &amp; IT Services · WCS HRMS
+  © 2026 Seereon Consulting &amp; IT Services
 </span>
 
           <div className="flex flex-wrap gap-4">
@@ -272,11 +272,12 @@ function Login() {
             className="mt-3 text-3xl font-bold tracking-tight"
             data-testid="workspace-name"
           >
-            {ws.name}
+            {/* {ws.name} */}
+            The World Group
           </h1>
 
           <p className="text-muted-foreground mt-1 text-sm">
-            Sign in to your organisation&apos;s Seereon HRMS workspace.
+            Sign in to your organisation&apos;s The World Group HRMS workspace.
             Everything after sign-in is scoped to your{" "}
             {ws.kind === "group"
               ? "group, company, branch"
