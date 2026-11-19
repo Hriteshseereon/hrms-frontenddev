@@ -1,5 +1,6 @@
 import {
   createEmployee as createEmployeeApi,
+  downloadEmployeeFormXiii,
   getEmployees,
   getEmployeeById,
   getEmployeeDocuments,
@@ -180,6 +181,7 @@ function Employees() {
   const [loadingList, setLoadingList] = useState(true);
   const [apiError, setApiError] = useState(null);
   const [editingEmployee, setEditingEmployee] = useState(null);
+  const [downloadingFormXiiiId, setDownloadingFormXiiiId] = useState(null);
 
   // Debounce search query by 350ms
   useEffect(() => {
@@ -297,6 +299,41 @@ function Employees() {
       list.map((e) => [e.id, e.name, e.email, e.phone, e.dept, e.role, e.branch, e.status]),
     );
     toast.success(`${list.length} employees exported`);
+  };
+
+  const downloadFormXiii = async (employee) => {
+    if (!employee?.id) {
+      toast.error("Employee ID is missing; Form XIII cannot be downloaded.");
+      return;
+    }
+    setDownloadingFormXiiiId(employee.id);
+    try {
+      const response = await downloadEmployeeFormXiii(employee.id);
+      const blobUrl = URL.createObjectURL(response.data);
+      const anchor = document.createElement("a");
+      const disposition = response.headers?.["content-disposition"] || "";
+      const filename = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+      anchor.href = blobUrl;
+      anchor.download = decodeURIComponent(filename?.[1] || filename?.[2] || `Form_XIII_${employee.employee_code || employee.id}.pdf`);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(blobUrl);
+      toast.success(`Form XIII downloaded for ${employee.name}`);
+    } catch (error) {
+      let message = error?.response?.data?.detail || error?.message || "Could not download Form XIII.";
+      if (error?.response?.data instanceof Blob) {
+        try {
+          const body = JSON.parse(await error.response.data.text());
+          message = body.detail || body.message || message;
+        } catch {
+          // Keep the request error when the server did not return JSON.
+        }
+      }
+      toast.error(String(message));
+    } finally {
+      setDownloadingFormXiiiId(null);
+    }
   };
 
   return (
@@ -579,6 +616,21 @@ function Employees() {
                         </td>
                         <td className="p-3 whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
                           <div className="flex items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={() => downloadFormXiii(e)}
+                              disabled={downloadingFormXiiiId === e.id}
+                              aria-label={`Download Form XIII for ${e.name}`}
+                              title="Download Form XIII PDF"
+                            >
+                              {downloadingFormXiiiId === e.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Download className="h-4 w-4" />
+                              )}
+                            </Button>
                             <Button
                               variant="ghost"
                               size="sm"
