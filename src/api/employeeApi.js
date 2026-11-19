@@ -90,6 +90,20 @@ export async function getEmployees({
   return response.data;
 }
 
+/** Download an employee's Form XIII as a PDF. The backend exposes this as a multipart POST. */
+export async function downloadEmployeeFormXiii(employeeId) {
+  if (!employeeId) throw new Error("Employee ID is required to download Form XIII.");
+  const response = await SuperAdmin_axios.post(
+    "/employees/form-xiii",
+    new FormData(),
+    {
+      params: { employee_id: employeeId, output: "pdf" },
+      responseType: "blob",
+    },
+  );
+  return response;
+}
+
 /**
  * GET: Fetch complete employee profile by employee profile ID
  * Endpoint: /employees/{employeeId}
