@@ -35,8 +35,8 @@ import {
   ClipboardList,
   ListTodo,
 } from "lucide-react";
-import { BrandLogo } from "@/components/brand/BrandLogo";
-import { BRAND_LOGO_URL, BRAND_NAME } from "@/config/brand";
+import { BrandLogo, useBrandLogo } from "@/components/brand/BrandLogo";
+import { BRAND_NAME } from "@/config/brand";
 import { cn } from "@/lib/utils";
 import { canOpen, signOut, useCurrentUser } from "@/features/auth/data/auth-session";
 import { useModuleAccess, grantedModules, moduleOfRoute } from "@/features/auth/data/module-access";
@@ -117,6 +117,7 @@ export const EMP_NAV_ITEMS = [
 ];
 
 export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = false, onClose }) {
+  const brandLogo = useBrandLogo();
   // Icon-only rail is desktop-only — the mobile drawer always shows labels.
   const collapsed = collapsedPref && !mobileOpen;
   const pathname = usePathname();
@@ -191,7 +192,7 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
             <BrandLogo variant="dark" />
           ) : (
             <img
-              src={BRAND_LOGO_URL}
+              src={brandLogo}
               alt={BRAND_NAME}
               className="ring-gold/40 mx-auto h-9 w-9 rounded-xl bg-white object-contain p-0.5 ring-1"
             />

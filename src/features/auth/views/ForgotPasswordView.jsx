@@ -57,7 +57,7 @@ function ForgotPassword() {
     <div className="bg-background grid min-h-dvh place-items-center p-6">
       <div className="w-full max-w-md">
         <div className="mb-8 flex justify-center">
-          <BrandLogo />
+          <BrandLogo fixed />
         </div>
         <form
           onSubmit={submit}

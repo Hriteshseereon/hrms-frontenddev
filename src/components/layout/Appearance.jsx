@@ -4,10 +4,13 @@ import { useEffect } from "react";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import { useTheme } from "@/lib/theme";
+import { useCompanyBranding } from "@/components/brand/company-branding";
 import {
   FONTS,
   ensureFontLoaded,
   forDarkMode,
+  darken,
+  isValidHex,
   useOrgTheme,
   useUserPrefs,
   wallpaperCss,
@@ -17,7 +20,12 @@ import {
 export function useAppearance() {
   const me = useCurrentUser();
   const orgId = useActiveOrgId();
-  const theme = useOrgTheme(orgId);
+  const orgTheme = useOrgTheme(orgId);
+  // The company's own colour (set by the Super Admin at registration) wins for everyone inside that company.
+  const companyColor = useCompanyBranding().color;
+  const theme = isValidHex(companyColor ?? "")
+    ? { ...orgTheme, primary: companyColor, primaryDark: darken(companyColor, 0.12) }
+    : orgTheme;
   const prefs = useUserPrefs(me.id);
   const mode = useTheme();
   const wallpaper = wallpaperCss(prefs);
@@ -52,6 +60,11 @@ export function useAppearance() {
       "--radius",
       theme.radius === "compact" ? "0.5rem" : theme.radius === "rounded" ? "1rem" : "0.75rem",
     );
+    return () => {
+      ["--org-primary", "--org-primary-dark", "--org-gold", "--org-primary-dm", "--org-primary-dark-dm", "--org-gold-dm"].forEach(
+        (k) => root.style.removeProperty(k),
+      );
+    };
   }, [theme.primary, theme.primaryDark, theme.gold, theme.radius]);
 
   useEffect(() => {

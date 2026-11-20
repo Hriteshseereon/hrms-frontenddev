@@ -4,6 +4,7 @@ import Company_api from "@/api/company";
 import SuperAdmin_auth from "@/api/SuperAdmin_auth";
 import organizationApi from "@/api/organizationApi";
 import uploadApi from "@/api/uploadApi";
+import { isValidHex } from "@/features/administration/data/appearance";
 import Link, { useRouter } from "@/lib/router";
 import {
   AlertTriangle,
@@ -950,6 +951,7 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
 
   // Documents
   const [logoUrl, setLogoUrl] = useState(existing?.logo_url || "");
+  const [colorCode, setColorCode] = useState(existing?.color_code || "");
   const [gstDocUrl, setGstDocUrl] = useState(existing?.gst_doc_url || "");
   const [panDocUrl, setPanDocUrl] = useState(existing?.pan_doc_url || "");
   const [cinDocUrl, setCinDocUrl] = useState(existing?.cin_doc_url || "");
@@ -1041,6 +1043,11 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
     }
     setLinError("");
 
+    if (colorCode && !isValidHex(colorCode)) {
+      setActiveTab("basic");
+      return toast.error("Colour code must be a 6-digit hex like #0F6B50");
+    }
+
     const payload = {
       name: name.trim(),
       code: code.trim().toUpperCase(),
@@ -1067,6 +1074,7 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       // Edit: always send the input so an emptied box clears the LIN. Create: leave it out when empty.
       ...(isEdit || linNo.trim() ? { lin_no: linNo.trim() } : {}),
       logo_url: logoUrl,
+      color_code: colorCode ? colorCode.toUpperCase() : null,
       gst_doc_url: gstDocUrl,
       pan_doc_url: panDocUrl,
       cin_doc_url: cinDocUrl,
@@ -1279,6 +1287,100 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
                 </div>
               </div>
 
+              {/* Company branding: logo + colour code (applied to this company's whole workspace) */}
+              <div className="space-y-3">
+              {/* Logo Upload Card */}
+              <div className="flex items-center justify-between rounded-xl border p-3.5 bg-muted/20">
+                <div className="flex items-center gap-3">
+                  <div className="h-14 w-14 rounded-lg border bg-background flex items-center justify-center overflow-hidden shrink-0">
+                    {logoUrl ? (
+                      <img
+                        src={logoUrl}
+                        alt="Logo"
+                        className="h-full w-full object-contain p-1"
+                      />
+                    ) : (
+                      <Building2 className="h-6 w-6 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold">Company Logo</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      PNG, JPG, or SVG (Shown across this company's portals and payslips)
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={logoInputRef}
+                    onChange={(e) =>
+                      handleFileUpload(e.target.files?.[0], "logo")
+                    }
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={uploadingField === "logo"}
+                    onClick={() => logoInputRef.current?.click()}
+                  >
+                    {uploadingField === "logo" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <UploadCloud className="h-3.5 w-3.5 mr-1" />
+                    )}
+                    {logoUrl ? "Change" : "Upload"}
+                  </Button>
+                  {logoUrl && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive h-8 px-2"
+                      onClick={() => setLogoUrl("")}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+                <div className="rounded-xl border p-3.5 bg-muted/20 space-y-2">
+                  <div className="text-xs font-semibold">Brand Colour Code</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    The company's dashboards, sidebar and buttons use this colour for its admins and employees.
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      aria-label="Pick brand colour"
+                      value={isValidHex(colorCode) ? colorCode : "#0F6B50"}
+                      onChange={(e) => setColorCode(e.target.value.toUpperCase())}
+                      className="h-9 w-12 cursor-pointer rounded border bg-background p-0.5"
+                    />
+                    <Input
+                      value={colorCode}
+                      onChange={(e) => setColorCode(e.target.value.trim())}
+                      placeholder="#0F6B50"
+                      maxLength={7}
+                      className="max-w-[140px] font-mono uppercase"
+                    />
+                    {colorCode && (
+                      <Button type="button" variant="ghost" size="sm" className="h-8 px-2" onClick={() => setColorCode("")}>
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                  </div>
+                  {colorCode && !isValidHex(colorCode) && (
+                    <p className="text-[11px] text-destructive">Use a 6-digit hex colour like #0F6B50.</p>
+                  )}
+                </div>
+              </div>
+
               {/* Admin credentials section (Only for new company) */}
               {!isEdit && (
                 <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-3">
@@ -1409,68 +1511,8 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
           {activeTab === "docs" && (
             <div className="space-y-4">
               <p className="text-xs text-muted-foreground">
-                Upload company documents and branding assets. Uploaded files are securely stored on S3.
+                Upload company documents. Uploaded files are securely stored on S3.
               </p>
-
-              {/* Logo Upload Card */}
-              <div className="flex items-center justify-between rounded-xl border p-3.5 bg-muted/20">
-                <div className="flex items-center gap-3">
-                  <div className="h-14 w-14 rounded-lg border bg-background flex items-center justify-center overflow-hidden shrink-0">
-                    {logoUrl ? (
-                      <img
-                        src={logoUrl}
-                        alt="Logo"
-                        className="h-full w-full object-contain p-1"
-                      />
-                    ) : (
-                      <Building2 className="h-6 w-6 text-muted-foreground" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold">Company Logo</div>
-                    <div className="text-[11px] text-muted-foreground">
-                      PNG, JPG, or SVG (Used in employee portals and payslips)
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="file"
-                    ref={logoInputRef}
-                    onChange={(e) =>
-                      handleFileUpload(e.target.files?.[0], "logo")
-                    }
-                    accept="image/*"
-                    className="hidden"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={uploadingField === "logo"}
-                    onClick={() => logoInputRef.current?.click()}
-                  >
-                    {uploadingField === "logo" ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <UploadCloud className="h-3.5 w-3.5 mr-1" />
-                    )}
-                    {logoUrl ? "Change" : "Upload"}
-                  </Button>
-                  {logoUrl && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive h-8 px-2"
-                      onClick={() => setLogoUrl("")}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </div>
-              </div>
 
               {/* GST Certificate */}
               <div className="flex items-center justify-between rounded-xl border p-3.5 bg-muted/20">
