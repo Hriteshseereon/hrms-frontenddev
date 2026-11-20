@@ -54,7 +54,6 @@ import { BrandLogo } from "@/components/brand/BrandLogo";
 import { cn } from "@/lib/utils";
 
 import {
-  ORGANIZATION,
   ROLE_NAV,
   canOpen,
   roleInitials,
@@ -136,36 +135,18 @@ export const ORG_NAV_GROUPS = [
       },
     ],
   },
-  {
-    label: "Company Configuration",
-    items: [
-      {
-        to: "/org/departments",
-        label: "Department",
-        icon: Building,
-      },
-      {
-        to: "/org/designations",
-        label: "Designation",
-        icon: FileBadge,
-      },
-      {
-        to: "/org/grades",
-        label: "Department Grade",
-        icon: Layers,
-      },
-      {
-        to: "/org/categories",
-        label: "Category",
-        icon: Tags,
-      },
-      {
-        to: "/org/sections",
-        label: "Department Section",
-        icon: Network,
-      },
-    ],
-  },
+  // MOVED to Master Data (MastersView.jsx › "Company configuration"): Department, Designation,
+  // Department Grade, Category, Department Section. Un-comment to bring the sidebar group back.
+  // {
+  //   label: "Company Configuration",
+  //   items: [
+  //     { to: "/org/departments", label: "Department", icon: Building },
+  //     { to: "/org/designations", label: "Designation", icon: FileBadge },
+  //     { to: "/org/grades", label: "Department Grade", icon: Layers },
+  //     { to: "/org/categories", label: "Category", icon: Tags },
+  //     { to: "/org/sections", label: "Department Section", icon: Network },
+  //   ],
+  // },
   {
     label: "People",
     items: [
@@ -429,7 +410,7 @@ export function OrgSidebar({
           </div>
         )}
 
-        <nav className="flex-1 space-y-3 overflow-y-auto px-3 py-4">
+        <nav className="scroll-sidebar flex-1 space-y-3 overflow-y-auto px-3 py-4">
 
           {/*
             TEMPORARILY DISABLED:
@@ -456,7 +437,7 @@ export function OrgSidebar({
                       ·{" "}
                       {collective
                         ? (scope.tenant?.name ?? "All companies")
-                        : (activeOrg?.name ?? ORGANIZATION.name)}
+                        : (activeOrg?.name ?? "Company")}
                     </div>
                   </div>
                 </div>

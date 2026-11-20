@@ -395,7 +395,7 @@ export function RetentionReport({ exits }) {
               onClick={() =>
                 exportReportPdf({
                   title: "Employee Retention Report",
-                  subtitle: "Seereon Consulting & IT Services · HR KRA",
+                  subtitle: "HR KRA",
                   summary: [
                     { label: "Cases", value: String(cases.length) },
                     { label: "Retained", value: String(retained) },
@@ -1370,7 +1370,7 @@ export function ExitSurveyForm({ request, by, asInterviewer, readOnly }) {
             </Select>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Recommend Seereon?</Label>
+            <Label className="text-xs">Recommend the company?</Label>
             <Select value={recommend} onValueChange={(v) => setRecommend(v)}>
               <SelectTrigger className="h-9">
                 <SelectValue />

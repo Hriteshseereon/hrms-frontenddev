@@ -874,7 +874,7 @@ const LEGAL_KEYS = new Set([
   "pan_number", "aadhaar_number", "uan_number", "esic_number", "pf_member_id", "driving_license_number", "passport_number",
   "nominee_name", "pension_scheme", "family_details", "service_book_number",
   "aadhaar_card", "pan_card", "driving_license", "passport", "resume", "offer_letter", "appointment_letter",
-  "educational_certificate", "address_proof",
+  "educational_certificate", "address_proof", "passport_photo", "e_signature",
 ]);
 const EDUCATION_KEYS = new Set(["qualification", "institution", "year_of_passing", "education_score"]);
 
@@ -2530,6 +2530,24 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                   existing={existingDocs["address_proof"]}
                   onPreviewExisting={() => previewExistingDoc("address_proof", "address_proof")}
                   file={docFiles["address_proof"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="passport_photo"
+                  label="Passport Photo"
+                  existing={existingDocs["passport_photo"]}
+                  onPreviewExisting={() => previewExistingDoc("passport_photo", "passport_photo")}
+                  file={docFiles["passport_photo"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="e_signature"
+                  label="E-Signature"
+                  existing={existingDocs["e_signature"]}
+                  onPreviewExisting={() => previewExistingDoc("e_signature", "e_signature")}
+                  file={docFiles["e_signature"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
                 />

@@ -866,7 +866,7 @@ export function SettlementCard({ request, onOpen }) {
           employeeId: request.empId,
           position: request.designation,
           department: request.dept,
-          entity: "Seereon Consulting & IT Services Pvt. Ltd.",
+          entity: "the Company",
           lastWorkingDay: fmtDate(request.noticeEnd),
           date: new Date().toLocaleDateString("en-IN"),
         });

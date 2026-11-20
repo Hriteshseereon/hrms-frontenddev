@@ -33,7 +33,6 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { cn } from "@/lib/utils";
 import { initials } from "@/features/employees/data/employee-directory";
 import {
-  ORGANIZATION,
   signOut,
   useCurrentUser,
   useHydrated,
@@ -228,13 +227,13 @@ function HelpdeskShell({ children }) {
           </button>
           <div className="hidden shrink-0 items-center gap-2 text-sm md:flex">
             <LifeBuoy className="text-primary h-4 w-4" />
-            <span className="font-semibold">Seereon Helpdesk</span>
+            <span className="font-semibold">Helpdesk</span>
           </div>
           <Badge
             variant="outline"
             className="border-gold/40 bg-gold/10 text-gold hidden max-w-[260px] min-w-0 truncate xl:inline-flex"
           >
-            {ORGANIZATION.name} · {me.id}
+            {me.id}
           </Badge>
           <div className="flex-1" />
           <ThemeToggle />
