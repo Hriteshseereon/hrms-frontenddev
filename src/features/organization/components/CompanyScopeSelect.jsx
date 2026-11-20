@@ -3,10 +3,16 @@
 // The hook and select keep their old shape so existing screens compile, but they pick nothing and render nothing.
 import { useSessionStore } from "@/features/auth/data/session-store";
 
-/** `{ isSuper, companyId, setCompanyId, companies }` — `isSuper` is false so no per-screen picker is drawn. */
+/**
+ * `{ isSuper, companyId, setCompanyId, companies }`. No per-screen picker is drawn (CompanyScopeSelect renders nothing),
+ * but `isSuper` is real: screens use it to send `company_id` explicitly, because the server reads the company of a
+ * Super Admin request from `company_id`, not from the X-Company-Id header (that header is only honoured by bulk import).
+ */
 export function useCompanyScope() {
   const companyId = useSessionStore((s) => s.scopeCompanyId) ?? "";
-  return { isSuper: false, companyId, companies: [], setCompanyId: () => {} };
+  const role = String(useSessionStore((s) => s.role) ?? "").toUpperCase();
+  const isSuper = role === "SUPER_ADMIN" || role === "SUPERADMIN";
+  return { isSuper, companyId, companies: [], setCompanyId: () => {} };
 }
 
 export function CompanyScopeSelect() {

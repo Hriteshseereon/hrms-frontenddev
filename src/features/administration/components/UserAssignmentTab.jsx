@@ -62,6 +62,7 @@ export function UserAssignmentTab() {
   const scope = useCompanyScope();
   const { isSuper, companyId } = scope;
   const role = useSessionStore((s) => s.role);
+  const companyName = useSessionStore((s) => s.scopeCompanyName);
   // Branch Admins and employees get 403 on these endpoints, so they never see the assign UI.
   const canAssign = isSuper || String(role ?? "").toUpperCase() === "COMPANY_ADMIN";
   const allowedBranchIds = useBranchScope();
@@ -333,24 +334,10 @@ export function UserAssignmentTab() {
                   <Building2 className="text-primary h-3.5 w-3.5" /> Company{" "}
                   <span className="text-destructive">*</span>
                 </Label>
-                <Select
-                  value={companyId}
-                  onValueChange={(val) => {
-                    scope.setCompanyId(val);
-                    resetForm();
-                  }}
-                >
-                  <SelectTrigger className="text-xs">
-                    <SelectValue placeholder="Select company..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {scope.companies.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)} className="text-xs">
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/* The company is the one chosen in the header switcher; it is sent as company_id. */}
+                <div className="bg-muted/40 rounded-md border px-3 py-2 text-xs font-medium">
+                  {companyName || "No company selected"}
+                </div>
                 <FieldError name="company_id" />
               </div>
             )}

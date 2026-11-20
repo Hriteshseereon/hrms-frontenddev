@@ -27,14 +27,19 @@ import {
 import { useOrganisation } from "@/features/organization/data/tenancy";
 import SuperAdmin_auth from "@/api/SuperAdmin_auth";
 
+const BRAND_GROUP = "The World Group";
+
+// Logo blue, sampled from the company logo: light blue at the top, deep navy at the bottom.
+const LOGO_BLUE_GRADIENT = "linear-gradient(180deg, #1c7bdc 0%, #1257a4 45%, #072a62 100%)";
+
 const LEGAL = {
   privacy: {
     title: "Privacy Policy",
     body: [
-      "Seereon HRMS processes employee data solely to run your organisation's HR, payroll, attendance, performance and compliance operations.",
+      `${BRAND_GROUP} HRMS processes employee data solely to run your organisation's HR, payroll, attendance, performance and compliance operations.`,
       "Personal data (identity, contact, KYC, bank, salary and statutory identifiers) is visible only to the roles your administrators authorise, and every sensitive screen is permission-gated.",
       "Data is retained for the period required by Indian employment, tax and statutory law (PF, ESI, PT, TDS registers) and is removed or anonymised after the retention period.",
-      "Seereon Consulting & IT Services Pvt. Ltd. does not sell or share your data with third parties. Questions: support@seereon.co.in.",
+      `${BRAND_GROUP} does not sell or share your data with third parties. Questions: support@seereon.co.in.`,
     ],
   },
   terms: {
@@ -42,7 +47,7 @@ const LEGAL = {
     body: [
       "Access is restricted to accounts issued by your organisation's administrators. Credentials are personal and must not be shared.",
       "All actions are recorded against the signed-in account; administrators can review sign-ins, approvals and changes in the audit trail.",
-      "The organisation remains the owner of its data. Seereon Consulting & IT Services Pvt. Ltd. provides the software and support under the service agreement signed with your organisation.",
+      `The organisation remains the owner of its data. ${BRAND_GROUP} provides the software and support under the service agreement signed with your organisation.`,
       "Misuse — attempting to access another person's data, circumventing permissions, or bulk-extracting records without authorisation — may lead to account suspension and disciplinary action.",
     ],
   },
@@ -149,32 +154,33 @@ function Login() {
 
   return (
     <div className="bg-background grid min-h-dvh grid-cols-1 lg:grid-cols-2">
-      <div className="bg-gradient-emerald relative hidden flex-col justify-between overflow-hidden p-12 text-white lg:flex">
+      {/* Left panel: the blue of the company logo (light blue at the top, deep navy at the bottom). */}
+      <div
+        className="relative hidden flex-col justify-between overflow-hidden p-12 text-white lg:flex"
+        style={{ backgroundImage: LOGO_BLUE_GRADIENT }}
+      >
         <div
-          className="absolute inset-0 opacity-20"
+          className="absolute inset-0 opacity-25"
           style={{
             backgroundImage:
-              "radial-gradient(circle at 20% 20%, rgba(200,169,81,0.6), transparent 50%), radial-gradient(circle at 80% 70%, rgba(200,169,81,0.35), transparent 55%)",
+              "radial-gradient(circle at 20% 20%, rgba(255,255,255,0.45), transparent 50%), radial-gradient(circle at 80% 70%, rgba(120,180,255,0.35), transparent 55%)",
           }}
         />
-        <div className="bg-gold/20 absolute -top-24 -right-24 h-96 w-96 rounded-full blur-3xl" />
+        <div className="absolute -top-24 -right-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
 
         <div className="relative">
           <BrandLogo variant="dark" />
         </div>
 
         <div className="relative max-w-md space-y-6">
-          {/* <div className="border-gold/40 text-gold inline-flex items-center gap-2 rounded-full border bg-white/5 px-3 py-1 text-[11px] font-medium tracking-wider uppercase">
-            <Sparkles className="h-3 w-3" /> Seereon HRMS · multi-company HRMS
-          </div> */}
-          <div className="border-gold/40 text-gold inline-flex items-center gap-2 rounded-full border bg-white/5 px-3 py-1 text-[11px] font-medium tracking-wider uppercase">
-  <Sparkles className="h-3 w-3" /> The World HRMS · multi-company HRMS
-</div>
+          <div className="border-gold/40 text-gold-raw inline-flex items-center gap-2 rounded-full border bg-white/5 px-3 py-1 text-[11px] font-medium tracking-wider uppercase">
+            <Sparkles className="h-3 w-3" /> The world wants to know more
+          </div>
 
           <h1 className="text-4xl leading-[1.1] font-bold tracking-tight">
             Smart Workforce.
             <br />
-            <span className="text-gold">
+            <span className="text-gold-raw">
               Intelligent Growth.
             </span>
           </h1>
@@ -212,7 +218,7 @@ function Login() {
                 key={f.t}
                 className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur"
               >
-                <div className="bg-gold/20 text-gold border-gold/30 grid h-9 w-9 place-items-center rounded-lg border">
+                <div className="bg-gold/20 text-gold-raw border-gold/30 grid h-9 w-9 place-items-center rounded-lg border">
                   <f.i className="h-4 w-4" />
                 </div>
                 <div>
@@ -225,18 +231,13 @@ function Login() {
         </div>
 
         <div className="relative flex justify-between text-xs text-white/50">
-          {/* <span>
-            © 2026 Seereon Consulting &amp; IT Services · Seereon HRMS
-          </span> */}
-          <span>
-  © 2026 Seereon Consulting &amp; IT Services
-</span>
+          <span>© 2026 {BRAND_GROUP}</span>
 
           <div className="flex flex-wrap gap-4">
             <button
               type="button"
               onClick={() => setLegal("privacy")}
-              className="hover:text-gold"
+              className="hover:text-gold-raw"
             >
               Privacy
             </button>
@@ -244,7 +245,7 @@ function Login() {
             <button
               type="button"
               onClick={() => setLegal("terms")}
-              className="hover:text-gold"
+              className="hover:text-gold-raw"
             >
               Terms
             </button>
@@ -393,8 +394,7 @@ function Login() {
             </DialogTitle>
 
             <DialogDescription>
-              Seereon HRMS · {ws.legalName || ws.name} · effective from{" "}
-              {ws.createdOn}
+              {BRAND_GROUP} HRMS · effective from {ws.createdOn}
             </DialogDescription>
           </DialogHeader>
 

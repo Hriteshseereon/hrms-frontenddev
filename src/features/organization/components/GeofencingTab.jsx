@@ -107,7 +107,7 @@ export function GeofencingTab() {
   function downloadPdf() {
     const ok = exportReportPdf({
       title: "Geofencing Configuration",
-      subtitle: "Attendance location fences — Seereon Consulting & IT Services",
+      subtitle: "Attendance location fences",
       summary: [
         { label: "Fences", value: String(rows.length) },
         { label: "Enforced", value: String(rows.filter((r) => r.enforced).length) },
@@ -154,7 +154,7 @@ export function GeofencingTab() {
             <div>
               <div className="font-semibold">Geofencing</div>
               <div className="text-muted-foreground text-xs">
-                Bind attendance marking to approved Seereon offices and client sites, with a radius
+                Bind attendance marking to approved company offices and client sites, with a radius
                 per location
               </div>
             </div>
