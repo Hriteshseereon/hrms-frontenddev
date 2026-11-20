@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Download,
   Lock,
+  Pencil,
   Plus,
   RotateCcw,
   Search,
@@ -634,20 +635,13 @@ function RunDetail({ runId, onBack, onChanged }) {
             </Button>
           )}
           {isHrViewer && <Stepper run={run} showDecisionMessages />}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => payrollRunApi.downloadRegister(run.id, run.period).catch((e) => toast.error(detailText(e)))}
-          >
-            <Download className="h-4 w-4" /> Payroll {periodMonthName} {periodYear} CSV
-          </Button>
           {["Processed", "Paid"].includes(s) && (
             <Button
               size="sm"
               variant="outline"
-              onClick={() => payrollRunApi.downloadPayslips(run.id, run.period).catch((e) => toast.error(detailText(e)))}
+              onClick={() => payrollRunApi.downloadRegister(run.id, run.period).catch((e) => toast.error(detailText(e)))}
             >
-              <Download className="h-4 w-4" /> Payslips CSV
+              <Download className="h-4 w-4" /> Payroll {periodMonthName} {periodYear} CSV
             </Button>
           )}
         </div>
@@ -910,6 +904,13 @@ function RunDetail({ runId, onBack, onChanged }) {
 
 export function PayrollRunsTab() {
   const can = useCan();
+  const currentRole = useSessionStore((s) => s.role);
+  const roles = useSessionStore((s) => s.roles);
+  const isHrViewer = [currentRole, ...roles].some((role) =>
+    /\bhr\b|human resource|\bchro\b/i.test(
+      String(typeof role === "string" ? role : role?.name ?? "").trim(),
+    ),
+  );
   const [status, setStatus] = useState("");
   const [period, setPeriod] = useState("");
   const [defaultPeriodLoaded, setDefaultPeriodLoaded] = useState(false);
@@ -955,6 +956,13 @@ export function PayrollRunsTab() {
   const createRun = async () => {
     setCreating(true);
     try {
+      const existing = await payrollRunApi.list({ period: create.period, page: 1, limit: 20 });
+      const existingRun = (existing?.items ?? []).find((item) => item.period === create.period);
+      if (existingRun) {
+        setSelected(existingRun.id);
+        toast.info(`Payroll for ${existingRun.period} already exists. Opened the existing run.`);
+        return;
+      }
       const run = await payrollRunApi.create(create);
       toast.success(`Payroll run for ${run.period} created`);
       setVersion((v) => v + 1);
@@ -999,7 +1007,12 @@ export function PayrollRunsTab() {
               <Input type="date" className="h-9 w-[160px]" value={create.pay_date} onChange={(e) => setCreate({ ...create, pay_date: e.target.value })} />
             </label>
             <Button onClick={createRun} disabled={creating || !create.period || !create.pay_date}>
-              <Plus className="h-4 w-4" /> Create payroll run
+              {data?.items?.some((item) => item.period === create.period) ? (
+                <Pencil className="h-4 w-4" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              {data?.items?.some((item) => item.period === create.period) ? "Open existing payroll" : "Create payroll run"}
             </Button>
           </CardContent>
         </Card>
@@ -1033,20 +1046,21 @@ export function PayrollRunsTab() {
                 <th className="p-3 text-right">Gross</th>
                 <th className="p-3 text-right">Net</th>
                 <th className="p-3 text-left">Prepared by</th>
+                {isHrViewer && <th className="p-3 text-right">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-border divide-y">
               {loading &&
                 Array.from({ length: 4 }, (_, i) => (
                   <tr key={i}>
-                    <td colSpan={7} className="p-3">
+                    <td colSpan={isHrViewer ? 8 : 7} className="p-3">
                       <Skeleton className="h-6 w-full" />
                     </td>
                   </tr>
                 ))}
               {!loading && !(data?.items ?? []).length && (
                 <tr>
-                  <td colSpan={7} className="text-muted-foreground p-8 text-center">
+                  <td colSpan={isHrViewer ? 8 : 7} className="text-muted-foreground p-8 text-center">
                     No payroll runs yet.{can("payroll.run") ? " Lock the month's attendance, then create one above." : ""}
                   </td>
                 </tr>
@@ -1063,6 +1077,15 @@ export function PayrollRunsTab() {
                     <td className="p-3 text-right tabular-nums">{money(r.gross)}</td>
                     <td className="p-3 text-right font-semibold tabular-nums">{money(r.net)}</td>
                     <td className="text-muted-foreground p-3">{r.prepared_by?.name ?? "—"}</td>
+                    {isHrViewer && (
+                      <td className="p-3 text-right" onClick={(event) => event.stopPropagation()}>
+                        {can("payroll.run") && (EDITABLE.includes(r.status) || r.status === "Rejected") && (
+                          <Button size="sm" variant="outline" onClick={() => setSelected(r.id)}>
+                            <Pencil className="h-3.5 w-3.5" /> Edit
+                          </Button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
             </tbody>
