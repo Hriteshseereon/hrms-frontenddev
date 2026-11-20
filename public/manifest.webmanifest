@@ -1,7 +1,7 @@
 {
-  "name": "Seereon HRMS",
-  "short_name": "Seereon HRMS",
-  "description": "HR, payroll, attendance and performance — by Seereon Consulting & IT Services.",
+  "name": "The World Group HRMS",
+  "short_name": "World HRMS",
+  "description": "HR, payroll, attendance and performance — by The World Group.",
   "start_url": "/login",
   "scope": "/",
   "display": "standalone",

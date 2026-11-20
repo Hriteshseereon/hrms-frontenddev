@@ -377,8 +377,8 @@ function EntityDashboard() {
             Welcome back, {me.name.split(" ")[0]}
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            {me.designation} · {me.dept} — here is what's happening across the
-            company today.
+            {/* {me.designation} · {me.dept} — here is what's happening across the
+            company today. */}
           </p>
         </div>
         <div className="flex gap-2">
