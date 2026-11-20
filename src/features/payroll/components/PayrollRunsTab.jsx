@@ -60,6 +60,15 @@ const money = (n) =>
   n === null || n === undefined
     ? "—"
     : `₹ ${Number(n).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const compactMoney = (n) => {
+  if (n === null || n === undefined || Number.isNaN(Number(n))) return "—";
+  const value = Number(n);
+  const magnitude = Math.abs(value);
+  const [scale, suffix] = magnitude >= 10_000_000 ? [10_000_000, "Cr"] : magnitude >= 100_000 ? [100_000, "L"] : magnitude >= 1_000 ? [1_000, "K"] : [1, ""];
+  return suffix
+    ? `₹${(value / scale).toLocaleString("en-IN", { maximumFractionDigits: 2 })} ${suffix}`
+    : money(value);
+};
 const when = (v) => {
   if (!v) return "—";
   const d = new Date(v);
@@ -303,7 +312,7 @@ function AdjustmentsDialog({ run, onClose, onChanged }) {
   );
 }
 
-function Stepper({ run }) {
+function Stepper({ run, showDecisionMessages = false }) {
   const levels = run.approval_levels ?? [];
   if (!levels.length) return null;
   return (
@@ -311,6 +320,7 @@ function Stepper({ run }) {
       {levels.map((lv, i) => {
         const a = (run.approvals ?? []).find((x) => x.level_no === lv.level_no);
         const current = run.status === "Pending Approval" && run.next_action?.level_no === lv.level_no;
+        const remarks = a?.remarks ?? a?.remark ?? a?.comment;
         return (
           <div key={lv.level_no} className="flex items-center gap-2">
             {i > 0 && <span className="bg-border h-px w-6" />}
@@ -325,9 +335,20 @@ function Stepper({ run }) {
               <div className="font-semibold">
                 {lv.level_no}. {lv.name}
               </div>
-              <div className="text-[11px]">
-                {a ? `${a.decision === "approve" ? "Approved" : "Rejected"} by ${a.by}` : current ? "Waiting" : "Pending"}
-              </div>
+              {(showDecisionMessages || !a) && (
+                <div className="text-[11px]">
+                  {a
+                    ? `${a.decision === "approve" ? "Approved" : "Rejected"} by ${a.by}`
+                    : current
+                      ? "Waiting"
+                      : "Pending"}
+                </div>
+              )}
+              {showDecisionMessages && remarks && (
+                <div className="mt-1 max-w-56 whitespace-normal border-t border-current/15 pt-1 text-[11px]">
+                  {remarks}
+                </div>
+              )}
             </div>
           </div>
         );
@@ -339,6 +360,7 @@ function Stepper({ run }) {
 function RunDetail({ runId, onBack, onChanged }) {
   const can = useCan();
   const roles = useSessionStore((s) => s.roles);
+  const currentRole = useSessionStore((s) => s.role);
   const [run, setRun] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -442,16 +464,28 @@ function RunDetail({ runId, onBack, onChanged }) {
   const isHrManager = roles.some((role) =>
     String(typeof role === "string" ? role : role?.name ?? "").trim().toLowerCase() === "hr manager",
   );
+  const isHrViewer = [currentRole, ...roles].some((role) =>
+    /\bhr\b|human resource|chro/i.test(
+      String(typeof role === "string" ? role : role?.name ?? "").trim(),
+    ),
+  );
   const canPublishPayslips = isHrManager && can("payroll.view");
   const next = run.next_action ?? {};
   const openWarnings = (run.checks ?? []).filter((c) => c.severity === "warning" && c.status === "open").length;
   const t = run.totals ?? {};
+  const [periodYear, periodMonth] = String(run.period ?? "").split("-");
+  const periodMonthName = periodMonth
+    ? new Date(Date.UTC(Number(periodYear), Number(periodMonth) - 1, 1)).toLocaleString("en-US", {
+        month: "long",
+        timeZone: "UTC",
+      })
+    : "Payroll";
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="sm" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" /> Runs
+          <ArrowLeft className="h-4 w-4" /> Back
         </Button>
         <h2 className="text-lg font-bold">Payroll {run.period}</h2>
         <StatusBadge status={s} />
@@ -466,8 +500,6 @@ function RunDetail({ runId, onBack, onChanged }) {
           Attendance Lock before continuing.
         </div>
       )}
-
-      <Stepper run={run} />
 
       <div className="flex flex-wrap gap-2">
         {canRun && EDITABLE.includes(s) && (
@@ -492,21 +524,27 @@ function RunDetail({ runId, onBack, onChanged }) {
             <Plus className="h-4 w-4" /> Adjustments
           </Button>
         )}
-        {s === "Pending Approval" && (
+        {s === "Pending Approval" && canApproveP && next.can_act && (
           <>
             <Button
               size="sm"
-              disabled={busy || !next.can_act}
-              title={!next.can_act ? (next.reason ?? "You cannot sign this level") : undefined}
-              onClick={() => quiet(() => payrollRunApi.decide(run.id, "approve"), "Approved")}
+              disabled={busy}
+              onClick={() =>
+                setPrompt({
+                  title: "Approve payroll run",
+                  label: "Reason for approval",
+                  required: true,
+                  confirmLabel: "Approve",
+                  run: (text) => act(() => payrollRunApi.decide(run.id, "approve", text), "Payroll approved"),
+                })
+              }
             >
               <Check className="h-4 w-4" /> Approve
             </Button>
             <Button
               size="sm"
               variant="destructive"
-              disabled={busy || !next.can_act}
-              title={!next.can_act ? (next.reason ?? "You cannot sign this level") : undefined}
+              disabled={busy}
               onClick={() =>
                 setPrompt({
                   title: "Reject payroll run",
@@ -537,7 +575,6 @@ function RunDetail({ runId, onBack, onChanged }) {
                 <Undo2 className="h-4 w-4" /> Send back
               </Button>
             )}
-            {!next.can_act && next.reason && <span className="text-muted-foreground self-center text-xs">{next.reason}</span>}
           </>
         )}
         {canProcess && s === "Approved" && (
@@ -567,7 +604,7 @@ function RunDetail({ runId, onBack, onChanged }) {
             <RotateCcw className="h-4 w-4" /> Reopen
           </Button>
         )}
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
           {canPublishPayslips && s === "Paid" && (
             <Button
               size="sm"
@@ -596,12 +633,13 @@ function RunDetail({ runId, onBack, onChanged }) {
               {slipsPublished ? "Salary slips generated" : "Generate salary slips"}
             </Button>
           )}
+          {isHrViewer && <Stepper run={run} showDecisionMessages />}
           <Button
             size="sm"
             variant="outline"
             onClick={() => payrollRunApi.downloadRegister(run.id, run.period).catch((e) => toast.error(detailText(e)))}
           >
-            <Download className="h-4 w-4" /> Register CSV
+            <Download className="h-4 w-4" /> Payroll {periodMonthName} {periodYear} CSV
           </Button>
           {["Processed", "Paid"].includes(s) && (
             <Button
@@ -618,18 +656,29 @@ function RunDetail({ runId, onBack, onChanged }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
         {[
           ["Employees", t.employees],
-          ["Gross", money(t.gross)],
-          ["Deductions", money(t.deductions)],
-          ["Net pay", money(t.net)],
-          ["Employer cost", money(t.employer_cost)],
-          ["PF", money(t.pf)],
-          ["ESI", money(t.esi)],
-          ["TDS", money(t.tds)],
+          ["Gross", t.gross],
+          ["Deductions", t.deductions],
+          ["Net pay", t.net],
+          ["Employer cost", t.employer_cost],
+          ["PF", t.pf],
+          ["ESI", t.esi],
+          ["TDS", t.tds],
         ].map(([label, value]) => (
           <Card key={label} className="shadow-card">
             <CardContent className="p-3">
               <div className="text-muted-foreground text-xs">{label}</div>
-              <div className="text-sm font-bold tabular-nums">{value ?? "—"}</div>
+              {label === "Employees" ? (
+                <div className="text-sm font-bold tabular-nums">{value ?? "—"}</div>
+              ) : (
+                <>
+                  <div className="truncate text-sm font-bold tabular-nums" title={money(value)}>
+                    {compactMoney(value)}
+                  </div>
+                  <div className="text-muted-foreground truncate text-[10px] tabular-nums" title={money(value)}>
+                    {money(value)}
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         ))}
@@ -637,7 +686,7 @@ function RunDetail({ runId, onBack, onChanged }) {
 
       <Tabs value={view} onValueChange={setView}>
         <TabsList>
-              <TabsTrigger value="register">Register ({registerLines.length})</TabsTrigger>
+              <TabsTrigger value="register">Employee ({registerLines.length})</TabsTrigger>
           <TabsTrigger value="checks">
             Checks ({(run.checks ?? []).filter((c) => c.status === "open").length} open)
           </TabsTrigger>
