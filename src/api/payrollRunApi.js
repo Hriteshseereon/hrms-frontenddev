@@ -65,8 +65,37 @@ export const payrollRunApi = {
     }, `payslip-${month}.pdf`),
   reopen: (id) => axios.post(`${run(id)}/reopen`).then(unwrap),
 
-  downloadRegister: (id, period) =>
-    downloadFile(`${run(id)}/register.csv`, {}, `payroll-register-${period}.csv`),
+  downloadRegister: async (id, period) => {
+    const [year, month] = String(period ?? "").split("-");
+    const monthName = month
+      ? new Date(Date.UTC(Number(year), Number(month) - 1, 1)).toLocaleString("en-US", {
+          month: "long",
+          timeZone: "UTC",
+        })
+      : "Unknown-Month";
+    const data = await payrollRunApi.get(id);
+    const lines = data?.lines ?? [];
+    const cell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const rows = [
+      ["Employee Code", "Employee Name", "Net", "Bank Account", "IFSC"],
+      ...lines.map((line) => [
+        line.employee_code,
+        line.employee_name,
+        line.net,
+        line.bank?.account_no ?? line.bank?.account_number ?? line.bank?.accountNo,
+        line.bank?.ifsc ?? line.bank?.ifsc_code ?? line.bank?.ifscCode,
+      ]),
+    ];
+    const csv = `\uFEFF${rows.map((row) => row.map(cell).join(",")).join("\r\n")}`;
+    const href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = `Payroll-${monthName}-${year || "unknown"}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(href);
+  },
   downloadPayslips: (id, period) =>
     downloadFile(`${run(id)}/payslips/export`, { format: "csv" }, `payslips-${period}.csv`),
 

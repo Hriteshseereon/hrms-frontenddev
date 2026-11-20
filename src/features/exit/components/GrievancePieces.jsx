@@ -688,7 +688,7 @@ export function GrievanceTable({ rows, onOpen, showEmployee = true }) {
             onClick={() =>
               exportReportPdf({
                 title: "Grievance Redressal Report",
-                subtitle: "Seereon Consulting & IT Services",
+                subtitle: "Grievance Redressal",
                 columns: [
                   "Ref",
                   "Employee",

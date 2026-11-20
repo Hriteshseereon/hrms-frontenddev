@@ -13,7 +13,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ORGANIZATION, can, canOpen, useCurrentUser } from "@/features/auth/data/auth-session";
+import { can, canOpen, useCurrentUser } from "@/features/auth/data/auth-session";
 import { useDirectory } from "@/features/employees/data/employee-directory";
 import { useActiveOrgId, useOrgs } from "@/features/organization/data/group-data";
 import { GroupDashboard } from "@/features/dashboard/components/GroupDashboard";
@@ -116,7 +116,7 @@ function EntityDashboard() {
     {
       label: "Total Employees",
       value: live.employees?.total != null ? String(live.employees.total) : "—",
-      delta: `${org?.name ?? ORGANIZATION.name}`,
+      delta: org?.name ?? "Active employees",
       icon: Users,
       tone: "emerald",
       to: "/org/employees",
@@ -377,8 +377,8 @@ function EntityDashboard() {
             Welcome back, {me.name.split(" ")[0]}
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            {me.designation} · {me.dept} — here is what's happening across{" "}
-            {org?.legalName ?? ORGANIZATION.legalName} today.
+            {/* {me.designation} · {me.dept} — here is what's happening across the
+            company today. */}
           </p>
         </div>
         <div className="flex gap-2">

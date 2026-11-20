@@ -536,7 +536,8 @@ export function TenantStructure({
                   company.pan_no ||
                   company.cin_no ||
                   company.tan_no ||
-                  company.pf_code) && (
+                  company.pf_code ||
+                  company.lin_no) && (
                   <div className="flex flex-wrap gap-1.5 pt-0.5 text-[11px]">
                     {company.gst_no && (
                       <span className="px-2 py-0.5 rounded bg-muted/60 text-muted-foreground font-mono">
@@ -556,6 +557,11 @@ export function TenantStructure({
                     {company.pf_code && (
                       <span className="px-2 py-0.5 rounded bg-muted/60 text-muted-foreground font-mono">
                         PF: <strong className="text-foreground">{company.pf_code}</strong>
+                      </span>
+                    )}
+                    {company.lin_no && (
+                      <span className="px-2 py-0.5 rounded bg-muted/60 text-muted-foreground font-mono">
+                        LIN: <strong className="text-foreground">{company.lin_no}</strong>
                       </span>
                     )}
                   </div>
@@ -939,6 +945,8 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
   const [tanNo, setTanNo] = useState(existing?.tan_no || "");
   const [pfCode, setPfCode] = useState(existing?.pf_code || "");
   const [esiCode, setEsiCode] = useState(existing?.esi_code || "");
+  const [linNo, setLinNo] = useState(existing?.lin_no || "");
+  const [linError, setLinError] = useState("");
 
   // Documents
   const [logoUrl, setLogoUrl] = useState(existing?.logo_url || "");
@@ -1026,6 +1034,13 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       }
     }
 
+    if (linNo.trim().length > 50) {
+      setActiveTab("statutory");
+      setLinError("LIN Number can be at most 50 characters");
+      return toast.error("LIN Number can be at most 50 characters");
+    }
+    setLinError("");
+
     const payload = {
       name: name.trim(),
       code: code.trim().toUpperCase(),
@@ -1049,6 +1064,8 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       tan_no: tanNo.trim(),
       pf_code: pfCode.trim(),
       esi_code: esiCode.trim(),
+      // Edit: always send the input so an emptied box clears the LIN. Create: leave it out when empty.
+      ...(isEdit || linNo.trim() ? { lin_no: linNo.trim() } : {}),
       logo_url: logoUrl,
       gst_doc_url: gstDocUrl,
       pan_doc_url: panDocUrl,
@@ -1105,6 +1122,15 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
         });
       }
     } catch (error) {
+      // 422 on `lin_no`: show it under the field (detail[].loc = ["body", "lin_no"]).
+      const detail = error?.response?.data?.detail;
+      const linIssue = Array.isArray(detail)
+        ? detail.find((d) => Array.isArray(d?.loc) && d.loc.includes("lin_no"))
+        : null;
+      if (linIssue) {
+        setActiveTab("statutory");
+        setLinError(linIssue.msg || "LIN Number is not valid");
+      }
       const msg = getApiErrorMessage(
         error,
         `Failed to ${isEdit ? "update" : "create"} company`,
@@ -1352,6 +1378,28 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
                     onChange={(e) => setEsiCode(e.target.value.toUpperCase())}
                     placeholder="31001234560000101"
                   />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-medium">LIN Number (Labour Identification Number)</Label>
+                  <Input
+                    value={linNo}
+                    onChange={(e) => {
+                      setLinNo(e.target.value);
+                      if (linError) setLinError("");
+                    }}
+                    maxLength={50}
+                    placeholder="e.g. 1234567890"
+                    aria-invalid={Boolean(linError)}
+                  />
+                  {linError ? (
+                    <p className="text-[11px] text-destructive">{linError}</p>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      Issued by the Shram Suvidha portal. Printed on Form XIII as the establishment&apos;s registration
+                      number.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

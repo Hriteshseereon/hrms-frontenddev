@@ -369,3 +369,56 @@ main table td:is(.font-mono, .tabular-nums),
 main table td :is(.font-mono, .tabular-nums, [data-slot="badge"]) {
   white-space: nowrap;
 }
+
+/* ---------------- Scrollbars ----------------
+   Dark brand-emerald (#0B4F3A) thumb on a transparent track, in light and dark mode. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--brand-emerald-dark) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--brand-emerald-dark);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--brand-emerald);
+}
+*::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* Scrollbars that blend into the surface they sit on: the track is the surface colour and the
+   thumb is a slightly lighter tint of it. Set --scroll-surface to the surface's background. */
+.scroll-blend {
+  scrollbar-color: color-mix(in oklab, var(--scroll-surface), white 16%) var(--scroll-surface);
+}
+.scroll-blend::-webkit-scrollbar-track {
+  background: var(--scroll-surface);
+}
+.scroll-blend::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--scroll-surface), white 16%);
+}
+.scroll-blend::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--scroll-surface), white 28%);
+}
+/* App sidebar (its own colour) */
+[data-sidebar="content"],
+.scroll-sidebar {
+  --scroll-surface: var(--sidebar);
+}
+[data-sidebar="content"] {
+  scrollbar-color: color-mix(in oklab, var(--sidebar), white 16%) var(--sidebar);
+}
+[data-sidebar="content"]::-webkit-scrollbar-track {
+  background: var(--sidebar);
+}
+[data-sidebar="content"]::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--sidebar), white 16%);
+}
