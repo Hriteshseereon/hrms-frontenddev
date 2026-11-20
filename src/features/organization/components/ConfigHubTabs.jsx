@@ -120,7 +120,7 @@ export function DocMasterTab() {
       department: "Engineering",
       grade: "G4",
       branch: "Bhubaneswar HQ",
-      entity: "Seereon Consulting & IT Services Pvt. Ltd.",
+      entity: "the Company",
       ctc: "18,00,000",
       monthlyGross: "1,26,000",
       basic: "60,000",

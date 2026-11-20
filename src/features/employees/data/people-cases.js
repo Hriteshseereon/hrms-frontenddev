@@ -268,7 +268,7 @@ export function promotionLetterValues(c) {
 /** The legal entity an employee's letters are issued by — their own company, not the group default. */
 export const entityOfEmployee = (empId) => {
   const org = getOrg(findEmployee(empId)?.orgId);
-  return org?.legalName || org?.name || "Seereon Consulting & IT Services Pvt. Ltd.";
+  return org?.legalName || org?.name || "the Company";
 };
 export const promotionTemplate = (letterType, empId) =>
   templatesOf(letterType, empId ? entityOfEmployee(empId) : undefined)[0];

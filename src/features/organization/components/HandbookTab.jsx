@@ -93,7 +93,7 @@ export function HandbookTab() {
                         renderTemplate(t, {
                           version: current.version,
                           date: current.publishedOn,
-                          entity: "Seereon Consulting & IT Services Pvt. Ltd.",
+                          entity: "the Company",
                         });
                       else toast.success(`Opening ${current.fileName}`);
                     }}

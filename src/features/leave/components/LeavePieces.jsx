@@ -2106,7 +2106,7 @@ export function EmployeeLeaveSheet({ empId, onClose }) {
                   </div>
                   {rows.length === 0 && (
                     <p className="text-muted-foreground text-sm">
-                      No leave applications raised in Seereon HRMS yet.
+                      No leave applications raised yet.
                       {balances.some((b) => b.used > 0)
                         ? ` Migrated usage before go-live: ${balances
                             .filter((b) => b.used > 0)

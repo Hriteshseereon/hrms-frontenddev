@@ -816,6 +816,8 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 { type: "appointment_letter", label: "Appointment Letter", url: merged.appointment_letter_url },
                 { type: "educational_certificate", label: "Educational Certificate", url: merged.educational_certificate_url },
                 { type: "address_proof", label: "Address Proof", url: merged.address_proof_url },
+                { type: "passport_photo", label: "Passport Photo", url: merged.passport_photo_url },
+                { type: "e_signature", label: "E-Signature", url: merged.e_signature_url },
                 { type: "passbook", label: "Cancelled Cheque / Passbook", url: merged.passbook_url },
               ].map(({ type, label, url }) => (
                 <div

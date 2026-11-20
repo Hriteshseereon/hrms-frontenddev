@@ -54,7 +54,17 @@ import {
   LifeBuoy,
   BellRing,
   Search,
+  FileBadge,
+  Tags,
+  Network,
 } from "lucide-react";
+
+// Company configuration (moved here from the sidebar)
+import Department from "@/features/organization/Department";
+import Designation from "@/features/organization/Designation";
+import Grade from "@/features/organization/Grade";
+import Category from "@/features/organization/Category";
+import Section from "@/features/organization/Section";
 
 import { Download, Eye, Pencil, Trash2 } from "lucide-react";
 
@@ -1737,12 +1747,16 @@ const GROUPS = [
         label: "Colours & branding, security, notifications",
         icon: Palette,
       },
-      {
-        key: "paygrade",
-        label: "Pay grades & bands",
-        icon: Layers,
-        perm: "payroll.manage",
-      },
+    ],
+  },
+  {
+    group: "Company configuration",
+    items: [
+      { key: "departments", label: "Department", icon: Building },
+      { key: "designations", label: "Designation", icon: FileBadge },
+      { key: "deptgrades", label: "Department Grade", icon: Layers },
+      { key: "categories", label: "Category", icon: Tags },
+      { key: "sections", label: "Department Section", icon: Network },
     ],
   },
   {
@@ -1832,6 +1846,12 @@ const GROUPS = [
   {
     group: "Payroll & statutory",
     items: [
+      {
+        key: "paygrade",
+        label: "Pay grades & bands",
+        icon: Layers,
+        perm: "payroll.manage",
+      },
       {
         key: "salaryconfig",
         label: "Salary configuration & payroll policy",
@@ -2062,7 +2082,7 @@ function Masters() {
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[290px_1fr]">
         <Card className="shadow-card lg:sticky lg:top-4">
-          <CardContent className="max-h-[calc(100vh-8rem)] space-y-4 overflow-y-auto p-3">
+          <CardContent className="scroll-blend [--scroll-surface:var(--card)] max-h-[calc(100vh-8rem)] space-y-4 overflow-y-auto p-3">
             {visible.map((g) => (
               <div key={g.group} className="space-y-1">
                 <div className="text-muted-foreground px-3 text-[11px] font-semibold tracking-wider uppercase">
@@ -2100,6 +2120,16 @@ function Masters() {
           {tab === "entities" && <GroupsWorkspace />}
 
           {tab === "branding" && <OrgSettings />}
+
+          {tab === "departments" && <Department />}
+
+          {tab === "designations" && <Designation />}
+
+          {tab === "deptgrades" && <Grade />}
+
+          {tab === "categories" && <Category />}
+
+          {tab === "sections" && <Section />}
 
           {tab === "paygrade" && (
             <CrudSection
