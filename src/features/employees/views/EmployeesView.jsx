@@ -874,7 +874,7 @@ const LEGAL_KEYS = new Set([
   "pan_number", "aadhaar_number", "uan_number", "esic_number", "pf_member_id", "driving_license_number", "passport_number",
   "nominee_name", "pension_scheme", "family_details", "service_book_number",
   "aadhaar_card", "pan_card", "driving_license", "passport", "resume", "offer_letter", "appointment_letter",
-  "educational_certificate", "address_proof", "passport_photo", "e_signature",
+  "educational_certificate", "address_proof", "passport_photo", "e_signature", "employer_signature",
 ]);
 const EDUCATION_KEYS = new Set(["qualification", "institution", "year_of_passing", "education_score"]);
 
@@ -2548,6 +2548,15 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                   existing={existingDocs["e_signature"]}
                   onPreviewExisting={() => previewExistingDoc("e_signature", "e_signature")}
                   file={docFiles["e_signature"]}
+                  onSelect={handleDocSelect}
+                  onRemove={handleDocRemove}
+                />
+                <FileUpload
+                  name="employer_signature"
+                  label="Signature of the Employer"
+                  existing={existingDocs["employer_signature"]}
+                  onPreviewExisting={() => previewExistingDoc("employer_signature", "employer_signature")}
+                  file={docFiles["employer_signature"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
                 />

@@ -818,6 +818,7 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 { type: "address_proof", label: "Address Proof", url: merged.address_proof_url },
                 { type: "passport_photo", label: "Passport Photo", url: merged.passport_photo_url },
                 { type: "e_signature", label: "E-Signature", url: merged.e_signature_url },
+                { type: "employer_signature", label: "Signature of the Employer", url: merged.employer_signature_url },
                 { type: "passbook", label: "Cancelled Cheque / Passbook", url: merged.passbook_url },
               ].map(({ type, label, url }) => (
                 <div
