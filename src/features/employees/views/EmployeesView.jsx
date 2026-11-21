@@ -61,7 +61,22 @@ import {
   RefreshCw,
   Pencil,
   Eye,
+  ShieldCheck,
+  ShieldOff,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { CompanyAdminDialog } from "@/features/employees/components/CompanyAdminDialog";
+import {
+  canManageCompanyAdmins,
+  companyIdFor,
+  isOwnRow,
+} from "@/features/employees/data/companyAdmin";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -182,6 +197,22 @@ function Employees() {
   const [apiError, setApiError] = useState(null);
   const [editingEmployee, setEditingEmployee] = useState(null);
   const [downloadingFormXiiiId, setDownloadingFormXiiiId] = useState(null);
+  // "Make / Remove Company Admin": { employee, mode, companyId } while the confirm card is open.
+  const [adminAction, setAdminAction] = useState(null);
+  const canSetCompanyAdmin = canManageCompanyAdmins(roleUpper);
+  const askCompanyAdmin = (employee, mode) => {
+    const companyId = companyIdFor({
+      role: roleUpper,
+      sessionCompanyId: session.companyId,
+      scopeCompanyId: session.scopeCompanyId,
+      employee,
+    });
+    if (!companyId) {
+      toast.error("Select a company first");
+      return;
+    }
+    setAdminAction({ employee, mode, companyId });
+  };
 
   // Debounce search query by 350ms
   useEffect(() => {
@@ -651,15 +682,45 @@ function Employees() {
                                 <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
                               </Button>
                             )}
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={() => setSelected(e)}
-                              aria-label={`View ${e.name}`}
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
+                            {canSetCompanyAdmin ? (
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    aria-label={`More actions for ${e.name}`}
+                                  >
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onSelect={() => setSelected(e)}>
+                                    <Eye className="h-4 w-4" /> View details
+                                  </DropdownMenuItem>
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem onSelect={() => askCompanyAdmin(e, "make")}>
+                                    <ShieldCheck className="h-4 w-4" /> Make Company Admin
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={isOwnRow(e, session.userId)}
+                                    onSelect={() => askCompanyAdmin(e, "remove")}
+                                  >
+                                    <ShieldOff className="h-4 w-4" /> Remove Company Admin
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => setSelected(e)}
+                                aria-label={`View ${e.name}`}
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -757,6 +818,12 @@ function Employees() {
       </Tabs>
 
       <EmployeeLeaveSheet empId={leaveFor} onClose={() => setLeaveFor(null)} />
+
+      <CompanyAdminDialog
+        action={adminAction}
+        onClose={() => setAdminAction(null)}
+        onDone={() => fetchBackendEmployees()}
+      />
 
       {/* Details Dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
