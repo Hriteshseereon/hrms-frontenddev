@@ -1,7 +1,8 @@
 // Payroll runs on the real API: the server calculates, checks and approves; this screen only shows its numbers
 // and offers the actions the permissions / next_action allow.
 import Link from "@/lib/router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import {
   ArrowLeft,
   Check,
@@ -16,6 +17,7 @@ import {
   Send,
   ShieldAlert,
   Trash2,
+  Upload,
   Undo2,
   X,
 } from "lucide-react";
@@ -57,6 +59,52 @@ const SEVERITY_TONE = {
 };
 const EDITABLE = ["Draft", "Checks Failed", "Checks Passed"];
 
+const normalizeHeader = (value) => String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+async function parsePaymentStatusExcel(file) {
+  if (!file || !/\.xlsx?$/i.test(file.name)) throw new Error("Choose an Excel file (.xlsx or .xls).");
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+  if (!workbook.SheetNames.length) throw new Error("The workbook has no worksheets.");
+
+  const records = [];
+  workbook.SheetNames.forEach((sheetName) => {
+    const sheetStatus = /unpaid/i.test(sheetName) ? "Unpaid" : /paid/i.test(sheetName) ? "Paid" : "";
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "" });
+    rows.forEach((source) => {
+      const row = Object.fromEntries(Object.entries(source).map(([key, value]) => [normalizeHeader(key), value]));
+      const pick = (...keys) => keys.map(normalizeHeader).map((key) => row[key]).find((value) => value !== undefined && value !== "");
+      const employeeCode = pick("Employee Code", "Emp Code", "Employee ID", "Code");
+      const employeeName = pick("Employee Name", "Employee", "Name");
+      if (!employeeCode && !employeeName) return;
+
+      const rawStatus = pick("Payment Status", "Paid Status", "Paid/Unpaid", "Status", "Payment");
+      const paymentReference = pick("UTR", "Payment Reference", "Transaction ID", "Reference");
+      let status = sheetStatus;
+      if (rawStatus !== undefined) {
+        const value = String(rawStatus).trim().toLowerCase();
+        if (/unpaid|pending|failed|reject|^no$|^false$/.test(value)) status = "Unpaid";
+        else if (/paid|success|complete|settled|^yes$|^true$/.test(value)) status = "Paid";
+        else throw new Error(`Unrecognized payment status "${rawStatus}" for ${employeeCode || employeeName}.`);
+      } else if (!status && paymentReference !== undefined) {
+        status = String(paymentReference).trim() ? "Paid" : "Unpaid";
+      }
+      if (!status) {
+        throw new Error("Add a Payment Status column, use Paid and Unpaid worksheet names, or include a UTR/Payment Reference column.");
+      }
+      records.push({
+        employeeCode: String(employeeCode ?? "").trim(),
+        employeeName: String(employeeName ?? "").trim(),
+        net: pick("Net", "Net Pay", "Amount", "Paid Amount"),
+        bankAccount: pick("Bank Account", "Account Number", "Account No", "Account No."),
+        ifsc: pick("IFSC", "IFSC Code"),
+        status,
+      });
+    });
+  });
+  if (!records.length) throw new Error("No employee payment rows were found in the workbook.");
+  return records;
+}
+
 const money = (n) =>
   n === null || n === undefined
     ? "—"
@@ -69,6 +117,11 @@ const compactMoney = (n) => {
   return suffix
     ? `₹${(value / scale).toLocaleString("en-IN", { maximumFractionDigits: 2 })} ${suffix}`
     : money(value);
+};
+const uploadedMoney = (value) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const amount = typeof value === "number" ? value : Number(String(value).replace(/[₹,\s]/g, ""));
+  return Number.isFinite(amount) ? money(amount) : String(value);
 };
 const when = (v) => {
   if (!v) return "—";
@@ -368,6 +421,8 @@ function RunDetail({ runId, onBack, onChanged }) {
   const [view, setView] = useState("register");
   const [q, setQ] = useState("");
   const [state, setState] = useState("");
+  const [paymentRows, setPaymentRows] = useState([]);
+  const [uploadingPayments, setUploadingPayments] = useState(false);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
   const [prompt, setPrompt] = useState(null);
@@ -375,6 +430,7 @@ function RunDetail({ runId, onBack, onChanged }) {
   const [adjOpen, setAdjOpen] = useState(false);
   const [downloadingSlipId, setDownloadingSlipId] = useState("");
   const [publishedRunId, setPublishedRunId] = useState("");
+  const paymentFileInput = useRef(null);
 
   const load = useCallback(
     async (params) => {
@@ -398,6 +454,9 @@ function RunDetail({ runId, onBack, onChanged }) {
     run?.payslips_published_at || run?.payslips_published || publishedRunId === run?.id,
   );
   const slipsAvailable = run?.status === "Paid" || slipsPublished;
+  const canUploadPayments = can("payroll.process") || can("finance.manage");
+  const paidRows = paymentRows.filter((row) => row.status === "Paid");
+  const unpaidRows = paymentRows.filter((row) => row.status === "Unpaid");
   const registerLines = run?.lines ?? [];
   const totalPages = Math.max(1, Math.ceil(registerLines.length / limit));
   const pageLines = registerLines.slice((page - 1) * limit, page * limit);
@@ -405,6 +464,21 @@ function RunDetail({ runId, onBack, onChanged }) {
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
   }, [totalPages]);
+  const uploadPaymentWorkbook = async (file) => {
+    if (!file) return;
+    setUploadingPayments(true);
+    try {
+      const rows = await parsePaymentStatusExcel(file);
+      setPaymentRows(rows);
+      setView("paid");
+      toast.success(`Loaded ${rows.length} payment rows from ${file.name}`);
+    } catch (e) {
+      toast.error(e?.message || "Could not read the payment workbook.");
+    } finally {
+      setUploadingPayments(false);
+      if (paymentFileInput.current) paymentFileInput.current.value = "";
+    }
+  };
   const downloadEmployeePayslip = async (line) => {
     if (!run?.id || !line.employee_id) {
       toast.error("The payroll run or employee ID is missing for this payslip.");
@@ -606,6 +680,26 @@ function RunDetail({ runId, onBack, onChanged }) {
           </Button>
         )}
         <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+          {canUploadPayments && ["Processed", "Paid"].includes(s) && (
+            <>
+              <input
+                ref={paymentFileInput}
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={(event) => uploadPaymentWorkbook(event.target.files?.[0])}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={uploadingPayments}
+                onClick={() => paymentFileInput.current?.click()}
+                title="Excel needs a Payment Status column, Paid and Unpaid sheets, or a UTR/Payment Reference column."
+              >
+                <Upload className="h-4 w-4" /> {uploadingPayments ? "Reading Excel…" : "Upload payment Excel"}
+              </Button>
+            </>
+          )}
           {canPublishPayslips && s === "Paid" && (
             <Button
               size="sm"
@@ -680,13 +774,66 @@ function RunDetail({ runId, onBack, onChanged }) {
 
       <Tabs value={view} onValueChange={setView}>
         <TabsList>
-              <TabsTrigger value="register">Employee ({registerLines.length})</TabsTrigger>
+          <TabsTrigger value="register">Employee ({registerLines.length})</TabsTrigger>
+          {canUploadPayments && ["Processed", "Paid"].includes(s) && (
+            <>
+              <TabsTrigger value="paid">Paid ({paidRows.length})</TabsTrigger>
+              <TabsTrigger value="unpaid">Unpaid ({unpaidRows.length})</TabsTrigger>
+            </>
+          )}
           <TabsTrigger value="checks">
             Checks ({(run.checks ?? []).filter((c) => c.status === "open").length} open)
           </TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
       </Tabs>
+
+      {(view === "paid" || view === "unpaid") && (
+        <Card className="shadow-card overflow-hidden">
+          <CardContent className="flex items-center justify-between gap-3 border-b p-3">
+            <div className="text-sm font-semibold">{view === "paid" ? "Paid employees" : "Unpaid employees"}</div>
+            <div className="text-muted-foreground text-xs">Uploaded from Excel · {view === "paid" ? paidRows.length : unpaidRows.length} rows</div>
+          </CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40 text-muted-foreground text-xs uppercase">
+                <tr>
+                  <th className="p-3 text-left">Employee Code</th>
+                  <th className="p-3 text-left">Employee Name</th>
+                  <th className="p-3 text-right">Net</th>
+                  <th className="p-3 text-left">Bank Account</th>
+                  <th className="p-3 text-left">IFSC</th>
+                  <th className="p-3 text-left">Payment Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-border divide-y">
+                {(view === "paid" ? paidRows : unpaidRows).length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="text-muted-foreground p-8 text-center">
+                      No {view} rows found in the uploaded workbook.
+                    </td>
+                  </tr>
+                ) : (
+                  (view === "paid" ? paidRows : unpaidRows).map((row, index) => (
+                    <tr key={`${row.employeeCode}-${index}`}>
+                      <td className="p-3">{row.employeeCode || "—"}</td>
+                      <td className="p-3">{row.employeeName || "—"}</td>
+                      <td className="p-3 text-right tabular-nums">{uploadedMoney(row.net)}</td>
+                      <td className="p-3">{row.bankAccount || "—"}</td>
+                      <td className="p-3">{row.ifsc || "—"}</td>
+                      <td className="p-3">
+                        <Badge variant="outline" className={row.status === "Paid" ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-amber-300 bg-amber-50 text-amber-700"}>
+                          {row.status}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       {view === "register" && (
         <Card className="shadow-card overflow-hidden">
