@@ -61,6 +61,13 @@ export function useOrgMode() {
 export function canDo(permission, s = useSessionStore.getState()) {
   if (!s.isAuthenticated) return true; // mock / signed-out preview
   if (isAdminRole(s.role)) return true; // admins hold everything in their scope; the backend still enforces
+  // HR prepares monthly payroll runs; approval and processing remain separate permissions.
+  if (permission === "payroll.run") {
+    const roles = [s.role, ...(Array.isArray(s.roles) ? s.roles : [])].map((role) =>
+      String(typeof role === "string" ? role : role?.name ?? "").trim(),
+    );
+    if (roles.some((name) => /\bhr\b|human resource|\bchro\b|payroll admin/i.test(name))) return true;
+  }
   const list = Array.isArray(s.permissions) ? s.permissions : [];
   return list.includes("*") || list.includes(permission);
 }
