@@ -50,7 +50,7 @@ function CandidatePortal() {
     <div className="bg-muted/30 min-h-dvh">
       <header className="bg-gradient-emerald text-white">
         <div className="mx-auto flex max-w-4xl items-center justify-between gap-3 px-4 py-5 sm:px-6">
-          <BrandLogo variant="dark" />
+          <BrandLogo variant="dark" fixed />
           <span className="text-xs text-white/70">Candidate portal · secure link</span>
         </div>
       </header>
