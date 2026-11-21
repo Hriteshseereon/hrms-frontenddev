@@ -25,6 +25,8 @@ const INITIAL_STATE = {
   accessLoaded: false, // true once the access fields above came from the backend in this page load
   accessError: null, // { reason: "module" | "permission", path } — set by a 403 from the API client
   companyName: null, // company.name from login / GET /me
+  companyLogoUrl: null, // company.logo_url — shown instead of the product logo
+  companyColorCode: null, // company.color_code (#RRGGBB) — drives the workspace theme
   scopeCompanyId: getScopeCompany().id, // Super Admin: company being worked in (sent as X-Company-Id); "" = organisation mode
   scopeCompanyName: getScopeCompany().name,
   needCompany: false, // set by a 400 "Select a company": opens the company picker
@@ -120,6 +122,8 @@ export const useSessionStore = create()(
           ...accessFields(loginResponse),
           redirectPortal: redirect_portal,
           companyName: loginResponse.company?.name ?? null,
+          companyLogoUrl: loginResponse.company?.logo_url || null,
+          companyColorCode: loginResponse.company?.color_code || null,
           branchName: loginResponse.branch?.name ?? null,
           designationType: user.designation_type || null,
           mustChangePassword: Boolean(
@@ -145,6 +149,8 @@ export const useSessionStore = create()(
             ? { redirectPortal: me.redirect_portal }
             : {}),
           companyName: me.company?.name ?? null,
+          companyLogoUrl: me.company?.logo_url || null,
+          companyColorCode: me.company?.color_code || null,
           branchName: me.branch?.name ?? null,
         });
       },
@@ -231,6 +237,8 @@ export const useSessionStore = create()(
         status: state.status,
         redirectPortal: state.redirectPortal,
         companyName: state.companyName,
+        companyLogoUrl: state.companyLogoUrl,
+        companyColorCode: state.companyColorCode,
         branchName: state.branchName,
         designationType: state.designationType,
         mustChangePassword: state.mustChangePassword,

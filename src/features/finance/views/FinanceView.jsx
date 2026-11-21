@@ -14,9 +14,12 @@ function FinancePage() {
   const apiSession = useSessionStore((s) => s.isAuthenticated);
   const permissions = useSessionStore((s) => s.permissions);
   const role = useSessionStore((s) => s.role);
+  const roles = useSessionStore((s) => s.roles);
+  const canPreparePayroll = canDo("payroll.run", { isAuthenticated: apiSession, role, roles, permissions });
   const canSeePayroll =
     !apiSession ||
     canDo("payroll.view", { isAuthenticated: apiSession, role, permissions }) ||
+    canPreparePayroll ||
     (permissions ?? []).some((p) => String(p).startsWith("payroll."));
 
   return (
