@@ -169,7 +169,7 @@ function Login() {
         <div className="absolute -top-24 -right-24 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
 
         <div className="relative">
-          <BrandLogo variant="dark" />
+          <BrandLogo variant="dark" fixed />
         </div>
 
         <div className="relative max-w-md space-y-6">
@@ -257,7 +257,7 @@ function Login() {
         <div className="w-full max-w-md">
           <div className="mb-6 flex items-center justify-between">
             <div className="lg:hidden">
-              <BrandLogo />
+              <BrandLogo fixed />
             </div>
 
             <div className="ml-auto">
