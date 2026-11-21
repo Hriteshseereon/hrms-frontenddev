@@ -12,7 +12,7 @@ import MasterAdminLogin from "@/features/master-admin/pages/MasterAdminLogin";
 import MasterAdminDashboard from "@/features/master-admin/pages/MasterAdminDashboard";
 
 
-const APP_NAME = "The World Group HRMS";
+const APP_NAME = "TWG HRMS";
 
 /** Legacy and alias URLs kept from earlier versions so bookmarks keep working. */
 const REDIRECTS = {
