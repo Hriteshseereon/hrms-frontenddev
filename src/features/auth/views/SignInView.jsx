@@ -39,7 +39,7 @@ const LEGAL = {
       `${BRAND_GROUP} HRMS processes employee data solely to run your organisation's HR, payroll, attendance, performance and compliance operations.`,
       "Personal data (identity, contact, KYC, bank, salary and statutory identifiers) is visible only to the roles your administrators authorise, and every sensitive screen is permission-gated.",
       "Data is retained for the period required by Indian employment, tax and statutory law (PF, ESI, PT, TDS registers) and is removed or anonymised after the retention period.",
-      `${BRAND_GROUP} does not sell or share your data with third parties. Questions: support@seereon.co.in.`,
+      `${BRAND_GROUP} does not sell or share your data with third parties. Questions: support@theworld.co.in.`,
     ],
   },
   terms: {
@@ -349,7 +349,8 @@ function Login() {
               type="submit"
               disabled={busy || blocked}
               size="lg"
-              className="bg-gradient-emerald shadow-premium h-11 w-full text-white hover:opacity-95"
+              style={{ backgroundImage: LOGO_BLUE_GRADIENT, boxShadow: "0 6px 18px -6px rgba(18, 87, 164, 0.55)" }}
+              className="h-11 w-full border-0 text-white hover:opacity-90"
             >
               {busy ? "Signing in…" : blocked ? `Try again in ${secondsLeft}s` : "Sign in"}
             </Button>
