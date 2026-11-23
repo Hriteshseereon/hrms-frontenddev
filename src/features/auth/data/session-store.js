@@ -22,6 +22,9 @@ const INITIAL_STATE = {
   roles: [], // [{ id, name }] — empty for an employee with no role
   permissions: [], // "employee.edit", "<screen_code>.view", ...
   branchScope: "ALL", // "ALL" or an array of branch ids
+  // Screens ticked in the Permission Matrix for the user's roles: [{ key, name, submodules: [{ key, name, screens:
+  // [{ key, name, screen_code, view, edit, delete, self_service }] }] }]. null = the backend did not send it.
+  assignedModules: null,
   accessLoaded: false, // true once the access fields above came from the backend in this page load
   accessError: null, // { reason: "module" | "permission", path } — set by a 403 from the API client
   companyName: null, // company.name from login / GET /me
@@ -54,6 +57,7 @@ function accessFields(body, onlyPresent = false) {
   put("accessLoaded", true, Array.isArray(body?.permitted_modules));
   put("roles", body?.roles, Array.isArray(body?.roles));
   put("permissions", body?.permissions, Array.isArray(body?.permissions));
+  put("assignedModules", body?.assigned_modules, Array.isArray(body?.assigned_modules));
   put(
     "branchScope",
     body?.branch_scope,
