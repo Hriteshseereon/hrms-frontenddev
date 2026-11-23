@@ -200,11 +200,18 @@ export const ORG_NAV_GROUPS = [
   //     { to: "/org/goals", label: "Goals", icon: Flag },
   //   ],
   // },
+  {
+    // Managers / admins create projects and assign tasks here; assignees see them in the employee
+    // portal under My Tasks (/emp/tasks). Visibility follows the same rules as "Time & Leave" above.
+    label: "Projects & Tasks",
+    items: [
+      { to: "/org/projects", label: "Projects & Assignments", icon: FolderKanban },
+      { to: "/org/tasks", label: "Tasks", icon: ListTodo },
+    ],
+  },
   // {
   //   label: "Work & Assets",
   //   items: [
-  //     { to: "/org/projects", label: "Projects & Assignments", icon: FolderKanban },
-  //     { to: "/org/tasks", label: "Tasks", icon: ListTodo },
   //     { to: "/org/assets", label: "Asset Lifecycle", icon: Boxes },
   //     { to: "/helpdesk", label: "Helpdesk", icon: LifeBuoy },
   //   ],
