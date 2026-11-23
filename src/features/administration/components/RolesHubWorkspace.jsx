@@ -273,10 +273,10 @@ export function RolesHub() {
                     className="shadow-card hover:shadow-premium cursor-pointer transition relative group"
                     onClick={() => handleViewRole(r)}
                   >
-                    <CardContent className="space-y-3 p-5">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-1.5 font-semibold">
+                    <CardContent className="space-y-3 p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 font-semibold">
                             <span>{r.name}</span>
                             {isBuiltIn && (
                               <Badge
@@ -294,9 +294,10 @@ export function RolesHub() {
                         <Badge
                           variant="outline"
                           className={
-                            r.status === "Active"
+                            "shrink-0 " +
+                            (r.status === "Active"
                               ? "border-primary/30 bg-primary/10 text-primary"
-                              : "border-gold/30 bg-gold/10 text-gold"
+                              : "border-gold/30 bg-gold/10 text-gold")
                           }
                         >
                           {r.status}
@@ -308,26 +309,27 @@ export function RolesHub() {
                       </p>
 
                       <div
-                        className="text-muted-foreground flex items-center gap-4 pt-1 text-xs border-t border-border/50"
+                        className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 pt-2 text-xs border-t border-border/50"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <span className="flex items-center gap-1.5" title="Active users">
+                        <span className="flex items-center gap-1 whitespace-nowrap" title="Active users">
                           <Users className="h-3.5 w-3.5" /> {userCount} users
                         </span>
-                        <span className="flex items-center gap-1.5" title="Configured screens">
+                        <span className="flex items-center gap-1 whitespace-nowrap" title="Configured screens">
                           <MonitorSmartphone className="h-3.5 w-3.5" /> {screenCount} screens
                         </span>
-                        <span className="flex items-center gap-1.5" title="Branch coverage">
+                        <span className="flex items-center gap-1 whitespace-nowrap" title="Branch coverage">
                           <MapPinned className="h-3.5 w-3.5" /> {branchCount} branches
                         </span>
 
                         {canManage && (
-                          <div className="ml-auto flex items-center gap-1">
-                            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs">
+                          <div className="ml-auto flex shrink-0 items-center">
+                            <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-xs" title="Edit role">
                               <Link
                                 href={buildHref({ to: "/org/roles/new", search: { edit: r.id } })}
+                                aria-label="Edit role"
                               >
-                                <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                                <Pencil className="h-3.5 w-3.5" />
                               </Link>
                             </Button>
 
