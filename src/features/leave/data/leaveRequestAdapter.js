@@ -231,6 +231,11 @@ export async function loadEmployeeLeaveTypes() {
       }
 
       const annual = Number(o?.annual_days ?? o?.annual);
+      const rawBalance = o?.leave_balance;
+      const leaveBalance =
+        rawBalance === null || rawBalance === undefined || rawBalance === ""
+          ? NaN
+          : Number(rawBalance);
       const maxConsecutive = Number(o?.max_consecutive);
       const attachmentAfterDays = Number(o?.attachment_after_days);
 
@@ -240,6 +245,7 @@ export async function loadEmployeeLeaveTypes() {
         code: clean(o?.code),
         paid: o?.paid_leave ?? o?.paid ?? null,
         annual: Number.isFinite(annual) ? annual : null,
+        leaveBalance: Number.isFinite(leaveBalance) ? leaveBalance : null,
         creditFrequency: o?.credit ?? o?.credit_frequency ?? "",
         applicableTo: o?.applicable_to ?? "",
         maxConsecutive: Number.isFinite(maxConsecutive) ? maxConsecutive : 0,
