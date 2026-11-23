@@ -1,7 +1,7 @@
-// Self-service Tours: my tour requests, their live HOD → HR → Finance
+// Self-service Tours: my tour requests, HR → Finance approvals and assignment dispatch
 // approval trail, and outcome/proof-of-visit submission once completed.
 import { useState } from "react";
-import { Plane, Plus, Upload, FileCheck2, Download } from "lucide-react";
+import { Plane, Plus, Upload, FileCheck2, Download, Receipt, CircleDollarSign, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,10 +38,18 @@ import {
   withdrawTour,
   validateTourInput,
   TOUR_MODES,
+  tourExpenseTotals,
 } from "@/features/travel/data/tour-data";
+
+const paymentMethodLabel = (value) => ({
+  company_direct: "Company pays directly",
+  advance: "Company advance",
+  employee_reimbursement: "You pay & claim",
+}[value] ?? "You pay & claim");
 
 const tone = {
   "Pending Approval": "bg-gold/15 text-gold border-gold/30",
+  "Pending HR Dispatch": "bg-blue-500/10 text-blue-700 border-blue-500/20",
   Approved: "bg-primary/10 text-primary border-primary/20",
   Completed: "bg-primary/10 text-primary border-primary/20",
   Closed: "bg-muted text-muted-foreground border-border",
@@ -51,7 +59,7 @@ const tone = {
 /** Compact card for the employee profile / dashboard. */
 export function MyToursCard({ employeeId }) {
   const tours = useMyTours(employeeId);
-  const active = tours.filter((t) => t.status === "Pending Approval" || t.status === "Approved");
+  const active = tours.filter((t) => ["Pending Approval", "Pending HR Dispatch", "Approved"].includes(t.status));
   return (
     <Card className="shadow-card">
       <CardContent className="p-5">
@@ -93,6 +101,9 @@ export function MyToursCard({ employeeId }) {
 export function MyToursScreen() {
   const me = useCurrentUser();
   const tours = useMyTours(me.id);
+  const pendingBills = tours.reduce((count, tour) => count + (tour.expenses ?? []).filter((expense) => !expense.approved && !expense.rejected).length, 0);
+  const reimbursementDue = tours.reduce((sum, tour) => sum + tourExpenseTotals(tour).encashable, 0);
+  const settledTours = tours.filter((tour) => tour.settlement || tour.encashment).length;
 
   return (
     <div className="space-y-6">
@@ -128,14 +139,24 @@ export function MyToursScreen() {
         </div>
       </div>
 
+      <Card className="shadow-card">
+        <CardContent className="space-y-4 p-5">
+          <div>
+            <div className="text-sm font-semibold">Your travel and claims</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {[
+              ["Assigned tours", tours.length, Plane],
+              ["Bills in review", pendingBills, Receipt],
+              ["Reimbursement due", inr(reimbursementDue), CircleDollarSign],
+              ["Settled tours", settledTours, CheckCircle2],
+            ].map(([label, value, Icon]) => <div key={label} className="rounded-xl border bg-muted/20 p-3"><div className="flex items-center gap-2 text-xs text-muted-foreground"><Icon className="h-4 w-4 text-primary" />{label}</div><div className="mt-2 text-lg font-bold">{value}</div></div>)}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="space-y-3">
-        {tours.length === 0 && (
-          <Card className="shadow-card">
-            <CardContent className="text-muted-foreground p-8 text-center text-sm">
-              No tours raised yet. Requests route to your HOD, then HR, then Finance.
-            </CardContent>
-          </Card>
-        )}
+        {tours.length === 0 && <Card className="shadow-card"><CardContent className="text-muted-foreground p-8 text-center text-sm">No tour requests yet.</CardContent></Card>}
         {tours.map((t) => (
           <Card key={t.id} className="shadow-card">
             <CardContent className="p-5">
@@ -146,6 +167,7 @@ export function MyToursScreen() {
                     <Badge variant="outline" className={tone[t.status] ?? ""}>
                       {t.status}
                     </Badge>
+                    <Badge variant="outline">{paymentMethodLabel(t.paymentMethod)}</Badge>
                   </div>
                   <div className="text-muted-foreground mt-1 text-xs">
                     {t.id} · <span className="whitespace-nowrap">{t.startDate}</span> →{" "}
@@ -190,7 +212,7 @@ export function MyToursScreen() {
               </div>
 
               {(t.status === "Approved" || t.status === "Completed" || t.status === "Closed") &&
-                t.employeeId === me.id && (
+                (t.employeeId === me.id || t.travellers?.some((traveller) => traveller.id === me.id)) && (
                   <>
                     <TourOutcomesCard
                       tour={t}
@@ -261,9 +283,6 @@ function RequestTourDialog() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Request a business tour</DialogTitle>
-          <DialogDescription>
-            Routed to your HOD, then HR, then Finance for approval.
-          </DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
           <div className="space-y-1.5">

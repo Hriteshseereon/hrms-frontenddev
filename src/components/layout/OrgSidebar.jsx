@@ -163,7 +163,7 @@ export const ORG_NAV_GROUPS = [
       { to: "/org/attendance", label: "Attendance & Shifts", icon: Clock },
       // { to: "/org/leave", label: "Leave & Comp-off", icon: Plane },
       // { to: "/org/timesheets", label: "Timesheets", icon: Timer },
-      // { to: "/org/tours", label: "Tours & Travel", icon: PlaneIcon },
+      { to: "/org/tours", label: "Tours & Travel", icon: PlaneIcon },
     ],
   },
   {
