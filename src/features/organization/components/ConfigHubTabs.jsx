@@ -1999,6 +1999,7 @@ export function LeaveMasterTab({ section = "both" }) {
         const saved = await leaveApi.create({
           carryForward: false,
           maxCarry: 0,
+          leaveBalance: d.annual,
           encashable: false,
           encashOn: "Gross",
           clubbable: true,
@@ -2052,7 +2053,7 @@ export function LeaveMasterTab({ section = "both" }) {
     setSavingLeave(true);
 
     try {
-      const form = { ...edit, code: edit.code.trim() };
+      const form = { ...edit, code: (edit.code ?? "").trim() };
       const saved = leaveOrder.includes(edit.id)
         ? await leaveApi.patch(
             edit.id,
@@ -2073,7 +2074,7 @@ export function LeaveMasterTab({ section = "both" }) {
       // companies in the database, including deleted leave types).
       toast.error(
         error?.response?.status === 500
-          ? `Could not save: the code "${edit.code.trim()}" is probably already used by another company or a deleted leave type. Please use a different code.`
+          ? "Could not save the leave type. Please check the details and try again."
           : apiErrorMessage(error, "Unable to save the leave type."),
       );
     } finally {
@@ -2228,6 +2229,7 @@ export function LeaveMasterTab({ section = "both" }) {
                     name: "",
                     code: "",
                     annual: 0,
+                    leaveBalance: 0,
                     creditFrequency: "Quarterly pro-rata",
                     carryForward: false,
                     maxCarry: 0,
@@ -2256,6 +2258,7 @@ export function LeaveMasterTab({ section = "both" }) {
                     {[
                       "Type",
                       "No. of days",
+                      "Balance",
                       "Credit",
                       "Carry fwd",
                       "Encash",
@@ -2279,6 +2282,7 @@ export function LeaveMasterTab({ section = "both" }) {
                         {r.name} <span className="text-muted-foreground text-xs">{r.code}</span>
                       </td>
                       <td className="p-2">{r.annual}</td>
+                      <td className="p-2">{r.leaveBalance ?? 0}</td>
                       <td className="p-2 text-xs">{r.creditFrequency}</td>
                       <td className="p-2 text-xs">{r.carryForward ? `≤ ${r.maxCarry}` : "No"}</td>
                       <td className="p-2 text-xs">
@@ -2483,11 +2487,13 @@ export function LeaveMasterTab({ section = "both" }) {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">Code *</Label>
+                <Label className="text-xs">Code</Label>
                 <Input
-                  className="h-8"
-                  value={edit.code}
-                  onChange={(e) => setEdit({ ...edit, code: e.target.value.toUpperCase() })}
+                  className="bg-muted/40 h-8"
+                  value={edit.code ?? ""}
+                  readOnly
+                  disabled
+                  placeholder="Auto-generated on save"
                 />
               </div>
               <div className="space-y-1">
@@ -2497,6 +2503,17 @@ export function LeaveMasterTab({ section = "both" }) {
                   type="number"
                   value={edit.annual}
                   onChange={(e) => setEdit({ ...edit, annual: Number(e.target.value) })}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Leave balance (days)</Label>
+                <Input
+                  className="h-8"
+                  type="number"
+                  min={0}
+                  step="0.5"
+                  value={edit.leaveBalance ?? 0}
+                  onChange={(e) => setEdit({ ...edit, leaveBalance: Number(e.target.value) })}
                 />
               </div>
               <div className="space-y-1">
@@ -2619,20 +2636,18 @@ export function LeaveMasterTab({ section = "both" }) {
                 {nameError(edit.name, "Leave name")}
               </span>
             )}
-            {edit &&
-              rows.some((r) => r.id !== edit.id && r.code && r.code === edit.code.trim()) && (
-                <span className="text-destructive mr-auto text-xs">
-                  Leave code {edit.code} is already used.
-                </span>
-              )}
             <Button
               className="bg-gradient-emerald text-white"
               disabled={
                 !edit?.name.trim() ||
                 !!nameError(edit?.name, "Leave name") ||
-                !edit?.code.trim() ||
-                rows.some((r) => r.id !== edit.id && r.code === edit.code.trim()) ||
-                [edit.annual, edit.maxConsecutive, edit.validityDays, edit.maxCarry].some(
+                [
+                  edit.annual,
+                  edit.leaveBalance,
+                  edit.maxConsecutive,
+                  edit.validityDays,
+                  edit.maxCarry,
+                ].some(
                   (n) => n < 0,
                 ) ||
                 savingLeave
@@ -2656,6 +2671,7 @@ export function LeaveMasterTab({ section = "both" }) {
               {[
                 ["Code", viewLeave.code || "—"],
                 ["No. of days", viewLeave.annual],
+                ["Leave balance", viewLeave.leaveBalance ?? 0],
                 ["Credit", viewLeave.creditFrequency || "—"],
                 ["Carry forward", viewLeave.carryForward ? `≤ ${viewLeave.maxCarry}` : "No"],
                 [

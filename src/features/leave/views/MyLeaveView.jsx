@@ -9,7 +9,6 @@ import { Plane, Plus, Paperclip, RefreshCw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
   DialogContent,
@@ -292,7 +291,10 @@ function EmpLeave() {
       const used = live ? toNum(live.used) : daysWith("Approved");
       const pending = live ? toNum(live.pending) : daysWith("Pending");
       // Shown exactly as the server has it (the server enforces this balance when applying).
-      const entitled = live ? toNum(live.entitled ?? live.total) : toNum(t.annual);
+      // Without a live line, use the balance the admin granted (leave_balance), else the yearly days.
+      const entitled = live
+        ? toNum(live.entitled ?? live.total)
+        : toNum(t.leaveBalance ?? t.annual);
       const available =
         live && live.available != null
           ? toNum(live.available)
@@ -305,7 +307,7 @@ function EmpLeave() {
   const rows = liveRows ?? [];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
@@ -390,118 +392,71 @@ function EmpLeave() {
         </div>
       </div>
 
-      {/* New section: Leave types configured by Super Admin. */}
-      <div className="space-y-3">
-        <div>
-          <h2 className="text-base font-semibold">Leave types</h2>
-          <p className="text-muted-foreground text-xs">
-            Leave types configured by your organization.
-          </p>
-        </div>
-
-        {leaveTypesError && leaveTypes.length === 0 && (
-          <p className="text-muted-foreground text-sm">
-            Could not load leave types. Please refresh or check your employee
-            login permissions.
-          </p>
-        )}
-
-        {!leaveTypesError && leaveTypes.length === 0 && loading && (
-          <p className="text-muted-foreground text-sm">
-            Loading leave types...
-          </p>
-        )}
-
-        {!leaveTypesError && leaveTypes.length === 0 && !loading && (
-          <p className="text-muted-foreground text-sm">
-            No active leave types have been configured yet.
-          </p>
-        )}
-
-        {leaveTypes.length > 0 && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {leaveTypes.map((leaveType) => (
-              <Card key={leaveType.id} className="shadow-card">
-                <CardContent className="space-y-2 p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold">
-                      {leaveType.name}
-                    </span>
-
-                    {leaveType.paid != null && (
-                      <Badge variant="outline">
-                        {leaveType.paid ? "Paid" : "Unpaid"}
-                      </Badge>
-                    )}
-                  </div>
-
-                  {leaveType.code && (
-                    <div className="text-muted-foreground text-xs">
-                      Code: {leaveType.code}
-                    </div>
-                  )}
-
-                  {leaveType.annual != null && (
-                    <div className="text-muted-foreground text-xs">
-                      No. of days:{leaveType.annual} day(s)
-                    </div>
-                  )}
-
-                  {leaveType.creditFrequency && (
-                    <div className="text-muted-foreground text-xs">
-                      Credit: {leaveType.creditFrequency}
-                    </div>
-                  )}
-
-                  {leaveType.applicableTo && (
-                    <div className="text-muted-foreground text-xs">
-                      Applicable to: {leaveType.applicableTo}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* Employee balance cards — one per leave type, starting at 0. */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {balances
-          .map((l) => (
-            <Card key={l.key} className="shadow-card">
-              <CardContent className="space-y-2 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold">{l.type}</span>
-                  <Badge variant="outline">
-                    {l.available >= 999 ? "No limit" : `${l.available} available`}
-                  </Badge>
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+        {balances.map((l) => {
+          const unlimited = l.available >= 999;
+          const pct = l.entitled
+            ? Math.min(100, ((l.used + l.pending) / l.entitled) * 100)
+            : 0;
+          const usedPct = l.entitled
+            ? Math.min(100, (l.used / l.entitled) * 100)
+            : 0;
+          const exhausted = !unlimited && l.available <= 0;
+          return (
+            <Card
+              key={l.key}
+              className="shadow-card hover:border-primary/30 transition-colors"
+            >
+              <CardContent className="space-y-1.5 px-3 py-2.5">
+                <div className="text-xs font-semibold">{l.type}</div>
+
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="flex items-baseline gap-1">
+                    <span
+                      className={`text-xl leading-none font-bold ${exhausted ? "text-destructive" : "text-foreground"}`}
+                    >
+                      {unlimited ? "∞" : l.available}
+                    </span>
+                    <span className="text-muted-foreground text-[11px]">
+                      {unlimited ? "no limit" : `of ${l.entitled} left`}
+                    </span>
+                  </span>
                 </div>
 
-                <Progress
-                  value={
-                    l.entitled
-                      ? ((l.used + l.pending) / l.entitled) * 100
-                      : 0
-                  }
-                  className="h-2"
-                />
+                {!unlimited && (
+                  <div className="bg-muted relative h-1 w-full overflow-hidden rounded-full">
+                    <div
+                      className="bg-gold/60 absolute inset-y-0 left-0 rounded-full"
+                      style={{ width: `${pct}%` }}
+                    />
+                    <div
+                      className={`absolute inset-y-0 left-0 rounded-full ${exhausted ? "bg-destructive" : "bg-primary"}`}
+                      style={{ width: `${usedPct}%` }}
+                    />
+                  </div>
+                )}
 
-                <div className="text-muted-foreground text-xs">
-                  {l.used} used · {l.pending} on hold ·{" "}
-                  {l.available >= 999 ? "no limit" : `${l.entitled} entitled`}
+                <div className="text-muted-foreground text-[10px]">
+                  {l.used} used · {l.pending} on hold
                 </div>
               </CardContent>
             </Card>
-          ))}
+          );
+        })}
 
-        <CompOffCard employeeId={me.id} />
+        <div className="col-span-full">
+          <CompOffCard employeeId={me.id} />
+        </div>
       </div>
 
       {/* Existing employee leave request table — unchanged. */}
       <Card className="shadow-card overflow-hidden">
-        <div className="border-border border-b p-4 text-sm font-semibold">
-          My leave requests
+        <div className="border-border flex items-center justify-between border-b p-4">
+          <span className="text-sm font-semibold">My leave requests</span>
+          <span className="text-muted-foreground text-xs">
+            {rows.length} {rows.length === 1 ? "request" : "requests"}
+          </span>
         </div>
 
         <div className="overflow-x-auto">

@@ -159,9 +159,26 @@ export const ORG_NAV_GROUPS = [
   },
   {
     label: "Time & Leave",
+    // HOW A MENU ITEM SHOWS FOR A ROLE (an item must pass ALL of these, else it is hidden):
+    //  1. Menu entry exists in this list. A commented-out entry is hidden for EVERY role, even admins
+    //     (this is why Leave was missing for HR / Manager).
+    //  2. Company module is enabled: the module key (e.g. "leave", "attendance") must be in the user's
+    //     `permitted_modules` from login / GET /me. Super Admin sets this per company (Company modules).
+    //     Route -> module key map: auth/data/module-routes.json  ("/org/leave" -> "leave").
+    //  3. Role permission: Company Admin ticks screens under Roles & Permissions -> Leave Management
+    //     (Leave Requests, Leave Approvals, Leave Balance, Leave Types, Holiday Calendar) with View/Edit/Delete.
+    //     Saved as permissions "leave.<screen>.view|edit|delete"; the module shows if the role holds any
+    //     "leave.*" permission (grantedModules() in auth/data/module-access.js).
+    //  4. The role must be assigned to the employee (Employees -> user's role).
+    //  Employees with an "Employee" login see these under "Assigned modules" in the employee portal
+    //  (EmpSidebar.jsx); roles with Admin portal access (redirect_portal "org") see them here.
     items: [
       { to: "/org/attendance", label: "Attendance & Shifts", icon: Clock },
-      // { to: "/org/leave", label: "Leave & Comp-off", icon: Plane },
+      // Leave approvals / balances / leave types for HR & Managers. Needs module "leave" enabled (step 2)
+      // AND a role with Leave Management screens ticked (step 3). Keep this entry uncommented.
+      { to: "/org/leave", label: "Leave & Comp-off", icon: Plane },
+      // Hidden on purpose (not released yet). Uncomment to show; module key "timesheets"/"tours" and role
+      // permissions must be granted in the same way as above.
       // { to: "/org/timesheets", label: "Timesheets", icon: Timer },
       // { to: "/org/tours", label: "Tours & Travel", icon: PlaneIcon },
     ],
