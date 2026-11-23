@@ -1999,7 +1999,6 @@ export function LeaveMasterTab({ section = "both" }) {
         const saved = await leaveApi.create({
           carryForward: false,
           maxCarry: 0,
-          leaveBalance: d.annual,
           encashable: false,
           encashOn: "Gross",
           clubbable: true,
@@ -2228,8 +2227,7 @@ export function LeaveMasterTab({ section = "both" }) {
                     id: `LM-${String(rows.reduce((m, r) => Math.max(m, Number(r.id.replace(/\D/g, "")) || 0), 0) + 1).padStart(2, "0")}`,
                     name: "",
                     code: "",
-                    annual: 0,
-                    leaveBalance: 0,
+                    annual: "", // empty until the admin types a balance
                     creditFrequency: "Quarterly pro-rata",
                     carryForward: false,
                     maxCarry: 0,
@@ -2257,8 +2255,7 @@ export function LeaveMasterTab({ section = "both" }) {
                   <tr>
                     {[
                       "Type",
-                      "No. of days",
-                      "Balance",
+                      "Leave balance",
                       "Credit",
                       "Carry fwd",
                       "Encash",
@@ -2282,7 +2279,6 @@ export function LeaveMasterTab({ section = "both" }) {
                         {r.name} <span className="text-muted-foreground text-xs">{r.code}</span>
                       </td>
                       <td className="p-2">{r.annual}</td>
-                      <td className="p-2">{r.leaveBalance ?? 0}</td>
                       <td className="p-2 text-xs">{r.creditFrequency}</td>
                       <td className="p-2 text-xs">{r.carryForward ? `≤ ${r.maxCarry}` : "No"}</td>
                       <td className="p-2 text-xs">
@@ -2497,23 +2493,17 @@ export function LeaveMasterTab({ section = "both" }) {
                 />
               </div>
               <div className="space-y-1">
-                <Label className="text-xs">No. of days</Label>
+                <Label className="text-xs">Leave balance</Label>
                 <Input
-                  className="h-8"
+                  // Plain numeric field: no up/down spinner arrows and no change on mouse-wheel scroll.
+                  className="h-8 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   type="number"
+                  onWheel={(e) => e.currentTarget.blur()}
                   value={edit.annual}
-                  onChange={(e) => setEdit({ ...edit, annual: Number(e.target.value) })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Leave balance (days)</Label>
-                <Input
-                  className="h-8"
-                  type="number"
-                  min={0}
-                  step="0.5"
-                  value={edit.leaveBalance ?? 0}
-                  onChange={(e) => setEdit({ ...edit, leaveBalance: Number(e.target.value) })}
+                  placeholder="Enter days"
+                  onChange={(e) =>
+                    setEdit({ ...edit, annual: e.target.value === "" ? "" : Number(e.target.value) })
+                  }
                 />
               </div>
               <div className="space-y-1">
@@ -2641,9 +2631,9 @@ export function LeaveMasterTab({ section = "both" }) {
               disabled={
                 !edit?.name.trim() ||
                 !!nameError(edit?.name, "Leave name") ||
+                edit.annual === "" ||
                 [
                   edit.annual,
-                  edit.leaveBalance,
                   edit.maxConsecutive,
                   edit.validityDays,
                   edit.maxCarry,
@@ -2670,8 +2660,7 @@ export function LeaveMasterTab({ section = "both" }) {
             <dl className="divide-border divide-y text-sm">
               {[
                 ["Code", viewLeave.code || "—"],
-                ["No. of days", viewLeave.annual],
-                ["Leave balance", viewLeave.leaveBalance ?? 0],
+                ["Leave balance", viewLeave.annual],
                 ["Credit", viewLeave.creditFrequency || "—"],
                 ["Carry forward", viewLeave.carryForward ? `≤ ${viewLeave.maxCarry}` : "No"],
                 [
