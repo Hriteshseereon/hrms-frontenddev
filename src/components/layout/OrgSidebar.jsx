@@ -180,14 +180,14 @@ export const ORG_NAV_GROUPS = [
       // Hidden on purpose (not released yet). Uncomment to show; module key "timesheets"/"tours" and role
       // permissions must be granted in the same way as above.
       // { to: "/org/timesheets", label: "Timesheets", icon: Timer },
-      // { to: "/org/tours", label: "Tours & Travel", icon: PlaneIcon },
+      { to: "/org/tours", label: "Tours & Travel", icon: PlaneIcon },
     ],
   },
   {
     label: "Payroll & Finance",
     items: [
       { to: "/org/finance", label: "Payroll, Payslips & Loans", icon: DollarSign },
-      // { to: "/org/claims", label: "Claims & Insurance", icon: ReceiptText },
+      { to: "/org/claims", label: "Claims & Insurance", icon: ReceiptText },
       // { to: "/org/expenditure", label: "Expenditure Booking", icon: IndianRupee },
       // { to: "/org/tax", label: "Proof of Investment", icon: FileBadge },
       // { to: "/org/compliance", label: "Statutory Compliance", icon: ShieldCheck },
