@@ -5,14 +5,30 @@ const clean = (s) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 
+const WORK_EMAIL_PREFIX_RE = /^@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/;
+
+/** The company's work email domain ("@acme.co.in") when it is set and valid, else "". */
+export function normalizeWorkEmailPrefix(prefix) {
+  const v = String(prefix ?? "").trim().toLowerCase();
+  return WORK_EMAIL_PREFIX_RE.test(v) ? v : "";
+}
+
 /**
- * Proposed company Gmail login: first.last.org@gmail.com (org = first word of the organisation name).
- * Gmail rules: a-z, 0-9 and dots only, 6–30 characters before the "@". `attempt` > 0 appends 2, 3, … so a
- * taken address can be retried with a slightly different one.
+ * Proposed work email.
+ * - Company has a work email prefix (`domain`, e.g. "@testcase.co.in"): first-last@testcase.co.in.
+ * - Otherwise (no company picked / prefix not set yet): the company Gmail login first.last.org@gmail.com
+ *   (org = first word of the organisation name; Gmail rules: a-z, 0-9 and dots, 6–30 characters before the "@").
+ * `attempt` > 0 appends 2, 3, … so a taken address can be retried with a slightly different one.
  */
-export function generateWorkEmail({ first, last, org, attempt = 0 }) {
+export function generateWorkEmail({ first, last, org, domain, attempt = 0 }) {
   let f = clean(first);
   if (!f) return "";
+  const companyDomain = normalizeWorkEmailPrefix(domain);
+  if (companyDomain) {
+    const suffix = attempt > 0 ? String(attempt + 1) : "";
+    const local = [f, clean(last)].filter(Boolean).join("-").slice(0, 64 - suffix.length);
+    return `${local}${suffix}${companyDomain}`;
+  }
   let l = clean(last);
   let o = clean(String(org ?? "").trim().split(/\s+/)[0]);
   const suffix = attempt > 0 ? String(attempt + 1) : "";
