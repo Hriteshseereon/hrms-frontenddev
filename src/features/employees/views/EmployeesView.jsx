@@ -9,7 +9,12 @@ import {
   resolveApiUrl,
 } from "@/api/employeeApi";
 import { organizationApi } from "@/api/organizationApi";
-import { generateWorkEmail, isDuplicateWorkEmail } from "@/features/employees/data/workEmail";
+import {
+  generateWorkEmail,
+  isDuplicateWorkEmail,
+  normalizeWorkEmailPrefix,
+} from "@/features/employees/data/workEmail";
+import Company_api from "@/api/company";
 import { DocPreviewDialog } from "@/features/employees/components/DocPreviewDialog";
 import { useSearch } from "@/lib/navigation";
 import { captureFiles } from "@/lib/attachments";
@@ -1351,10 +1356,36 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       alive = false;
     };
   }, [isEdit]);
+  // Work email domain of the company the employee joins ("@testcase.co.in"). Super Admin: the picked company;
+  // everyone else: their own company. Empty when no company / no prefix → falls back to the Gmail format.
+  const workEmailCompanyId = isSuperAdmin ? selectedCompanyId : sessionCompanyId;
+  const [fetchedWorkEmailPrefix, setFetchedWorkEmailPrefix] = useState({ id: "", prefix: "" });
+  const listedCompany = backendCompanies.find((c) => String(c.id) === String(workEmailCompanyId));
+  useEffect(() => {
+    if (isEdit || !workEmailCompanyId || !isUuid(workEmailCompanyId) || listedCompany) return undefined;
+    let alive = true;
+    Company_api.getCompany(workEmailCompanyId)
+      .then((res) => {
+        const c = res?.data?.data ?? res?.data ?? {};
+        if (alive) setFetchedWorkEmailPrefix({ id: workEmailCompanyId, prefix: c?.work_email_prefix || "" });
+      })
+      .catch(() => alive && setFetchedWorkEmailPrefix({ id: workEmailCompanyId, prefix: "" }));
+    return () => {
+      alive = false;
+    };
+  }, [isEdit, workEmailCompanyId, listedCompany]);
+  const companyWorkEmailPrefix = normalizeWorkEmailPrefix(
+    listedCompany
+      ? listedCompany.work_email_prefix
+      : fetchedWorkEmailPrefix.id === workEmailCompanyId
+        ? fetchedWorkEmailPrefix.prefix
+        : "",
+  );
   const generatedWorkEmail = generateWorkEmail({
     first: firstNameVal,
     last: lastNameVal,
     org: apiOrgName || localOrgName,
+    domain: companyWorkEmailPrefix,
     attempt: emailAttempt,
   });
   const [payComponents, setPayComponents] = useState([]);
@@ -1905,6 +1936,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
               first: v.firstName,
               last: v.lastName,
               org: apiOrgName || localOrgName,
+              domain: companyWorkEmailPrefix,
               attempt,
             });
             formData.set("work_email", workEmail);
@@ -2254,8 +2286,9 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                         placeholder="Generated from the employee name"
                       />
                       <p className="text-muted-foreground mt-1 text-[11px]">
-                        Auto-generated — create this Gmail account for the employee. If it is already
-                        taken, a similar address is chosen on save.
+                        {companyWorkEmailPrefix
+                          ? `Auto-generated from the employee name and the company's work email domain (${companyWorkEmailPrefix}). If it is already taken, a similar address is chosen on save.`
+                          : "Auto-generated — create this Gmail account for the employee. If it is already taken, a similar address is chosen on save."}
                       </p>
                     </>
                   )}
