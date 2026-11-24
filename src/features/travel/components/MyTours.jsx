@@ -206,7 +206,7 @@ export function MyToursScreen() {
               <div className="mt-3 flex flex-wrap gap-2">
                 {t.chain.map((s, i) => (
                   <Badge key={i} variant="outline" className={tone[s.status] ?? ""}>
-                    {s.label}: {s.approverName} · {s.status}
+                    {s.label} · {s.status}
                   </Badge>
                 ))}
               </div>

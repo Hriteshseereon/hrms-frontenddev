@@ -30,6 +30,7 @@ import {
 import { Plus } from "lucide-react";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useSessionStore } from "@/features/auth/data/session-store";
 
 const statusTone = {
   "Pending Approval": "bg-gold/15 text-gold border-gold/30",
@@ -53,6 +54,7 @@ const isReadyToClose = (tour) => {
 
 export function TourWorkspace({ audience = "admin" }) {
   const me = useCurrentUser();
+  const sessionRoles = useSessionStore((state) => state.userId === me.id ? state.roles : []);
   const inScope = useScopeMatch();
   const allTours = useTours();
   // Roles without `tour.viewAll` (Managers) only see their own tours and the ones routed to them — the list used to
@@ -70,10 +72,10 @@ export function TourWorkspace({ audience = "admin" }) {
   const [stageFilter, setStageFilter] = useState("all");
   const [create, setCreate] = useState(false);
   const [createMethod, setCreateMethod] = useState("company_direct");
-  const roleNames = [me.role, ...(me.roles ?? [])].map((role) => String(typeof role === "string" ? role : role?.name ?? "").toLowerCase());
+  const roleNames = [me.role, ...(me.roles ?? []), ...(sessionRoles ?? [])].map((role) => String(typeof role === "string" ? role : role?.name ?? "").toLowerCase());
   const isAdminRole = roleNames.some((role) => /admin|superadmin/.test(role));
   const isFinanceRole = roleNames.some((role) => /finance|cfo|accountant|payroll admin/.test(role));
-  const canManage = ["HR", "CHRO", "Admin", "SuperAdmin", "CFO", "CEO", "COO"].includes(me.role);
+  const canManage = roleNames.some((role) => /\bhr\b|hr manager|chro|admin|superadmin|finance|cfo|ceo|coo/.test(role));
   const canCreateTour = roleNames.some((role) => /\bhr\b|chro|admin|superadmin/.test(role));
   const canSettle = isAdminRole || isFinanceRole;
 
@@ -88,7 +90,10 @@ export function TourWorkspace({ audience = "admin" }) {
 
   const pendingMine = tours.filter((t) => canDecideTour(t, me)).length;
   const employeeRequestsForHr = audience === "hr"
-    ? tours.filter((tour) => tour.status === "Pending Approval" && currentStep(tour.chain)?.role === "HR" && canDecideTour(tour, me))
+    ? tours.filter((tour) => tour.status === "Pending Approval" && ["HR", "HR Manager"].includes(currentStep(tour.chain)?.role) && canDecideTour(tour, me))
+    : [];
+  const employeeRequestsForFinance = audience === "finance"
+    ? tours.filter((tour) => tour.status === "Pending Approval" && ["CFO", "Finance Manager"].includes(currentStep(tour.chain)?.role) && canDecideTour(tour, me))
     : [];
   const spend = tours.reduce((s, t) => s + t.estimatedCost, 0);
   const expenseLines = tours.flatMap((tour) => (tour.expenses ?? []).map((expense) => ({ tour, expense })));
@@ -147,6 +152,22 @@ export function TourWorkspace({ audience = "admin" }) {
               {employeeRequestsForHr.map((tour) => <div key={tour.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4">
                 <div className="min-w-0"><div className="font-semibold">{tour.employeeName} · {tour.destination}</div><div className="mt-1 text-xs text-muted-foreground">{tour.id} · {tour.startDate} → {tour.endDate} · {tour.mode} · Estimate {inr(tour.estimatedCost)}</div><div className="mt-2 text-sm">{tour.purpose}</div><Badge variant="outline" className="mt-2">{paymentModeName(tour.paymentMethod)}</Badge></div>
                 <div className="flex gap-2"><Button size="sm" className="bg-gradient-emerald text-white" onClick={() => { const result = decideTour(tour.id, me.id, "Approved"); toast[result.ok ? "success" : "error"](result.message); }}><CheckCircle2 className="h-4 w-4" />Approve &amp; send to Finance</Button><Button size="sm" variant="outline" className="text-destructive" onClick={() => { const reason = window.prompt("Reason for rejecting this tour request?")?.trim(); if (!reason) return; const result = decideTour(tour.id, me.id, "Rejected", reason); toast[result.ok ? "success" : "error"](result.message); }}>Reject</Button></div>
+              </div>)}
+            </div>}
+          </CardContent>
+        </Card>
+      )}
+      {audience === "finance" && (
+        <Card className="border-primary/20 shadow-card">
+          <CardContent className="p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-base font-semibold"><CircleDollarSign className="h-5 w-5 text-primary" />Employee requests forwarded by HR</div>
+              <Badge variant="outline">{employeeRequestsForFinance.length} pending</Badge>
+            </div>
+            {employeeRequestsForFinance.length === 0 ? <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No employee requests are waiting for Finance.</div> : <div className="space-y-3">
+              {employeeRequestsForFinance.map((tour) => <div key={tour.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4">
+                <div className="min-w-0"><div className="font-semibold">{tour.employeeName} · {tour.destination}</div><div className="mt-1 text-xs text-muted-foreground">{tour.id} · {tour.startDate} → {tour.endDate} · {tour.mode}</div><div className="mt-2 text-sm">{tour.purpose}</div><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">Requested budget {inr(tour.estimatedCost)}</Badge><Badge variant="outline">{paymentModeName(tour.paymentMethod)}</Badge></div></div>
+                <div className="flex gap-2"><Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { const result = decideTour(tour.id, me.id, "Approved"); toast[result.ok ? "success" : "error"](result.message); }}><CheckCircle2 className="h-4 w-4" />Approve request</Button><Button size="sm" variant="outline" className="text-destructive" onClick={() => { const reason = window.prompt("Reason for rejecting this tour request?")?.trim(); if (!reason) return; const result = decideTour(tour.id, me.id, "Rejected", reason); toast[result.ok ? "success" : "error"](result.message); }}>Reject</Button></div>
               </div>)}
             </div>}
           </CardContent>
@@ -412,7 +433,7 @@ export function TourWorkspace({ audience = "admin" }) {
                 <div className="mt-3 flex flex-wrap gap-2">
                   {t.chain.map((s, i) => (
                     <Badge key={i} variant="outline" className={statusTone[s.status] ?? ""}>
-                      {s.label}: {s.approverName} · {s.status}
+                      {s.label} · {s.status}
                     </Badge>
                   ))}
                 </div>

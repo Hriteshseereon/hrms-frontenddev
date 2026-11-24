@@ -2,19 +2,23 @@ import { Plane } from "lucide-react";
 import { TourWorkspace } from "@/features/travel/components/TourWorkspace";
 import { TourRoiReport } from "@/features/travel/components/TourOutcomes";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useSessionStore } from "@/features/auth/data/session-store";
 
 function OrgTours() {
   const me = useCurrentUser();
-  const roleName = String(me.role ?? "").toLowerCase();
+  const sessionRoles = useSessionStore((state) => state.userId === me.id ? state.roles : []);
+  const roleName = [me.role, ...(me.roles ?? []), ...(sessionRoles ?? [])]
+    .map((role) => String(typeof role === "string" ? role : role?.name ?? "").toLowerCase())
+    .join(" ");
   const audience = /cfo|finance|accountant|payroll admin/.test(roleName)
     ? "finance"
     : /hr|human resource|chro/.test(roleName)
       ? "hr"
       : "admin";
   const pageCopy = {
-    admin: ["Travel administration", "Create a company-paid or advance assignment for Priyanka Das. Finance (Abinash Nayak) approves first; HR (Debasmita Das) then sends it. Employee requests follow HR → Finance."],
-    hr: ["HR travel desk", "Debasmita reviews Priyanka’s request and receipts. Employee requests go to Finance after your review; Finance-approved assignments return here for you to send to the employee."],
-    finance: ["Finance & settlement", "Abinash approves HR-created assignments before HR sends them. For employee requests, HR verifies first; then approve reimbursement, adjust advances and record payment or refund."],
+    admin: ["Travel administration", "Create company-paid or advance assignments. Finance approves first, then HR sends the assignment to the employee. Employee requests follow HR review, then Finance approval."],
+    hr: ["HR travel desk", "Review employee requests and receipts, then send eligible requests to Finance. Finance-approved assignments return here for dispatch to the employee."],
+    finance: ["Finance & settlement", "Approve requests forwarded by HR, adjust advances, record bank or payroll payments, and notify HR when settlement is complete."],
   }[audience];
   return (
     <div className="space-y-6">

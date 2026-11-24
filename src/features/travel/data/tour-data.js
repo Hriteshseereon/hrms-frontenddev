@@ -7,7 +7,10 @@
 // employee requests require HR then Finance, while HR-created assignments require Finance then HR dispatch.
 // ---------------------------------------------------------------------------
 import { createPersistentStore } from "@/lib/persist";
+import { useEffect } from "react";
 import { ORGANIZATION, can, userById } from "@/features/auth/data/auth-session";
+import { roleStore } from "@/features/auth/data/rbac-store";
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { pushAlert } from "@/features/communications/data/employee-alerts";
 import {
   buildChain,
@@ -290,7 +293,53 @@ export const TOURS_SEED = [
 ];
 
 export const tourStore = createPersistentStore("seereon.tours.v2", TOURS_SEED);
-export const useTours = () => tourStore.use();
+
+const normalizedRoleName = (value) => String(value ?? "").trim().toLowerCase();
+const assignedRoleApprover = (roleName, employeeId) => {
+  const employee = userById(employeeId);
+  const role = roleStore.get().find((item) => item.status === "Active" && normalizedRoleName(item.name) === normalizedRoleName(roleName));
+  if (!role) return null;
+  const assigned = Object.entries(role.assignedUsers ?? {})
+    .filter(([, branches]) => Array.isArray(branches) && branches.length)
+    .map(([id]) => userById(id))
+    .filter((user) => user && user.orgId === employee?.orgId);
+  return assigned.find((user) => user.id !== employeeId) ?? null;
+};
+const userHasAssignedWorkflowRole = (userId, roleNames) => roleStore.get().some((role) =>
+  role.status === "Active" && roleNames.some((name) => normalizedRoleName(name) === normalizedRoleName(role.name)) &&
+  Array.isArray(role.assignedUsers?.[userId]) && role.assignedUsers[userId].length > 0,
+);
+
+const buildTravelChain = (employeeId, roleNames) =>
+  roleNames.map((role) => {
+    const approver = assignedRoleApprover(role, employeeId);
+    return { role, label: role, approverId: approver?.id ?? null, approverName: approver?.name ?? null, status: "Pending", requesterId: employeeId };
+  });
+
+/** Replace the old default HR/CFO approvers on untouched pending requests with the currently assigned workflow roles. */
+function migratePendingTourApprovers(rows) {
+  let changed = false;
+  const migrated = rows.map((tour) => {
+    if (tour.status !== "Pending Approval" || (tour.chain ?? []).some((step) => step.status !== "Pending")) return tour;
+    const hasLegacySteps = tour.chain?.some((step) => step.role === "HR" || step.role === "CFO");
+    if (!hasLegacySteps) return tour;
+    const chain = buildTravelChain(tour.employeeId, ["HR Manager", "Finance Manager"]);
+    if (JSON.stringify(chain) === JSON.stringify(tour.chain)) return tour;
+    changed = true;
+    return { ...tour, chain };
+  });
+  return changed ? migrated : rows;
+}
+
+export const useTours = () => {
+  const tours = tourStore.use();
+  useEffect(() => {
+    const current = tourStore.get();
+    const migrated = migratePendingTourApprovers(current);
+    if (migrated !== current) tourStore.set(migrated);
+  }, [tours]);
+  return tours;
+};
 
 /** Tours the employee travels on — as the requester / primary traveller or as an assigned co-traveller. */
 export function useMyTours(employeeId) {
@@ -314,7 +363,8 @@ function notifyCurrentApprover(t) {
 }
 
 function notifyHrDispatch(t) {
-  const hr = buildChain(t.employeeId, ["HR"]).find((step) => step.approverId);
+  const hrApprover = assignedRoleApprover("HR Manager", t.employeeId);
+  const hr = hrApprover ? { approverId: hrApprover.id } : buildChain(t.employeeId, ["HR"]).find((step) => step.approverId);
   if (hr?.approverId) pushAlert({
     empId: hr.approverId,
     kind: "general",
@@ -389,9 +439,7 @@ export function submitTour(input) {
   const clash = tourClashFor(input.employeeId, input.startDate, input.endDate);
   if (clash) throw new Error(clash);
   const emp = userById(input.employeeId);
-  const chain = buildChain(input.employeeId, [...TOUR_CHAIN_ROLES]);
-  if (!chain.some((step) => step.role === "HR" && step.status === "Pending") || !chain.some((step) => step.role === "CFO" && step.status === "Pending"))
-    throw new Error("HR and Finance approvers must be configured before submitting a travel request.");
+  const chain = buildTravelChain(input.employeeId, ["HR Manager", "Finance Manager"]);
   const row = {
     id: nextTourId(),
     orgId: emp?.orgId ?? ORG,
@@ -447,9 +495,7 @@ export function createAndAssignTour(input, by) {
     const clash = tourClashFor(id, input.startDate, input.endDate);
     if (clash) return { ok: false, message: `${userById(id)?.name ?? id}: ${clash}` };
   }
-  const chain = buildChain(input.employeeId, ["CFO"]);
-  if (!chain.some((step) => step.role === "CFO" && step.status === "Pending"))
-    return { ok: false, message: "A Finance approver must be configured before assigning a tour." };
+  const chain = buildTravelChain(input.employeeId, ["Finance Manager"]);
   const row = {
     id: nextTourId(),
     orgId: emp.orgId ?? ORG,
@@ -510,7 +556,7 @@ export function recordTourSettlement(id, { amount, direction, channel, reference
   tourStore.set((items) => items.map((item) => item.id === id && !item.settlement && !item.encashment
     ? { ...item, settlement, settlementHistory: [...(item.settlementHistory ?? []), settlement] }
     : item));
-  const hrStep = tour.chain.find((step) => step.role === "HR" && step.approverId);
+  const hrStep = tour.chain.find((step) => ["HR", "HR Manager"].includes(step.role) && step.approverId);
   if (hrStep?.approverId) pushAlert({
     empId: hrStep.approverId,
     kind: "general",
@@ -604,8 +650,13 @@ export function canDecideTour(t, user) {
   if (isBarredFromChain(t.chain, user.id, t.employeeId)) return false;
   if (canActOn(t.chain, user.id, user.role, t.employeeId)) return true;
   if (user.orgId !== t.orgId) return false;
-  if (step.role === "HR") return can(user.role, "tour.hr.decide");
-  if (step.role === "CFO") return can(user.role, "tour.finance.decide");
+  const session = useSessionStore.getState();
+  const sessionRoles = session.userId === user.id ? session.roles ?? [] : [];
+  const hasSessionRole = (names) => sessionRoles.some((role) => names.some((name) => normalizedRoleName(name) === normalizedRoleName(typeof role === "string" ? role : role?.name)));
+  if (step.role === "HR" || step.role === "HR Manager")
+    return can(user.role, "tour.hr.decide") || userHasAssignedWorkflowRole(user.id, ["HR Manager"]) || hasSessionRole(["HR Manager"]);
+  if (step.role === "CFO" || step.role === "Finance Manager")
+    return can(user.role, "tour.finance.decide") || userHasAssignedWorkflowRole(user.id, ["Finance Manager"]) || hasSessionRole(["Finance Manager"]);
   return false;
 }
 
@@ -666,7 +717,9 @@ export function dispatchTourToEmployee(id, by) {
   const tour = tourStore.get().find((item) => item.id === id);
   if (!tour) return { ok: false, message: "Tour not found." };
   if (tour.status !== "Pending HR Dispatch") return { ok: false, message: "This tour is not awaiting HR dispatch." };
-  if (!by || by.orgId !== tour.orgId || !can(by.role, "tour.hr.decide"))
+  const session = useSessionStore.getState();
+  const hasSessionHrRole = session.userId === by?.id && (session.roles ?? []).some((role) => normalizedRoleName(typeof role === "string" ? role : role?.name) === "hr manager");
+  if (!by || by.orgId !== tour.orgId || (!can(by.role, "tour.hr.decide") && !userHasAssignedWorkflowRole(by.id, ["HR Manager"]) && !hasSessionHrRole))
     return { ok: false, message: "Only HR for this organization can send the tour to the employee." };
   const next = { ...tour, status: "Approved", dispatchedOn: today(), dispatchedBy: by.name };
   tourStore.set((items) => items.map((item) => item.id === id ? next : item));
