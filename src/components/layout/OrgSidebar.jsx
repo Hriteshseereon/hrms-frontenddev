@@ -170,7 +170,7 @@ export const ORG_NAV_GROUPS = [
     label: "Payroll & Finance",
     items: [
       { to: "/org/finance", label: "Payroll, Payslips & Loans", icon: DollarSign },
-      // { to: "/org/claims", label: "Claims & Insurance", icon: ReceiptText },
+      { to: "/org/claims", label: "Claims & Insurance", icon: ReceiptText },
       // { to: "/org/expenditure", label: "Expenditure Booking", icon: IndianRupee },
       // { to: "/org/tax", label: "Proof of Investment", icon: FileBadge },
       // { to: "/org/compliance", label: "Statutory Compliance", icon: ShieldCheck },

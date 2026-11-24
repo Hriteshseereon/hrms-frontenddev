@@ -31,6 +31,7 @@ import { Plus } from "lucide-react";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSessionStore } from "@/features/auth/data/session-store";
+import { AttachmentChips } from "@/components/common/AttachmentViewer";
 
 const statusTone = {
   "Pending Approval": "bg-gold/15 text-gold border-gold/30",
@@ -150,7 +151,9 @@ export function TourWorkspace({ audience = "admin" }) {
             </div>
             {employeeRequestsForHr.length === 0 ? <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No employee tour requests are waiting for HR.</div> : <div className="space-y-3">
               {employeeRequestsForHr.map((tour) => <div key={tour.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4">
-                <div className="min-w-0"><div className="font-semibold">{tour.employeeName} · {tour.destination}</div><div className="mt-1 text-xs text-muted-foreground">{tour.id} · {tour.startDate} → {tour.endDate} · {tour.mode} · Estimate {inr(tour.estimatedCost)}</div><div className="mt-2 text-sm">{tour.purpose}</div><Badge variant="outline" className="mt-2">{paymentModeName(tour.paymentMethod)}</Badge></div>
+                <div className="min-w-0"><div className="font-semibold">{tour.employeeName} · {tour.destination}</div><div className="mt-1 text-xs text-muted-foreground">{tour.id} · {tour.startDate} → {tour.endDate} · {tour.mode} · Estimate {inr(tour.estimatedCost)}</div><div className="mt-2 text-sm">{tour.purpose}</div><Badge variant="outline" className="mt-2">{paymentModeName(tour.paymentMethod)}</Badge>
+                  {(tour.expenses ?? []).length > 0 && <div className="mt-3 rounded-lg border p-3"><div className="mb-2 flex items-center justify-between gap-2 text-xs"><span className="font-semibold">Attached bills ({tour.expenses.length})</span><span>Total {inr(tour.expenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0))}</span></div><div className="space-y-2">{tour.expenses.map((expense) => <div key={expense.id} className="flex flex-wrap items-center justify-between gap-2 text-xs"><span>{expense.head} · {expense.vendor} · {expense.date} · {inr(expense.amount)}</span>{expense.receipt && <AttachmentChips names={[expense.receipt]} context={`Tour ${tour.id} receipt`} size="sm" />}</div>)}</div></div>}
+                </div>
                 <div className="flex gap-2"><Button size="sm" className="bg-gradient-emerald text-white" onClick={() => { const result = decideTour(tour.id, me.id, "Approved"); toast[result.ok ? "success" : "error"](result.message); }}><CheckCircle2 className="h-4 w-4" />Approve &amp; send to Finance</Button><Button size="sm" variant="outline" className="text-destructive" onClick={() => { const reason = window.prompt("Reason for rejecting this tour request?")?.trim(); if (!reason) return; const result = decideTour(tour.id, me.id, "Rejected", reason); toast[result.ok ? "success" : "error"](result.message); }}>Reject</Button></div>
               </div>)}
             </div>}

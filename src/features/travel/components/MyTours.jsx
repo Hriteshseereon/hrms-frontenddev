@@ -1,7 +1,7 @@
 // Self-service Tours: my tour requests, HR → Finance approvals and assignment dispatch
 // approval trail, and outcome/proof-of-visit submission once completed.
 import { useState } from "react";
-import { Plane, Plus, Upload, FileCheck2, Download, Receipt, CircleDollarSign, CheckCircle2 } from "lucide-react";
+import { Plane, Plus, Upload, FileCheck2, Download, Receipt, CircleDollarSign, CheckCircle2, Paperclip, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,8 @@ import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { departmentByName } from "@/features/organization/data/dept-data";
 import { exportReportPdf } from "@/lib/export-utils";
 import { inr } from "@/lib/store";
+import { captureFiles } from "@/lib/attachments";
+import { AttachmentChips } from "@/components/common/AttachmentViewer";
 import { TourOutcomesCard } from "@/features/travel/components/TourOutcomes";
 import { TourExpensePanel } from "@/features/travel/components/TourAdminPieces";
 import {
@@ -55,6 +57,15 @@ const tone = {
   Closed: "bg-muted text-muted-foreground border-border",
   Rejected: "bg-destructive/10 text-destructive border-destructive/20",
 };
+
+const blankTourBill = () => ({
+  head: "Travel",
+  date: "",
+  vendor: "",
+  amount: "",
+  receipt: "",
+  note: "",
+});
 
 /** Compact card for the employee profile / dashboard. */
 export function MyToursCard({ employeeId }) {
@@ -211,6 +222,23 @@ export function MyToursScreen() {
                 ))}
               </div>
 
+              {(t.expenses ?? []).length > 0 && (
+                <div className="mt-3 rounded-lg border p-3">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-semibold">Attached bills ({t.expenses.length})</span>
+                    <span className="text-muted-foreground">Total {inr(t.expenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0))}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {t.expenses.map((expense) => (
+                      <div key={expense.id} className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span>{expense.head} · {expense.vendor} · {expense.date} · {inr(expense.amount)}</span>
+                        {expense.receipt && <AttachmentChips names={[expense.receipt]} context={`Tour ${t.id} receipt`} size="sm" />}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {(t.status === "Approved" || t.status === "Completed" || t.status === "Closed") &&
                 (t.employeeId === me.id || t.travellers?.some((traveller) => traveller.id === me.id)) && (
                   <>
@@ -257,21 +285,24 @@ function RequestTourDialog() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [mode, setMode] = useState("Road");
-  const [estimatedCost, setEstimatedCost] = useState("");
-  const [costCentre, setCostCentre] = useState(
-    departmentByName(me.dept, me.orgId)?.costCentre ?? "",
+  const [bills, setBills] = useState([blankTourBill()]);
+  const setBill = (index, patch) =>
+    setBills((current) => current.map((bill, i) => (i === index ? { ...bill, ...patch } : bill)));
+  const billRows = bills.filter((bill) =>
+    [bill.date, bill.vendor, bill.amount, bill.receipt, bill.note].some((value) => String(value ?? "").trim()),
   );
-
+  const invalidBill = billRows.some((bill) => !bill.date || !bill.vendor.trim() || !(Number(bill.amount) > 0) || !bill.receipt);
+  const billTotal = billRows.reduce((sum, bill) => sum + (Number(bill.amount) || 0), 0);
   const problem = validateTourInput({
     purpose,
     destination,
     startDate,
     endDate,
     mode,
-    estimatedCost: Number(estimatedCost),
-    costCentre,
+    estimatedCost: billTotal,
+    costCentre: departmentByName(me.dept, me.orgId)?.costCentre ?? "",
   });
-  const valid = !problem;
+  const valid = !problem && billRows.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -280,9 +311,10 @@ function RequestTourDialog() {
           <Plus className="h-4 w-4" /> Request Tour
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Request a business tour</DialogTitle>
+          <DialogDescription>Attach train, flight, hotel, or other travel bills now, or add them later from your tour.</DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
           <div className="space-y-1.5">
@@ -340,27 +372,67 @@ function RequestTourDialog() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-muted-foreground text-xs">Estimated cost (₹)</Label>
-              <Input
-                type="number"
-                min={1}
-                value={estimatedCost}
-                onChange={(e) => setEstimatedCost(e.target.value)}
-                placeholder="0"
-              />
-            </div>
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-xs">Project / cost centre</Label>
-            <Input
-              value={costCentre}
-              onChange={(e) => setCostCentre(e.target.value)}
-              placeholder="CC-1001"
-            />
+          <div className="space-y-3 border-t pt-4">
+            <div>
+              <div className="text-sm font-semibold">Bills and receipts</div>
+              <p className="text-muted-foreground text-xs">Add one row per ticket or bill and attach its receipt.</p>
+            </div>
+            {bills.map((bill, index) => (
+              <div key={index} className="grid grid-cols-1 gap-3 rounded-lg border p-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label className="text-muted-foreground text-xs">Expense type</Label>
+                  <Select value={bill.head} onValueChange={(value) => setBill(index, { head: value })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{["Travel", "Lodging", "Food", "Local conveyance", "Other"].map((head) => <SelectItem key={head} value={head}>{head}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-muted-foreground text-xs">Bill date</Label>
+                  <Input type="date" value={bill.date} onChange={(e) => setBill(index, { date: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-muted-foreground text-xs">Vendor / description</Label>
+                  <Input value={bill.vendor} onChange={(e) => setBill(index, { vendor: e.target.value })} placeholder="e.g. IRCTC train ticket" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-muted-foreground text-xs">Amount (₹)</Label>
+                  <Input type="number" min="0" value={bill.amount} onChange={(e) => setBill(index, { amount: e.target.value })} placeholder="0" />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label className="text-muted-foreground text-xs">Receipt / ticket</Label>
+                  <label className="border-input hover:bg-muted flex min-h-10 cursor-pointer items-center gap-2 rounded-md border border-dashed px-3 text-sm">
+                    <Paperclip className="h-4 w-4" />
+                    <span className="truncate">{bill.receipt || "Attach bill (PDF or image)"}</span>
+                    <input type="file" accept="image/*,.pdf" className="hidden" onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const [name] = await captureFiles([file]);
+                        setBill(index, { receipt: name });
+                      }
+                      e.target.value = "";
+                    }} />
+                  </label>
+                </div>
+                <div className="flex items-center justify-between sm:col-span-2">
+                  <span className="text-muted-foreground text-xs">{bill.receipt ? "Receipt attached" : "Receipt required when this row is filled"}</span>
+                  <Button type="button" size="sm" variant="ghost" disabled={bills.length === 1} onClick={() => setBills((current) => current.filter((_, i) => i !== index))}>
+                    <Trash2 className="text-destructive h-4 w-4" /> Remove
+                  </Button>
+                </div>
+              </div>
+            ))}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => setBills((current) => [...current, blankTourBill()])}>
+                <Plus className="h-4 w-4" /> Add bill
+              </Button>
+              <div className="text-sm">Tour estimated cost <b>{inr(billTotal)}</b></div>
+            </div>
+            {billRows.length === 0 && <p className="text-muted-foreground text-xs">Add at least one bill to set the tour cost.</p>}
+            {invalidBill && <p className="text-destructive text-xs">Complete each started bill row and attach its receipt.</p>}
           </div>
         </div>
-        {problem && (purpose || destination || startDate || endDate || estimatedCost) && (
+        {problem && (purpose || destination || startDate || endDate || billRows.length > 0) && (
           <div className="text-destructive text-xs">{problem}</div>
         )}
         <DialogFooter>
@@ -368,7 +440,7 @@ function RequestTourDialog() {
             Cancel
           </Button>
           <Button
-            disabled={!valid}
+            disabled={!valid || invalidBill}
             className="bg-gradient-emerald text-white"
             onClick={() => {
               try {
@@ -379,8 +451,17 @@ function RequestTourDialog() {
                   startDate,
                   endDate,
                   mode,
-                  estimatedCost: Number(estimatedCost),
-                  costCentre: costCentre.trim() || "—",
+                  estimatedCost: billTotal,
+                  costCentre: departmentByName(me.dept, me.orgId)?.costCentre ?? "—",
+                  expenses: billRows.map((bill) => ({
+                    head: bill.head,
+                    date: bill.date,
+                    vendor: bill.vendor.trim(),
+                    amount: Number(bill.amount),
+                    receipt: bill.receipt,
+                    paidBy: "Employee",
+                    note: bill.note.trim(),
+                  })),
                 });
               } catch (err) {
                 toast.error(err.message);
@@ -392,7 +473,7 @@ function RequestTourDialog() {
               setDestination("");
               setStartDate("");
               setEndDate("");
-              setEstimatedCost("");
+              setBills([blankTourBill()]);
             }}
           >
             Submit request

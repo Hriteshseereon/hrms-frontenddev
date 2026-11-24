@@ -453,6 +453,15 @@ export function submitTour(input) {
     estimatedCost: input.estimatedCost,
     paymentMethod: input.paymentMethod ?? "employee_reimbursement",
     costCentre: input.costCentre,
+    expenses: (input.expenses ?? []).map((expense, index) => ({
+      ...expense,
+      id: `TX-${String(index + 1).padStart(2, "0")}`,
+      approved: false,
+      rejected: false,
+      hrVerified: false,
+      reviewStatus: "Pending HR",
+      reviewHistory: [],
+    })),
     chain,
     // A chain with no approver left (every role vacant / self) is already cleared — it must not sit pending forever.
     status: chainStatus(chain) === "Approved" ? "Pending HR Dispatch" : "Pending Approval",
