@@ -23,8 +23,13 @@ function FinancePage() {
     canPreparePayroll ||
     (permissions ?? []).some((p) => String(p).startsWith("payroll."));
   const assignedModules = useSessionStore((s) => s.assignedModules);
+  const isPrivilegedFinanceRole = ["COMPANY_ADMIN", "SUPER_ADMIN"].includes(
+    String(role ?? "").toUpperCase(),
+  );
   const canViewFinanceScreen = (screenKey) =>
-    assignedModules?.some(
+    !apiSession ||
+    isPrivilegedFinanceRole ||
+    (assignedModules?.some(
       (module) =>
         module.key === "payroll" &&
         module.submodules?.some((submodule) =>
@@ -32,11 +37,11 @@ function FinancePage() {
             (screen) => screen.key === screenKey && screen.view,
           ),
         ),
-    ) ?? false;
-  const canViewPayroll = !apiSession || canViewFinanceScreen("payroll-run");
-  const canViewPayslips = !apiSession || canViewFinanceScreen("payslips");
-  const canViewLoans = !apiSession || canViewFinanceScreen("loan-requests");
-  const canViewPolicy = !apiSession || canViewFinanceScreen("wage-statutory-policy");
+    ) ?? false);
+  const canViewPayroll = canViewFinanceScreen("payroll-run");
+  const canViewPayslips = canViewFinanceScreen("payslips");
+  const canViewLoans = canViewFinanceScreen("loan-requests");
+  const canViewPolicy = canViewFinanceScreen("wage-statutory-policy");
   const defaultTab = canViewPayroll
     ? "payroll"
     : canViewPayslips

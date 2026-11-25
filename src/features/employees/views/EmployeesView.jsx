@@ -166,6 +166,31 @@ function Employees() {
   const session = useSessionStore();
   const roleUpper = String(session.role || me?.role || "").toUpperCase();
   const isEmployeeRole = roleUpper === "EMPLOYEE";
+  const canViewEmployeeScreen = (screenKey) =>
+    !session.isAuthenticated ||
+    ["COMPANY_ADMIN", "SUPER_ADMIN"].includes(roleUpper) ||
+    (session.assignedModules?.some(
+      (module) =>
+        module.key === "employee" &&
+        module.submodules?.some((submodule) =>
+          submodule.screens?.some(
+            (screen) => screen.key === screenKey && screen.view,
+          ),
+        ),
+    ) ?? false);
+  const employeeTabs = [
+    { value: "all", screen: "all-employees" },
+    { value: "promotions", screen: "employee-promotions" },
+    { value: "transfers", screen: "employee-transfers" },
+    { value: "resignations", screen: "employee-resignations" },
+    { value: "terminations", screen: "employee-terminations" },
+    { value: "warnings", screen: "employee-warnings" },
+    { value: "complaints", screen: "employee-complaints" },
+    { value: "referrals", screen: "employee-referrals" },
+    { value: "insurance", screen: "employee-insurance" },
+    { value: "retirement", screen: "employee-retirement" },
+  ];
+  const visibleEmployeeTabs = employeeTabs.filter((tab) => canViewEmployeeScreen(tab.screen));
   // `permissions` from the backend: add / edit need "employee.edit" (module level), admins hold it by scope.
   const canDo = useCan();
   const canManagePeople =
@@ -381,21 +406,21 @@ function Employees() {
         </div>
       </div>
 
-      <Tabs defaultValue="all">
+      <Tabs defaultValue={visibleEmployeeTabs[0]?.value ?? "all"}>
         <ScrollTabsList>
-          <TabsTrigger value="all">All</TabsTrigger>
-          <TabsTrigger value="promotions">Promotions</TabsTrigger>
-          <TabsTrigger value="transfers">Transfers</TabsTrigger>
-          <TabsTrigger value="resignations">Resignations</TabsTrigger>
-          <TabsTrigger value="terminations">Terminations</TabsTrigger>
-          <TabsTrigger value="warnings">Warnings</TabsTrigger>
-          <TabsTrigger value="complaints">Complaints</TabsTrigger>
-          <TabsTrigger value="referrals">Referrals</TabsTrigger>
-          <TabsTrigger value="insurance">Insurance</TabsTrigger>
-          <TabsTrigger value="retirement">Retirement</TabsTrigger>
+          {canViewEmployeeScreen("all-employees") && <TabsTrigger value="all">All</TabsTrigger>}
+          {canViewEmployeeScreen("employee-promotions") && <TabsTrigger value="promotions">Promotions</TabsTrigger>}
+          {canViewEmployeeScreen("employee-transfers") && <TabsTrigger value="transfers">Transfers</TabsTrigger>}
+          {canViewEmployeeScreen("employee-resignations") && <TabsTrigger value="resignations">Resignations</TabsTrigger>}
+          {canViewEmployeeScreen("employee-terminations") && <TabsTrigger value="terminations">Terminations</TabsTrigger>}
+          {canViewEmployeeScreen("employee-warnings") && <TabsTrigger value="warnings">Warnings</TabsTrigger>}
+          {canViewEmployeeScreen("employee-complaints") && <TabsTrigger value="complaints">Complaints</TabsTrigger>}
+          {canViewEmployeeScreen("employee-referrals") && <TabsTrigger value="referrals">Referrals</TabsTrigger>}
+          {canViewEmployeeScreen("employee-insurance") && <TabsTrigger value="insurance">Insurance</TabsTrigger>}
+          {canViewEmployeeScreen("employee-retirement") && <TabsTrigger value="retirement">Retirement</TabsTrigger>}
         </ScrollTabsList>
 
-        <TabsContent value="all" className="space-y-6 pt-4">
+        {canViewEmployeeScreen("all-employees") && <TabsContent value="all" className="space-y-6 pt-4">
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="outline" size="sm" onClick={exportList}>
               <Download className="h-4 w-4" /> Export
@@ -786,35 +811,35 @@ function Employees() {
               </div>
             </div>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="promotions" className="pt-4">
+        {canViewEmployeeScreen("employee-promotions") && <TabsContent value="promotions" className="pt-4">
           <PromotionsTab />
-        </TabsContent>
-        <TabsContent value="transfers" className="pt-4">
+        </TabsContent>}
+        {canViewEmployeeScreen("employee-transfers") && <TabsContent value="transfers" className="pt-4">
           <TransfersTab />
-        </TabsContent>
-        <TabsContent value="resignations" className="pt-4">
+        </TabsContent>}
+        {canViewEmployeeScreen("employee-resignations") && <TabsContent value="resignations" className="pt-4">
           <ResignationsTab />
-        </TabsContent>
-        <TabsContent value="terminations" className="pt-4">
+        </TabsContent>}
+        {canViewEmployeeScreen("employee-terminations") && <TabsContent value="terminations" className="pt-4">
           <TerminationsTab />
-        </TabsContent>
-        <TabsContent value="warnings" className="pt-4">
+        </TabsContent>}
+        {canViewEmployeeScreen("employee-warnings") && <TabsContent value="warnings" className="pt-4">
           <WarningsTab />
-        </TabsContent>
-        <TabsContent value="complaints" className="pt-4">
+        </TabsContent>}
+        {canViewEmployeeScreen("employee-complaints") && <TabsContent value="complaints" className="pt-4">
           <ComplaintsTab />
-        </TabsContent>
-        <TabsContent value="referrals" className="pt-4">
+        </TabsContent>}
+        {canViewEmployeeScreen("employee-referrals") && <TabsContent value="referrals" className="pt-4">
           <ReferralsTab />
-        </TabsContent>
-        <TabsContent value="insurance" className="pt-4">
+        </TabsContent>}
+        {canViewEmployeeScreen("employee-insurance") && <TabsContent value="insurance" className="pt-4">
           <InsuranceTab />
-        </TabsContent>
-        <TabsContent value="retirement" className="pt-4">
+        </TabsContent>}
+        {canViewEmployeeScreen("employee-retirement") && <TabsContent value="retirement" className="pt-4">
           <RetirementTab />
-        </TabsContent>
+        </TabsContent>}
       </Tabs>
 
       <EmployeeLeaveSheet empId={leaveFor} onClose={() => setLeaveFor(null)} />

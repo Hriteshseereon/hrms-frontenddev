@@ -39,8 +39,34 @@ const sidebarScreen = (moduleKey, moduleName, screenKey, screenName, section, su
 export const RBAC_MODULES = [
   sidebarScreen("overview", "Overview", "org-dashboard", "Dashboard", "Overview", "home"),
   sidebarScreen("master-data", "Master Data", "masters", "Master Data", "Overview", "master-data"),
-  sidebarScreen("employee", "People", "all-employees", "Employees", "People", "directory"),
-  {
+{
+  key: "employee",
+  name: "Employees",
+  sidebarLabel: "Employees",
+  section: "People",
+  submodules: [
+    {
+      key: "employee-management",
+      name: "Employee Management",
+      screens: [
+        { key: "all-employees", name: "All Employees" },
+        { key: "add-employee", name: "Add Employee" },
+        { key: "employee-bulk-upload", name: "Bulk Upload" },
+        { key: "employee-export", name: "Export Employees" },
+        { key: "employee-promotions", name: "Promotions" },
+        { key: "employee-transfers", name: "Transfers" },
+        { key: "employee-resignations", name: "Resignations" },
+        { key: "employee-terminations", name: "Terminations" },
+        { key: "employee-warnings", name: "Warnings" },
+        { key: "employee-complaints", name: "Complaints" },
+        { key: "employee-referrals", name: "Referrals" },
+        { key: "employee-insurance", name: "Insurance" },
+        { key: "employee-retirement", name: "Retirement" },
+      ],
+    },
+  ],
+}, 
+ {
     key: "attendance",
     name: "Attendance & Shifts",
     sidebarLabel: "Attendance & Shifts",
