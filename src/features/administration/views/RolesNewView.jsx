@@ -1,7 +1,7 @@
 import { useSearch } from "@/lib/navigation";
 import Link from "@/lib/router";
 import { useRouter } from "@/lib/router";
-import { useMemo, useState, useEffect } from "react";
+import { Fragment, useMemo, useState, useEffect } from "react";
 import {
   ShieldCheck,
   ArrowLeft,
@@ -410,14 +410,20 @@ function RoleWizard({ existing }) {
           </Card>
 
           {/* Module Cards */}
-          {RBAC_MODULES.map((m) => {
+          {RBAC_MODULES.map((m, index) => {
             const moduleScreenIds = m.submodules.flatMap((s) =>
               s.screens.map((sc) => screenId(m.key, s.key, sc.key)),
             );
             const activeInModule = moduleScreenIds.filter((id) => perms[id]?.View).length;
 
             return (
-              <Card key={m.key} className="shadow-card overflow-hidden">
+              <Fragment key={m.key}>
+                {m.section && RBAC_MODULES[index - 1]?.section !== m.section && (
+                  <div className="pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    {m.section}
+                  </div>
+                )}
+                <Card className="shadow-card overflow-hidden">
                 <div className="bg-muted/40 p-4 border-b flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
                     <Layers className="h-4 w-4 text-primary" />
@@ -502,7 +508,8 @@ function RoleWizard({ existing }) {
                     </table>
                   </div>
                 </CardContent>
-              </Card>
+                </Card>
+              </Fragment>
             );
           })}
         </div>

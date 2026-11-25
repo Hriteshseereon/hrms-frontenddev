@@ -3,13 +3,13 @@ import SuperAdmin_axios from "./SuperAdmin_axios";
 
 const Branch_api = {
   // GET: List branches, optionally filtered by company
-  async getBranches(companyId = null) {
+  async getBranches(companyId = null, requestOptions = {}) {
     const params = companyId ? { company_id: companyId } : {};
     try {
-      return await SuperAdmin_axios.get("/super-admin/branches", { params });
+      return await SuperAdmin_axios.get("/super-admin/branches", { ...requestOptions, params });
     } catch (err) {
       if (err?.response?.status === 404 || err?.response?.status === 403) {
-        return await SuperAdmin_axios.get("/branches", { params });
+        return await SuperAdmin_axios.get("/branches", { ...requestOptions, params });
       }
       throw err;
     }

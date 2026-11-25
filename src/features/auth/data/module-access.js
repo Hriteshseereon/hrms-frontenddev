@@ -5,6 +5,7 @@ import { getMe } from "@/api/meApi";
 import { registerNavExtension } from "./auth-session";
 import { useSessionStore } from "./session-store";
 import { SCREEN_ROUTES } from "./rbac-store";
+import { RBAC_MODULES } from "./rbac";
 import MODULE_ROUTES from "./module-routes.json";
 
 const ROUTE_MODULE = new Map(
@@ -104,7 +105,7 @@ const SELF_SCREEN_ROUTES = {
   "employee-profile": "/emp/profile",
   referrals: "/emp/referrals",
   "employee-docs": "/emp/profile",
-  "attendance-log": "/emp/attendance",
+  "attendance-log": "/org/attendance",
   regularization: "/emp/attendance",
   "leave-requests": "/emp/leave",
   "leave-balance": "/emp/leave",
@@ -119,6 +120,78 @@ const SELF_SCREEN_ROUTES = {
   policies: "/emp/handbook",
 };
 
+const SIDEBAR_SECTION_BY_MODULE = {
+  overview: "Overview",
+  "master-data": "Overview",
+  configuration: "Administration",
+  employee: "People",
+  attendance: "Time & Leave",
+  leave: "Time & Leave",
+  tours: "Time & Leave",
+  timesheet: "Time & Leave",
+  payroll: "Payroll & Finance",
+  expense: "Payroll & Finance",
+  workplace: "Projects & Tasks",
+  projects: "Projects & Tasks",
+  tasks: "Projects & Tasks",
+  workspace: "My Workspace",
+};
+
+const SIDEBAR_SECTION_BY_NAME = {
+  Overview: "Overview",
+  "Master Data": "Overview",
+  Administration: "Administration",
+  People: "People",
+  "Employee Management": "People",
+  Attendance: "Time & Leave",
+  "Attendance & Shifts": "Time & Leave",
+  "Leave Management": "Time & Leave",
+  "Leave & Comp-off": "Time & Leave",
+  Timesheets: "Time & Leave",
+  Tours: "Time & Leave",
+  "Tours & Travel": "Time & Leave",
+  Payroll: "Payroll & Finance",
+  "Payroll & Finance": "Payroll & Finance",
+  "Finance & Payroll": "Payroll & Finance",
+  "Payroll & Compensation": "Payroll & Finance",
+  "Projects & Tasks": "Projects & Tasks",
+  "Projects & Assignments": "Projects & Tasks",
+  Tasks: "Projects & Tasks",
+  "My Workspace": "My Workspace",
+  "My Self-Service": "My Workspace",
+};
+
+const SIDEBAR_SECTION_ORDER = [
+  "Overview",
+  "Administration",
+  "People",
+  "Time & Leave",
+  "Payroll & Finance",
+  "Projects & Tasks",
+  "My Workspace",
+];
+
+const RBAC_SCREEN_PRESENTATION = new Map(
+  RBAC_MODULES.flatMap((module) =>
+    module.submodules.flatMap((submodule) =>
+      submodule.screens.map((screen) => [
+        `${module.key}.${screen.key}`,
+        { label: screen.name, sidebarLabel: module.sidebarLabel, section: module.section },
+      ]),
+    ),
+  ),
+);
+const RBAC_SCREEN_PRESENTATION_BY_KEY = new Map(
+  RBAC_MODULES.flatMap((module) =>
+    module.submodules.flatMap((submodule) =>
+      submodule.screens.map((screen) => [
+        screen.key,
+        { label: screen.name, sidebarLabel: module.sidebarLabel, section: module.section },
+      ]),
+    ),
+  ),
+);
+
 /**
  * Every screen the user's roles grant (`assigned_modules` from login / refresh / GET /me), in Permission Matrix
  * order, each with the page it opens:
@@ -130,17 +203,28 @@ const SELF_SCREEN_ROUTES = {
 export function assignedScreens(s = useSessionStore.getState()) {
   const out = [];
   for (const mod of Array.isArray(s.assignedModules) ? s.assignedModules : []) {
-    const screens = (mod.submodules ?? []).flatMap((sub) => sub.screens ?? []);
+    const screens = (mod.submodules ?? [])
+      .flatMap((sub) => sub.screens ?? [])
+      .filter((screen) => screen.view);
     const manages = screens.some((sc) => !sc.self_service);
     for (const sc of screens) {
-      const org = SCREEN_ROUTES[sc.key] ?? null;
-      const own = sc.self_service ? (SELF_SCREEN_ROUTES[sc.key] ?? null) : null;
+      const screenKey = sc.key ?? sc.screen_code?.split(".").pop();
+      const presentation =
+        RBAC_SCREEN_PRESENTATION.get(`${mod.key}.${screenKey}`) ??
+        RBAC_SCREEN_PRESENTATION_BY_KEY.get(screenKey);
+      const org = SCREEN_ROUTES[screenKey] ?? null;
+      const own = sc.self_service ? (SELF_SCREEN_ROUTES[screenKey] ?? null) : null;
       const [to, alt] = manages || !own ? [org ?? own, own] : [own, org];
       if (!to) continue;
       out.push({
         id: sc.screen_code,
-        label: sc.name,
-        section: mod.name,
+        label: presentation?.sidebarLabel ?? presentation?.label ?? sc.name,
+        section:
+          presentation?.section ??
+          SIDEBAR_SECTION_BY_MODULE[mod.key] ??
+          SIDEBAR_SECTION_BY_NAME[mod.name] ??
+          mod.section ??
+          mod.name,
         module: mod.key,
         to,
         alt: alt && alt !== to ? alt : null,
@@ -150,7 +234,17 @@ export function assignedScreens(s = useSessionStore.getState()) {
       });
     }
   }
-  return out;
+  const ordered = out.sort(
+    (a, b) =>
+      SIDEBAR_SECTION_ORDER.indexOf(a.section) - SIDEBAR_SECTION_ORDER.indexOf(b.section),
+  );
+  const seenPages = new Set();
+  return ordered.filter((screen) => {
+    const pageKey = `${screen.section}:${screen.to}`;
+    if (seenPages.has(pageKey)) return false;
+    seenPages.add(pageKey);
+    return true;
+  });
 }
 
 /** Hook form of `assignedScreens`; `loaded` is false when the backend did not send `assigned_modules`. */

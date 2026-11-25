@@ -15,12 +15,35 @@ function FinancePage() {
   const permissions = useSessionStore((s) => s.permissions);
   const role = useSessionStore((s) => s.role);
   const roles = useSessionStore((s) => s.roles);
+  
   const canPreparePayroll = canDo("payroll.run", { isAuthenticated: apiSession, role, roles, permissions });
   const canSeePayroll =
     !apiSession ||
     canDo("payroll.view", { isAuthenticated: apiSession, role, permissions }) ||
     canPreparePayroll ||
     (permissions ?? []).some((p) => String(p).startsWith("payroll."));
+  const assignedModules = useSessionStore((s) => s.assignedModules);
+  const canViewFinanceScreen = (screenKey) =>
+    assignedModules?.some(
+      (module) =>
+        module.key === "payroll" &&
+        module.submodules?.some((submodule) =>
+          submodule.screens?.some(
+            (screen) => screen.key === screenKey && screen.view,
+          ),
+        ),
+    ) ?? false;
+  const canViewPayroll = !apiSession || canViewFinanceScreen("payroll-run");
+  const canViewPayslips = !apiSession || canViewFinanceScreen("payslips");
+  const canViewLoans = !apiSession || canViewFinanceScreen("loan-requests");
+  const canViewPolicy = !apiSession || canViewFinanceScreen("wage-statutory-policy");
+  const defaultTab = canViewPayroll
+    ? "payroll"
+    : canViewPayslips
+      ? "payslips"
+      : canViewLoans
+        ? "loans"
+        : "policy";
 
   return (
     <div className="space-y-6">
@@ -33,24 +56,30 @@ function FinancePage() {
         </p>
       </div>
 
-      <Tabs defaultValue="payroll">
+      <Tabs defaultValue={defaultTab}>
         <ScrollTabsList>
-          <TabsTrigger value="payroll">
-            <DollarSign className="h-4 w-4" /> Payroll
-          </TabsTrigger>
-          <TabsTrigger value="payslips">
-            <FileText className="h-4 w-4" /> Payslips
-          </TabsTrigger>
-          <TabsTrigger value="loans">
-            <Wallet className="h-4 w-4" /> Employee Loans
-          </TabsTrigger>
-          {apiSession && canSeePayroll && (
+          {canViewPayroll && (
+            <TabsTrigger value="payroll">
+              <DollarSign className="h-4 w-4" /> Payroll
+            </TabsTrigger>
+          )}
+          {canViewPayslips && (
+            <TabsTrigger value="payslips">
+              <FileText className="h-4 w-4" /> Payslips
+            </TabsTrigger>
+          )}
+          {canViewLoans && (
+            <TabsTrigger value="loans">
+              <Wallet className="h-4 w-4" /> Employee Loans
+            </TabsTrigger>
+          )}
+          {canViewPolicy && (
             <TabsTrigger value="policy">
               <SlidersHorizontal className="h-4 w-4" /> Wage &amp; Statutory Policy
             </TabsTrigger>
           )}
         </ScrollTabsList>
-        <TabsContent value="payroll" className="pt-4">
+        {canViewPayroll && <TabsContent value="payroll" className="pt-4">
           {!apiSession ? (
             <PayrollTab />
           ) : canSeePayroll ? (
@@ -61,14 +90,14 @@ function FinancePage() {
               You do not have permission to open payroll. Ask your administrator if you need it.
             </div>
           )}
-        </TabsContent>
-        <TabsContent value="payslips" className="pt-4">
+        </TabsContent>}
+        {canViewPayslips && <TabsContent value="payslips" className="pt-4">
           <PayslipsTab />
-        </TabsContent>
-        <TabsContent value="loans" className="pt-4">
+        </TabsContent>}
+        {canViewLoans && <TabsContent value="loans" className="pt-4">
           <LoansTab />
-        </TabsContent>
-        {apiSession && canSeePayroll && (
+        </TabsContent>}
+        {canViewPolicy && (
           <TabsContent value="policy" className="pt-4">
             <PayrollPolicyTab />
           </TabsContent>

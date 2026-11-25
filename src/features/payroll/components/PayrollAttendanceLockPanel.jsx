@@ -156,9 +156,9 @@ export function PayrollAttendanceLockPanel({
       // Day-wise records come from /attendance/work-hours (`days` per employee). /attendance/register is the
       // signed-in user's own register, not a company one, so it is not used here.
       const results = await Promise.allSettled([
-        attendanceApi.getPayrollSummary(period),
-        attendanceApi.getPayrollWorkHours(period),
-        attendanceApi.getLocks(),
+        attendanceApi.getPayrollSummary(period, { suppressAccessError: true }),
+        attendanceApi.getPayrollWorkHours(period, { suppressAccessError: true }),
+        attendanceApi.getLocks({ suppressAccessError: true }),
       ]);
       const [reportResult, hoursResult, locksResult] = results;
       const failures = results.filter((result) => result.status === "rejected");

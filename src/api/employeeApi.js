@@ -60,7 +60,7 @@ export async function getEmployees({
   company_id = "",
   branch_id = "",
   designation_type = "",
-} = {}) {
+} = {}, requestOptions = {}) {
   const params = {
     page: Math.max(1, Number(page) || 1),
     limit: Math.min(100, Math.max(1, Number(limit) || 20)),
@@ -86,7 +86,7 @@ export async function getEmployees({
     params.designation_type = designation_type;
   }
 
-  const response = await SuperAdmin_axios.get("/employees", { params });
+  const response = await SuperAdmin_axios.get("/employees", { ...requestOptions, params });
   return response.data;
 }
 

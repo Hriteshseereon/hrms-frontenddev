@@ -140,8 +140,8 @@ export const attendanceApi = {
   },
 
   // Payroll attendance review — reads the persisted monthly register and lock state.
-  getPayrollSummary: async (month) => {
-    const { data } = await axios.get(`${BASE}/report`, { params: { month } });
+  getPayrollSummary: async (month, requestOptions = {}) => {
+    const { data } = await axios.get(`${BASE}/report`, { ...requestOptions, params: { month } });
     return data;
   },
   /** GET /attendance/report with the screen filters (dept, office, shift, empId, band, sort, companyId). */
@@ -155,15 +155,15 @@ export const attendanceApi = {
     });
     return data;
   },
-  getPayrollWorkHours: async (month) => {
+  getPayrollWorkHours: async (month, requestOptions = {}) => {
     // A string is the month alone (lock panel); an object carries the screen filters too.
     const params = typeof month === "string" ? { month } : clean(month);
-    const { data } = await axios.get(`${BASE}/work-hours`, { params });
+    const { data } = await axios.get(`${BASE}/work-hours`, { ...requestOptions, params });
     return data;
   },
   // The company comes from the login (or X-Company-Id for a Super Admin); no scope is sent here.
-  getLocks: async () => {
-    const { data } = await axios.get(`${BASE}/locks`);
+  getLocks: async (requestOptions = {}) => {
+    const { data } = await axios.get(`${BASE}/locks`, requestOptions);
     return data;
   },
   lockPayrollMonth: async (period) => {

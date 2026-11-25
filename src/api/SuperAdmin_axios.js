@@ -121,9 +121,11 @@ SuperAdmin_axios.interceptors.response.use(
     }
     if (error.response?.status === 403 && /permission denied/i.test(detailText)) {
       error.userMessage = "You do not have access to this";
-      flagAccessError("permission", request, detailText);
-      // Role changes reach the user through /me: pick up whatever was taken away (or given) meanwhile.
-      if (!/\/me(?:\?|$)/.test(request?.url ?? "")) refreshAccess();
+      if (!request?.suppressAccessError) {
+        flagAccessError("permission", request, detailText);
+        // Role changes reach the user through /me: pick up whatever was taken away (or given) meanwhile.
+        if (!/\/me(?:\?|$)/.test(request?.url ?? "")) refreshAccess();
+      }
       return Promise.reject(error);
     }
     const isAuthRequest = /\/auth\/(?:super-admins\/login|login|refresh)/.test(

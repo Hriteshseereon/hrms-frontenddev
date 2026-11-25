@@ -13,6 +13,7 @@
  * @typedef {Object} RbacModuleDef
  * @property {string} key
  * @property {string} name
+ * @property {string} [sidebarLabel]
  * @property {SubmoduleDef[]} submodules
  */
 
@@ -21,330 +22,74 @@ export const PERMISSION_ACTIONS = ["View", "Edit", "Delete"];
  * @typedef {(typeof PERMISSION_ACTIONS)[number]} PermissionAction
  */
 
+// The role matrix currently grants access at the same level as the visible organization sidebar.
+const sidebarScreen = (moduleKey, moduleName, screenKey, screenName, section, submoduleKey) => ({
+  key: moduleKey,
+  name: moduleName,
+  ...(section ? { section } : {}),
+  submodules: [
+    {
+      key: submoduleKey,
+      name: moduleName,
+      screens: [{ key: screenKey, name: screenName }],
+    },
+  ],
+});
+
 export const RBAC_MODULES = [
-  {
-    key: "overview",
-    name: "Overview",
-    submodules: [
-      {
-        key: "home",
-        name: "Dashboards",
-        screens: [
-          { key: "org-dashboard", name: "Organization Dashboard" },
-          { key: "reports", name: "Reports" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "employee",
-    name: "Employee Management",
-    submodules: [
-      {
-        key: "directory",
-        name: "Directory",
-        screens: [
-          { key: "all-employees", name: "All Employees" },
-          { key: "employee-profile", name: "Employee Profile" },
-          { key: "add-employee", name: "Add Employee" },
-        ],
-      },
-      {
-        key: "movements",
-        name: "Movements",
-        screens: [
-          { key: "promotions", name: "Promotions" },
-          { key: "transfers", name: "Transfers" },
-          { key: "resignations", name: "Resignations" },
-          { key: "terminations", name: "Terminations" },
-        ],
-      },
-      {
-        key: "cases",
-        name: "Cases",
-        screens: [
-          { key: "warnings", name: "Warnings" },
-          { key: "complaints", name: "Complaints" },
-          { key: "referrals", name: "Referrals" },
-        ],
-      },
-      {
-        key: "documents",
-        name: "Documents",
-        screens: [
-          { key: "employee-docs", name: "Employee Documents" },
-          { key: "letters", name: "Letters & Templates" },
-          { key: "insurance", name: "Employee Insurance" },
-        ],
-      },
-    ],
-  },
+  sidebarScreen("overview", "Overview", "org-dashboard", "Dashboard", "Overview", "home"),
+  sidebarScreen("master-data", "Master Data", "masters", "Master Data", "Overview", "master-data"),
+  sidebarScreen("employee", "People", "all-employees", "Employees", "People", "directory"),
   {
     key: "attendance",
-    name: "Attendance",
+    name: "Attendance & Shifts",
+    sidebarLabel: "Attendance & Shifts",
+    section: "Time & Leave",
     submodules: [
       {
         key: "daily",
-        name: "Daily Attendance",
+        name: "Attendance & Shifts",
         screens: [
-          { key: "attendance-log", name: "Attendance Log" },
-          { key: "regularization", name: "Regularization Requests" },
-          { key: "work-hours", name: "Work Hours & Overtime" },
-          { key: "penalties", name: "Penalty Configuration" },
-        ],
-      },
-      {
-        key: "shifts",
-        name: "Shifts & Roster",
-        screens: [
-          { key: "shift-master", name: "Shift Master" },
-          { key: "roster", name: "Roster Planner" },
+          { key: "attendance-log", name: "Attendance" },
+          { key: "attendance-report", name: "Attendance Report" },
+          { key: "work-hours-overtime", name: "Work Hours & Overtime" },
+          { key: "daily-wages", name: "Daily Wages" },
+          { key: "attendance-payroll-lock", name: "Payroll Attendance Lock" },
+          { key: "attendance-work-orders", name: "Work Orders" },
         ],
       },
     ],
   },
-  {
-    key: "leave",
-    name: "Leave Management",
-    submodules: [
-      {
-        key: "requests",
-        name: "Requests",
-        screens: [
-          { key: "leave-requests", name: "Leave Requests" },
-          { key: "leave-approvals", name: "Leave Approvals" },
-          { key: "leave-balance", name: "Leave Balance" },
-        ],
-      },
-      {
-        key: "config",
-        name: "Configuration",
-        screens: [
-          { key: "leave-types", name: "Leave Types" },
-          { key: "holiday-calendar", name: "Holiday Calendar" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "timesheet",
-    name: "Timesheets",
-    submodules: [
-      {
-        key: "entries",
-        name: "Entries",
-        screens: [
-          { key: "timesheet-log", name: "Timesheet Log" },
-          { key: "timesheet-approvals", name: "Timesheet Approvals" },
-        ],
-      },
-      {
-        key: "config",
-        name: "Configuration",
-        screens: [{ key: "timesheet-formats", name: "Timesheet Formats" }],
-      },
-    ],
-  },
-  {
-    key: "payroll",
-    name: "Finance & Payroll",
-    submodules: [
-      {
-        key: "run",
-        name: "Payroll Run",
-        screens: [
-          { key: "salary-structure", name: "Salary Structure" },
-          { key: "payroll-run", name: "Process Payroll" },
-          { key: "payslips", name: "Payslips" },
-        ],
-      },
-      {
-        key: "loans",
-        name: "Loans & Advances",
-        screens: [
-          { key: "loan-requests", name: "Loan Requests" },
-          { key: "repayments", name: "Repayment Schedule" },
-        ],
-      },
-      {
-        key: "claims",
-        name: "Claims & Reimbursements",
-        screens: [
-          { key: "reimbursements", name: "Reimbursements" },
-          { key: "insurance-claims", name: "Insurance Claims" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "recruitment",
-    name: "Recruitment",
-    submodules: [
-      {
-        key: "pipeline",
-        name: "Pipeline",
-        screens: [
-          { key: "recruitment-pipeline", name: "Hiring Pipeline" },
-          { key: "job-postings", name: "Job Postings" },
-          { key: "job-locations", name: "Job Locations" },
-        ],
-      },
-      {
-        key: "candidates",
-        name: "Candidates",
-        screens: [
-          { key: "candidate-list", name: "Candidates" },
-          { key: "assessments", name: "Assessments" },
-          { key: "interviews", name: "Interviews" },
-          { key: "offers", name: "Offer Letters" },
-        ],
-      },
-      {
-        key: "recruitment-masters",
-        name: "Recruitment Masters",
-        screens: [
-          { key: "rounds", name: "Interview Rounds" },
-          { key: "recruitment-config", name: "Recruitment Configuration" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "performance",
-    name: "Performance",
-    submodules: [
-      {
-        key: "reviews",
-        name: "Reviews",
-        screens: [
-          { key: "review-cycles", name: "Review Cycles" },
-          { key: "employee-reviews", name: "Employee Reviews" },
-          { key: "appraisals", name: "Appraisals" },
-        ],
-      },
-      {
-        key: "indicators",
-        name: "Indicators",
-        screens: [
-          { key: "perf-indicators", name: "Performance Indicators" },
-          { key: "indicator-categories", name: "Indicator Categories" },
-          { key: "goal-types", name: "Goal Types" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "training",
-    name: "Training",
-    submodules: [
-      {
-        key: "programs",
-        name: "Programs",
-        screens: [
-          { key: "trainings", name: "Trainings" },
-          { key: "training-types", name: "Training Types" },
-          { key: "trainers", name: "Trainers" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "workplace",
-    name: "Workplace",
-    submodules: [
-      {
-        key: "grievance",
-        name: "Grievance",
-        screens: [
-          { key: "complaints", name: "Complaints" },
-          { key: "support-tickets", name: "Support Tickets" },
-        ],
-      },
-      {
-        key: "comms",
-        name: "Communication",
-        screens: [
-          { key: "announcements", name: "Announcements" },
-          { key: "policies", name: "Policies & Docs" },
-        ],
-      },
-      { key: "work", name: "Work Management", screens: [{ key: "tasks", name: "Tasks" }] },
-    ],
-  },
-  {
-    key: "configuration",
-    name: "Configuration",
-    submodules: [
-      {
-        key: "org-setup",
-        name: "Organization Setup",
-        screens: [
-          { key: "infrastructure", name: "Infrastructure" },
-          { key: "masters", name: "Masters" },
-          { key: "templates", name: "Document Templates" },
-          { key: "settings", name: "Settings" },
-        ],
-      },
-      {
-        key: "access",
-        name: "Access Control",
-        screens: [
-          { key: "users", name: "Users" },
-          { key: "roles", name: "Roles & Permissions" },
-          { key: "temporary-access", name: "Temporary Access" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "assets",
-    name: "Assets",
-    submodules: [
-      {
-        key: "register",
-        name: "Asset Register",
-        screens: [
-          { key: "asset-register", name: "Asset Register" },
-          { key: "asset-licenses", name: "Licenses & Renewals" },
-        ],
-      },
-      {
-        key: "issuance",
-        name: "Issuance",
-        screens: [
-          { key: "asset-issuance", name: "Issuance & Returns" },
-          { key: "asset-transfers", name: "Transfers & Handover" },
-        ],
-      },
-      {
-        key: "requests",
-        name: "Requests",
-        screens: [
-          { key: "asset-requests", name: "Asset Requests" },
-          { key: "my-assets", name: "My Assets (Self-Service)" },
-        ],
-      },
-    ],
-  },
-  {
-    key: "tours",
-    name: "Tours",
-    submodules: [
-      {
-        key: "requests",
-        name: "Requests",
-        screens: [
-          { key: "my-tours", name: "My Tours (Self-Service)" },
-          { key: "all-tours", name: "All Tours" },
-        ],
-      },
-      {
-        key: "approvals",
-        name: "Approvals",
-        screens: [{ key: "tour-approvals", name: "Tour Approvals (HOD/HR/Finance)" }],
-      },
-    ],
-  },
+  sidebarScreen("leave", "Leave & Comp-off", "leave-requests", "Leave & Comp-off", "Time & Leave", "leave"),
+  sidebarScreen("tours", "Tours & Travel", "all-tours", "Tours & Travel", "Time & Leave", "tours"),
+{
+  key: "payroll",
+  name: "Payroll, Payslips & Loans",
+  sidebarLabel: "Payroll, Payslips & Loans",
+  section: "Payroll & Finance",
+  submodules: [
+    {
+      key: "finance",
+      name: "Payroll, Payslips & Loans",
+      screens: [
+        { key: "payroll-run", name: "Payroll" },
+        { key: "payslips", name: "Payslips" },
+        { key: "loan-requests", name: "Employee Loans" },
+        { key: "wage-statutory-policy", name: "Wage & Statutory Policy" },
+      ],
+    },
+  ],
+},
+  sidebarScreen("payroll", "Claims & Insurance", "reimbursements", "Claims & Insurance", "Payroll & Finance", "claims"),
+  sidebarScreen("workplace", "Projects & Assignments", "projects", "Projects & Assignments", "Projects & Tasks", "projects"),
+  sidebarScreen("workplace", "Tasks", "tasks", "Tasks", "Projects & Tasks", "work"),
+  // sidebarScreen("workspace", "My Self-Service", "my-dashboard", "My Self-Service", "My Workspace", "self-service"),
+  // sidebarScreen("workspace", "My Team", "my-team", "My Team", "My Workspace", "team"),
+  // sidebarScreen("workspace", "My Attendance", "my-attendance", "My Attendance", "My Workspace", "attendance"),
+  // sidebarScreen("workspace", "My Leave", "my-leave", "My Leave", "My Workspace", "leave"),
+  // sidebarScreen("workspace", "My Payslips", "my-payslips", "My Payslips", "My Workspace", "payslips"),
+  // sidebarScreen("workspace", "Employee Handbook", "employee-handbook", "Employee Handbook", "My Workspace", "handbook"),
+  // sidebarScreen("workspace", "My Helpdesk Tickets", "my-helpdesk-tickets", "My Helpdesk Tickets", "My Workspace", "helpdesk"),
 ];
 
 /**
@@ -442,53 +187,7 @@ export const ROLES = [
  * @property {BranchRoleAssignment[]} assignments
  */
 
-export const ORG_USERS = [
-  {
-    id: "USR-01",
-    name: "Seereon Administrator",
-    email: "admin@seereon.co.in",
-    status: "Active",
-    assignments: [
-      { branchId: "Bhubaneswar HQ::Whitefield", roles: ["Organization Admin"] },
-      { branchId: "Mumbai::BKC", roles: ["Organization Admin"] },
-      { branchId: "Pune::Hinjewadi", roles: ["Organization Admin"] },
-    ],
-  },
-  {
-    id: "USR-02",
-    name: "Priya Nair",
-    email: "priya.n@seereon.co.in",
-    status: "Active",
-    assignments: [
-      { branchId: "Bhubaneswar HQ::Whitefield", roles: ["HR Manager", "Reporting Manager"] },
-      { branchId: "Bhubaneswar HQ::Koramangala", roles: ["HR Manager"] },
-    ],
-  },
-  {
-    id: "USR-03",
-    name: "Aditya Singh",
-    email: "aditya.s@seereon.co.in",
-    status: "Active",
-    assignments: [
-      { branchId: "Mumbai::BKC", roles: ["Payroll Admin"] },
-      { branchId: "Chennai::OMR", roles: ["Payroll Admin"] },
-    ],
-  },
-  {
-    id: "USR-04",
-    name: "Neha Verma",
-    email: "neha.v@seereon.co.in",
-    status: "Invited",
-    assignments: [{ branchId: "Pune::Hinjewadi", roles: ["Recruiter"] }],
-  },
-  {
-    id: "USR-05",
-    name: "Karan Bhatia",
-    email: "karan.b@seereon.co.in",
-    status: "Active",
-    assignments: [{ branchId: "Chennai::OMR", roles: ["Reporting Manager", "Recruiter"] }],
-  },
-];
+export const ORG_USERS = [];
 
 /* ---------------- Role → permission presets (UI-only) ---------------- */
 

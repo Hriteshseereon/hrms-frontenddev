@@ -36,7 +36,9 @@ const SELECT = "border-input bg-background h-9 rounded-md border px-2 text-sm";
 function Filters({ value, onChange, withBand, scope }) {
   const [branches, setBranches] = useState([]);
   useEffect(() => {
-    Branch_api.getBranches(scope.companyId || null)
+    Branch_api.getBranches(scope.companyId || null, {
+      suppressAccessError: true,
+    })
       .then((res) => setBranches(rowsOf(res?.data ?? res)))
       .catch(() => setBranches([]));
   }, [scope.companyId]);
@@ -105,13 +107,13 @@ function useReport(fetcher, params) {
   return { data, loading, error };
 }
 
-function Blocked({ error }) {
+function Blocked({ error, permissionName }) {
   if (!error) return null;
   const text =
     error.status === 403 && /module not enabled/i.test(error.message)
       ? "Attendance is not enabled for this company."
       : error.status === 403
-        ? "No access. You need the attendance.view permission."
+        ? `No access. You need the ${permissionName} screen permission.`
         : error.message;
   return (
     <Card className="shadow-card">
@@ -143,7 +145,7 @@ export function AttendanceReportApiTab() {
     <div className="space-y-5">
       <Filters value={f} onChange={setF} withBand scope={scope} />
       {error ? (
-        <Blocked error={error} />
+        <Blocked error={error} permissionName="Attendance Report" />
       ) : (
         <Card className="shadow-card overflow-hidden">
           <div className="text-muted-foreground border-b px-4 py-2 text-xs">
@@ -221,7 +223,7 @@ export function WorkHoursApiTab() {
     <div className="space-y-5">
       <Filters value={f} onChange={setF} scope={scope} />
       {error ? (
-        <Blocked error={error} />
+        <Blocked error={error} permissionName="Work Hours & Overtime" />
       ) : (
         <Card className="shadow-card overflow-hidden">
           <div className="text-muted-foreground border-b px-4 py-2 text-xs">

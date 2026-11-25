@@ -92,7 +92,10 @@ function EmployeeFilter({ value, onChange, scope }) {
     if (!open) return undefined;
     let alive = true;
     const t = setTimeout(() => {
-      getEmployees({ search: text, limit: 8, company_id: scope.companyId, branch_id: scope.branchId })
+      getEmployees(
+        { search: text, limit: 8, company_id: scope.companyId, branch_id: scope.branchId },
+        { suppressAccessError: true },
+      )
         .then((res) => alive && setOptions(rowsOf(res)))
         .catch(() => alive && setOptions([]));
     }, 300);
@@ -229,7 +232,7 @@ function EmployeeDetail({ employeeId, query, onClose }) {
   );
 }
 
-export function EmployeeAttendanceTab() {
+export function EmployeeAttendanceTab({ canManage = false }) {
   const scope = useCompanyScope();
   const [view, setView] = useState("daily");
   const [date, setDate] = useState(todayLocalIso);
@@ -251,11 +254,15 @@ export function EmployeeAttendanceTab() {
   // Company / branch dropdowns (only narrow what the admin already sees).
   useEffect(() => {
     setBranchId("");
-    Branch_api.getBranches(scope.companyId || null)
+    Branch_api.getBranches(scope.companyId || null, {
+      suppressAccessError: true,
+    })
       .then((res) => setBranches(rowsOf(res?.data ?? res)))
       .catch(() => setBranches([]));
     designationApi
-      .getDesignations(scope.companyId ? { company_id: scope.companyId } : {})
+      .getDesignations(scope.companyId ? { company_id: scope.companyId } : {}, {
+        suppressAccessError: true,
+      })
       .then((res) => setDesignations(rowsOf(res?.data ?? res)))
       .catch(() => setDesignations([]));
   }, [scope.companyId]);
@@ -555,7 +562,7 @@ export function EmployeeAttendanceTab() {
         </div>
       </Card>
 
-      <PunchCorrectionsCard />
+      {canManage && <PunchCorrectionsCard />}
 
       {detail && (
         <EmployeeDetail

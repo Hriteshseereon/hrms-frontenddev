@@ -33,7 +33,18 @@ export function AttendancePayrollLockTab() {
   const apiLock = useSessionStore(
     (s) => s.isAuthenticated && (s.permissions ?? []).includes("attendance.lock"),
   );
-  const canLock = can(user.role, "attendance.lock") || apiLock;
+  const assignedLockEdit = useSessionStore((s) =>
+    (s.assignedModules ?? []).some((module) =>
+      (module.submodules ?? []).some((submodule) =>
+        (submodule.screens ?? []).some(
+          (screen) =>
+            (screen.key ?? screen.screen_code?.split(".").pop()) === "attendance-payroll-lock" &&
+            screen.edit,
+        ),
+      ),
+    ),
+  );
+  const canLock = can(user.role, "attendance.lock") || apiLock || assignedLockEdit;
 
   useEffect(() => {
     let cancelled = false;
@@ -43,7 +54,10 @@ export function AttendancePayrollLockTab() {
         let page = 1;
         let total = Infinity;
         while (all.length < total) {
-          const response = await getEmployees({ page, limit: 100 });
+          const response = await getEmployees(
+            { page, limit: 100 },
+            { suppressAccessError: true },
+          );
           const payload = response?.data ?? response;
           const items = allEmployeeRows(response);
           if (!items.length) break;
