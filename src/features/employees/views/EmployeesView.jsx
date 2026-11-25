@@ -884,6 +884,7 @@ const FORM_TO_API = {
   bloodGroup: "blood_group",
   personalEmail: "personal_email",
   workEmail: "work_email",
+  employeeCode: "employee_code",
   whatsapp: "whatsapp_number",
   emergencyName: "emergency_contact_name",
   emergencyPhone: "emergency_contact_phone",
@@ -1199,18 +1200,15 @@ function PrevEmploymentBlock({ index, onRemove, init, docFiles, onSelect, onRemo
 }
 
 
-/** Random temp password containing upper, lower, digit and symbol. */
-function makeTempPassword() {
-  const sets = ["ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnpqrstuvwxyz", "23456789", "@#$!%*"];
-  const rnd = (n) => crypto.getRandomValues(new Uint32Array(1))[0] % n;
-  const all = sets.join("");
-  const chars = sets.map((s) => s[rnd(s.length)]);
-  while (chars.length < 12) chars.push(all[rnd(all.length)]);
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = rnd(i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
-  }
-  return chars.join("");
+/**
+ * First-login password: the first four letters of the first name (as typed) + date of birth as DDMMYY.
+ * Suryakant, born 2003-03-29 -> "Sury290303". A first name shorter than four letters is used whole.
+ * `dob` is the date input's value (YYYY-MM-DD); the form requires both, so they are always present on create.
+ */
+function makeTempPassword(firstName, dob) {
+  const letters = (firstName ?? "").replace(/[^\p{L}]/gu, "").slice(0, 4);
+  const [yyyy, mm, dd] = String(dob ?? "").split("-");
+  return `${letters}${dd ?? ""}${mm ?? ""}${(yyyy ?? "").slice(-2)}`;
 }
 
 /** Employee form: onboarding when `employee` is absent, the same form pre-filled with the record when present. */
@@ -1584,6 +1582,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       ["personalEmail", "Personal email"],
       ["phone", "Mobile number"],
       ["doj", "Date of joining"],
+      ...(isEdit ? [] : [["employeeCode", "Employee ID"]]),
     ];
     const missing = required.filter(([k]) => !v[k]?.trim()).map(([, l]) => l);
     if (wageType !== "Monthly" && wageType !== "Daily") missing.push("Wage type");
@@ -1673,11 +1672,13 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
     const departmentIdParam = deptId;
     const selectedBranchName = backendBranches.find((b) => b.id === effectiveBranchId)?.name ?? "";
 
-    const tempPassword = isEdit ? "" : makeTempPassword();
+    const tempPassword = isEdit ? "" : makeTempPassword(v.firstName?.trim(), v.dob);
 
     const apiFields = {
       first_name: v.firstName.trim(),
       ...(isEdit ? {} : { password: tempPassword }),
+      // Employee ID typed by the admin (required on create, checked above). Not editable later.
+      ...(!isEdit && v.employeeCode?.trim() ? { employee_code: v.employeeCode.trim() } : {}),
       last_name: v.lastName?.trim() || "",
       work_email: workEmail,
       personal_email: v.personalEmail?.trim() || "",
@@ -2940,8 +2941,15 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
               </div>
 
               <FieldRow>
-                <Field label="Employee ID">
-                  <Input placeholder="Auto-assigned on create" disabled />
+                <Field label="Employee ID" required={!isEdit}>
+                  {/* Required on create; fixed once the employee exists (the backend does not allow changing it). */}
+                  <Input
+                    name="employeeCode"
+                    defaultValue={employee?.employee_code ?? ""}
+                    placeholder={isEdit ? "—" : "e.g. 100243"}
+                    maxLength={50}
+                    disabled={isEdit}
+                  />
                 </Field>
                 <Field label="Date of Joining" required>
                   <Input name="doj" defaultValue={init.doj} type="date" />
