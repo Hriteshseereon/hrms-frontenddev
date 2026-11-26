@@ -127,14 +127,28 @@ export const blankTaskDraft = (projectId = null) => ({
   tags: "",
   billable: true,
 });
-export const taskDraftValid = (d) =>
-  !!(
-    d.name.trim() &&
-    d.assignees.length > 0 &&
-    d.dueDate &&
-    d.startDate &&
-    d.dueDate >= d.startDate
-  );
+/** Field-level problems of a task draft (empty object = valid). Used for the inline error messages. */
+export function taskDraftErrors(d) {
+  const e = {};
+  const name = d.name.trim();
+  if (!name) e.name = "Task name is required";
+  else if (name.length < 3) e.name = "Task name must be at least 3 characters";
+  else if (name.length > 120) e.name = "Task name must be 120 characters or fewer";
+  if (d.description.length > 300) e.description = "Keep the short description under 300 characters";
+  if (d.details.length > 3000) e.details = "Details must be 3000 characters or fewer";
+  if (d.assignees.length === 0) e.assignees = "Select at least one assignee";
+  if (d.teamTask && !d.teamName.trim()) e.teamName = "Enter the team / squad name";
+  if (!d.startDate) e.startDate = "Start date is required";
+  if (!d.dueDate) e.dueDate = "Due date is required";
+  else if (d.startDate && d.dueDate < d.startDate) e.dueDate = "Due date cannot be before the start date";
+  if (d.endDate && d.startDate && d.endDate < d.startDate)
+    e.endDate = "End date cannot be before the start date";
+  const hrs = Number(d.estimatedHours);
+  if (d.estimatedHours !== "" && (!Number.isFinite(hrs) || hrs < 0 || hrs > 10000))
+    e.estimatedHours = "Enter hours between 0 and 10000";
+  return e;
+}
+export const taskDraftValid = (d) => Object.keys(taskDraftErrors(d)).length === 0;
 
 export function draftToInput(d, by) {
   return {
@@ -209,7 +223,10 @@ export const taskLinkFor = (empId, projectId) => {
 };
 
 /* ---------------- Form fields (embeddable) ---------------- */
-export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) {
+export function TaskFields({ d, set, lockProject, restrictAssignees, compact, showErrors = false }) {
+  // Inline errors appear only after the first submit attempt (showErrors).
+  const errs = showErrors ? taskDraftErrors(d) : {};
+  const bad = (k) => (errs[k] ? "border-destructive focus-visible:ring-destructive/30" : "");
   // Only people in the working scope (company / branch) — never another company's employees.
   const directory = useScopedEmployees();
   const projects = useProjects();
@@ -239,17 +256,21 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
 
   return (
     <div className="space-y-4">
+      <section className="border-border bg-muted/20 space-y-3 rounded-xl border p-4">
       <SectionTitle n={1} title="What is the task" />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Task name" required className="sm:col-span-2">
+        <Field label="Task name" required className="sm:col-span-2" error={errs.name}>
           <Input
+            className={bad("name")}
+            maxLength={120}
             value={d.name}
             onChange={(e) => set({ name: e.target.value })}
             placeholder="e.g. Build account-balance reconciliation service"
           />
         </Field>
-        <Field label="Short description" className="sm:col-span-2">
+        <Field label="Short description" className="sm:col-span-2" error={errs.description}>
           <Textarea
+            className={bad("description")}
             rows={2}
             value={d.description}
             onChange={(e) => set({ description: e.target.value })}
@@ -260,8 +281,10 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
           label="Details"
           className="sm:col-span-2"
           hint="Scope, approach, references — everything the assignee needs"
+          error={errs.details}
         >
           <Textarea
+            className={bad("details")}
             rows={compact ? 2 : 4}
             value={d.details}
             onChange={(e) => set({ details: e.target.value })}
@@ -364,7 +387,9 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
           />
         </Field>
       </div>
+      </section>
 
+      <section className="border-border bg-muted/20 space-y-3 rounded-xl border p-4">
       <SectionTitle
         n={2}
         title="Who"
@@ -372,7 +397,8 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
       />
       <div className="space-y-2">
         <Label className="text-muted-foreground flex items-center gap-2 text-xs">
-          <Users className="h-3.5 w-3.5" /> Assign to (one or many) *
+          <Users className="h-3.5 w-3.5" /> Assign to (one or many){" "}
+          <span className="text-destructive">*</span>
         </Label>
         <Input
           value={q}
@@ -380,7 +406,12 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
           placeholder="Filter people…"
           className="h-8"
         />
-        <div className="border-border grid max-h-44 grid-cols-1 gap-1.5 overflow-y-auto rounded-lg border p-2 sm:grid-cols-2 lg:grid-cols-3">
+        <div
+          className={cn(
+            "bg-background grid max-h-44 grid-cols-1 gap-1.5 overflow-y-auto rounded-lg border p-2 sm:grid-cols-2 lg:grid-cols-3",
+            errs.assignees ? "border-destructive" : "border-border",
+          )}
+        >
           {shown.map((e) => (
             <label
               key={e.id}
@@ -399,19 +430,22 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
             <div className="text-muted-foreground p-2 text-xs">No one matches.</div>
           )}
         </div>
-        <div className="text-muted-foreground text-xs">
-          {d.assignees.length
-            ? `${d.assignees.length} selected: ${d.assignees.map(nameOf).join(", ")}`
-            : "Nobody selected yet"}
+        <div className={cn("text-xs", errs.assignees ? "text-destructive" : "text-muted-foreground")}>
+          {errs.assignees
+            ? errs.assignees
+            : d.assignees.length
+              ? `${d.assignees.length} selected: ${d.assignees.map(nameOf).join(", ")}`
+              : "Nobody selected yet"}
         </div>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <label className="border-border flex items-center gap-2 rounded-lg border p-3 text-sm">
+        <label className="border-border bg-background flex items-center gap-2 rounded-lg border p-3 text-sm">
           <Checkbox checked={d.teamTask} onCheckedChange={(v) => set({ teamTask: !!v })} /> This is
           a team task (shared ownership, one progress)
         </label>
-        <Field label="Team / squad name">
+        <Field label="Team / squad name" required={d.teamTask} error={errs.teamName}>
           <Input
+            className={bad("teamName")}
             value={d.teamName}
             disabled={!d.teamTask}
             onChange={(e) => set({ teamName: e.target.value })}
@@ -438,26 +472,31 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
           />
         </Field>
       </div>
+      </section>
 
+      <section className="border-border bg-muted/20 space-y-3 rounded-xl border p-4">
       <SectionTitle n={3} title="Timeline & effort" />
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Field label="Start date" required>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Start date" required error={errs.startDate}>
           <Input
+            className={bad("startDate")}
             type="date"
             value={d.startDate}
             onChange={(e) => set({ startDate: e.target.value })}
           />
         </Field>
-        <Field label="End date">
+        <Field label="End date" error={errs.endDate}>
           <Input
+            className={bad("endDate")}
             type="date"
             value={d.endDate}
             min={d.startDate}
             onChange={(e) => set({ endDate: e.target.value })}
           />
         </Field>
-        <Field label="Due date" required>
+        <Field label="Due date" required error={errs.dueDate}>
           <Input
+            className={bad("dueDate")}
             type="date"
             value={d.dueDate}
             min={d.startDate}
@@ -476,8 +515,9 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
             onChange={(e) => set({ deadline: e.target.value })}
           />
         </Field>
-        <Field label="Estimated hours">
+        <Field label="Estimated hours" error={errs.estimatedHours}>
           <Input
+            className={bad("estimatedHours")}
             type="number"
             step="0.5"
             min={0}
@@ -489,7 +529,9 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
           <Checkbox checked={d.billable} onCheckedChange={(v) => set({ billable: !!v })} /> Billable
         </label>
       </div>
+      </section>
 
+      <section className="border-border bg-muted/20 space-y-3 rounded-xl border p-4">
       <SectionTitle n={4} title="Deliverables, checklist, links & documents" />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="Deliverables">
@@ -605,6 +647,7 @@ export function TaskFields({ d, set, lockProject, restrictAssignees, compact }) 
         label="Documents"
         hint="Specs, references, input files"
       />
+      </section>
     </div>
   );
 }
@@ -618,6 +661,7 @@ export function TaskForm({ projectId, lockProject, restrictAssignees, presetAssi
     startDate: todayIso(),
   });
   const set = (patch) => setD((p) => ({ ...p, ...patch }));
+  const [submitted, setSubmitted] = useState(false);
   return (
     <>
       <DialogHeader>
@@ -627,15 +671,28 @@ export function TaskForm({ projectId, lockProject, restrictAssignees, presetAssi
           delivery. It appears in Tasks, in the project's Tasks tab and on each assignee's portal.
         </DialogDescription>
       </DialogHeader>
-      <TaskFields d={d} set={set} lockProject={lockProject} restrictAssignees={restrictAssignees} />
-      <DialogFooter>
+      <TaskFields
+        d={d}
+        set={set}
+        lockProject={lockProject}
+        restrictAssignees={restrictAssignees}
+        showErrors={submitted}
+      />
+      <DialogFooter className="border-border border-t pt-4">
+        <span className="text-muted-foreground mr-auto self-center text-xs">
+          <span className="text-destructive">*</span> Required
+        </span>
         <Button variant="outline" onClick={() => onDone()}>
           Cancel
         </Button>
         <Button
           className="bg-gradient-emerald shadow-premium text-white"
-          disabled={!taskDraftValid(d)}
           onClick={() => {
+            if (!taskDraftValid(d)) {
+              setSubmitted(true);
+              toast.error("Please fix the highlighted fields");
+              return;
+            }
             const id = createTaskFromDraft(d, me);
             toast.success(`${id} created and assigned to ${d.assignees.map(nameOf).join(", ")}`);
             onDone(id);
@@ -683,6 +740,7 @@ export function draftFromTask(t) {
 export function TaskEditForm({ task, onDone }) {
   const me = useCurrentUser();
   const [d, setD] = useState(draftFromTask(task));
+  const [submitted, setSubmitted] = useState(false);
   const set = (patch) => setD((p) => ({ ...p, ...patch }));
   return (
     <>
@@ -692,15 +750,22 @@ export function TaskEditForm({ task, onDone }) {
           Changes are visible immediately to the assignees and the concerned manager / person.
         </DialogDescription>
       </DialogHeader>
-      <TaskFields d={d} set={set} />
-      <DialogFooter>
+      <TaskFields d={d} set={set} showErrors={submitted} />
+      <DialogFooter className="border-border border-t pt-4">
+        <span className="text-muted-foreground mr-auto self-center text-xs">
+          <span className="text-destructive">*</span> Required
+        </span>
         <Button variant="outline" onClick={onDone}>
           Cancel
         </Button>
         <Button
           className="bg-gradient-emerald shadow-premium text-white"
-          disabled={!taskDraftValid(d)}
           onClick={() => {
+            if (!taskDraftValid(d)) {
+              setSubmitted(true);
+              toast.error("Please fix the highlighted fields");
+              return;
+            }
             const input = draftToInput(d, { id: task.createdById ?? me.id, name: task.createdBy });
             updateTask(task.id, {
               ...input,

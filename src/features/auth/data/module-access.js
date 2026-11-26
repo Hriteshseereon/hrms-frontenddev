@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { getMe } from "@/api/meApi";
 import { registerNavExtension } from "./auth-session";
 import { useSessionStore } from "./session-store";
+import { SCREEN_ROUTES } from "./rbac-store";
 import MODULE_ROUTES from "./module-routes.json";
 
 const ROUTE_MODULE = new Map(
@@ -93,6 +94,73 @@ export function grantedModules(s = useSessionStore.getState()) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Assigned modules: the screens ticked in the Permission Matrix       */
+/* ------------------------------------------------------------------ */
+
+// Employee-portal page of the own-data screens (the Employee Self-Service set, `self_service: true`).
+const SELF_SCREEN_ROUTES = {
+  "org-dashboard": "/emp/dashboard",
+  "employee-profile": "/emp/profile",
+  referrals: "/emp/referrals",
+  "employee-docs": "/emp/profile",
+  "attendance-log": "/emp/attendance",
+  regularization: "/emp/attendance",
+  "leave-requests": "/emp/leave",
+  "leave-balance": "/emp/leave",
+  "holiday-calendar": "/emp/holidays",
+  "timesheet-log": "/emp/timesheets",
+  payslips: "/emp/payslips",
+  "loan-requests": "/emp/loans",
+  reimbursements: "/emp/reimbursements",
+  complaints: "/emp/complaints",
+  "support-tickets": "/helpdesk",
+  announcements: "/emp/notices",
+  policies: "/emp/handbook",
+};
+
+/**
+ * Every screen the user's roles grant (`assigned_modules` from login / refresh / GET /me), in Permission Matrix
+ * order, each with the page it opens:
+ *  - a module the role manages (it holds a screen there beyond the own-data ones, e.g. Leave Approvals or the
+ *    HR Manager's Shift Master) opens the organisation page of every screen of that module;
+ *  - a module where only own-data screens are ticked (e.g. the Manager's payslips) opens the employee-portal page.
+ * Returns [{ id, label, section, module, to, alt, view, edit, delete }]; `alt` is the other page, tried when `to` is closed.
+ */
+export function assignedScreens(s = useSessionStore.getState()) {
+  const out = [];
+  for (const mod of Array.isArray(s.assignedModules) ? s.assignedModules : []) {
+    const screens = (mod.submodules ?? []).flatMap((sub) => sub.screens ?? []);
+    const manages = screens.some((sc) => !sc.self_service);
+    for (const sc of screens) {
+      const org = SCREEN_ROUTES[sc.key] ?? null;
+      const own = sc.self_service ? (SELF_SCREEN_ROUTES[sc.key] ?? null) : null;
+      const [to, alt] = manages || !own ? [org ?? own, own] : [own, org];
+      if (!to) continue;
+      out.push({
+        id: sc.screen_code,
+        label: sc.name,
+        section: mod.name,
+        module: mod.key,
+        to,
+        alt: alt && alt !== to ? alt : null,
+        view: Boolean(sc.view),
+        edit: Boolean(sc.edit),
+        delete: Boolean(sc.delete),
+      });
+    }
+  }
+  return out;
+}
+
+/** Hook form of `assignedScreens`; `loaded` is false when the backend did not send `assigned_modules`. */
+export function useAssignedScreens() {
+  const assignedModules = useSessionStore((s) => s.assignedModules);
+  return { loaded: Array.isArray(assignedModules), screens: assignedScreens({ assignedModules }) };
+}
+
+const matchesRoute = (pathname, route) => pathname === route || pathname.startsWith(`${route}/`);
+
 // A role can give a plain employee login the org screens of its modules: with Admin portal access
 // (redirect_portal "org") the whole admin portal, otherwise just the module screens the role grants
 // (listed under "Assigned modules" in the employee portal). On top of the built-in role matrix.
@@ -103,7 +171,15 @@ registerNavExtension((_user, pathname) => {
   const adminPortal = s.redirectPortal === "org";
   if (adminPortal && pathname === "/org/dashboard") return true;
   const key = moduleOfRoute(pathname);
-  if (!key || !keysOf(s.permittedModules).includes(key)) return false;
+  const permitted = keysOf(s.permittedModules);
+  // The organisation page of a screen ticked for one of the user's roles (also pages that belong to no module,
+  // such as Timesheets or the Holiday Calendar). A page of a module the company switched off stays closed.
+  if (
+    (!key || permitted.includes(key)) &&
+    assignedScreens(s).some((sc) => sc.to.startsWith("/org") && matchesRoute(pathname, sc.to))
+  )
+    return true;
+  if (!key || !permitted.includes(key)) return false;
   return adminPortal || grantedModules(s).has(key);
 });
 

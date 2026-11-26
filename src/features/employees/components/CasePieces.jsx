@@ -19,14 +19,18 @@ import { caseTone } from "@/features/employees/data/people-cases";
 import { cn } from "@/lib/utils";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
 
-export function Field({ label, children, required, hint, className }) {
+export function Field({ label, children, required, hint, className, error }) {
   return (
     <div className={cn("space-y-1.5", className)}>
       <Label className="text-muted-foreground text-xs font-medium">
         {label} {required && <span className="text-destructive">*</span>}
       </Label>
       {children}
-      {hint && <p className="text-muted-foreground text-[11px]">{hint}</p>}
+      {error ? (
+        <p className="text-destructive text-[11px]">{error}</p>
+      ) : (
+        hint && <p className="text-muted-foreground text-[11px]">{hint}</p>
+      )}
     </div>
   );
 }

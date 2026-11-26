@@ -4,10 +4,13 @@
 // One shared set of tour records powers every view: the employee's own "My
 // Tours" screen, the admin-facing "All Tours" list, and the HOD → HR →
 // Finance approval queue — same pattern as Assets and Exit. Approval order is
-// fixed (HOD, then HR, then Finance) per the client's confirmed flow.
+// employee requests require HR then Finance, while HR-created assignments require Finance then HR dispatch.
 // ---------------------------------------------------------------------------
 import { createPersistentStore } from "@/lib/persist";
+import { useEffect } from "react";
 import { ORGANIZATION, can, userById } from "@/features/auth/data/auth-session";
+import { roleStore } from "@/features/auth/data/rbac-store";
+import { useSessionStore } from "@/features/auth/data/session-store";
 import { pushAlert } from "@/features/communications/data/employee-alerts";
 import {
   buildChain,
@@ -39,6 +42,7 @@ import { lockedMonthsIn } from "@/features/attendance/data/attendance-pattern";
  * @property {string} endDate
  * @property {TourMode} mode
  * @property {number} estimatedCost
+ * @property {"company_direct" | "advance" | "employee_reimbursement"} [paymentMethod]
  * @property {string} costCentre
  * @property {ApprovalStep[]} chain
  * @property {TourStatus} status
@@ -116,7 +120,7 @@ const nextTourId = () => {
 };
 
 /** Fixed approval order per the client's confirmed flow — do not reorder. */
-export const TOUR_CHAIN_ROLES = ["HOD", "HR", "CFO"];
+export const TOUR_CHAIN_ROLES = ["HR", "CFO"];
 
 const seedTour = (
   id,
@@ -289,7 +293,53 @@ export const TOURS_SEED = [
 ];
 
 export const tourStore = createPersistentStore("seereon.tours.v2", TOURS_SEED);
-export const useTours = () => tourStore.use();
+
+const normalizedRoleName = (value) => String(value ?? "").trim().toLowerCase();
+const assignedRoleApprover = (roleName, employeeId) => {
+  const employee = userById(employeeId);
+  const role = roleStore.get().find((item) => item.status === "Active" && normalizedRoleName(item.name) === normalizedRoleName(roleName));
+  if (!role) return null;
+  const assigned = Object.entries(role.assignedUsers ?? {})
+    .filter(([, branches]) => Array.isArray(branches) && branches.length)
+    .map(([id]) => userById(id))
+    .filter((user) => user && user.orgId === employee?.orgId);
+  return assigned.find((user) => user.id !== employeeId) ?? null;
+};
+const userHasAssignedWorkflowRole = (userId, roleNames) => roleStore.get().some((role) =>
+  role.status === "Active" && roleNames.some((name) => normalizedRoleName(name) === normalizedRoleName(role.name)) &&
+  Array.isArray(role.assignedUsers?.[userId]) && role.assignedUsers[userId].length > 0,
+);
+
+const buildTravelChain = (employeeId, roleNames) =>
+  roleNames.map((role) => {
+    const approver = assignedRoleApprover(role, employeeId);
+    return { role, label: role, approverId: approver?.id ?? null, approverName: approver?.name ?? null, status: "Pending", requesterId: employeeId };
+  });
+
+/** Replace the old default HR/CFO approvers on untouched pending requests with the currently assigned workflow roles. */
+function migratePendingTourApprovers(rows) {
+  let changed = false;
+  const migrated = rows.map((tour) => {
+    if (tour.status !== "Pending Approval" || (tour.chain ?? []).some((step) => step.status !== "Pending")) return tour;
+    const hasLegacySteps = tour.chain?.some((step) => step.role === "HR" || step.role === "CFO");
+    if (!hasLegacySteps) return tour;
+    const chain = buildTravelChain(tour.employeeId, ["HR Manager", "Finance Manager"]);
+    if (JSON.stringify(chain) === JSON.stringify(tour.chain)) return tour;
+    changed = true;
+    return { ...tour, chain };
+  });
+  return changed ? migrated : rows;
+}
+
+export const useTours = () => {
+  const tours = tourStore.use();
+  useEffect(() => {
+    const current = tourStore.get();
+    const migrated = migratePendingTourApprovers(current);
+    if (migrated !== current) tourStore.set(migrated);
+  }, [tours]);
+  return tours;
+};
 
 /** Tours the employee travels on — as the requester / primary traveller or as an assigned co-traveller. */
 export function useMyTours(employeeId) {
@@ -310,6 +360,18 @@ function notifyCurrentApprover(t) {
       title: `Tour ${t.id} awaiting your approval (${step.label})`,
       body: `${t.employeeName} · ${t.destination} · ${t.startDate} → ${t.endDate} · est. ₹${t.estimatedCost.toLocaleString("en-IN")}.`,
     });
+}
+
+function notifyHrDispatch(t) {
+  const hrApprover = assignedRoleApprover("HR Manager", t.employeeId);
+  const hr = hrApprover ? { approverId: hrApprover.id } : buildChain(t.employeeId, ["HR"]).find((step) => step.approverId);
+  if (hr?.approverId) pushAlert({
+    empId: hr.approverId,
+    kind: "general",
+    to: "/org/tours",
+    title: `Tour ${t.id} ready to send to employee`,
+    body: `${t.employeeName} · ${t.destination} · Finance approved. Review and send the assignment to the employee.`,
+  });
 }
 
 /**
@@ -337,7 +399,7 @@ export function validateTourInput(input) {
 /* ----------------------------- submit ------------------------------ */
 
 /** Statuses of a tour that still occupies the traveller's calendar. */
-const LIVE_TOUR = new Set(["Pending Approval", "Approved", "Completed", "Closed"]);
+const LIVE_TOUR = new Set(["Pending Approval", "Pending HR Dispatch", "Approved", "Completed", "Closed"]);
 
 /**
  * Calendar clash for a traveller: another live tour (as requester or co-traveller) or an approved / pending leave
@@ -377,7 +439,7 @@ export function submitTour(input) {
   const clash = tourClashFor(input.employeeId, input.startDate, input.endDate);
   if (clash) throw new Error(clash);
   const emp = userById(input.employeeId);
-  const chain = buildChain(input.employeeId, [...TOUR_CHAIN_ROLES]);
+  const chain = buildTravelChain(input.employeeId, ["HR Manager", "Finance Manager"]);
   const row = {
     id: nextTourId(),
     orgId: emp?.orgId ?? ORG,
@@ -389,14 +451,25 @@ export function submitTour(input) {
     endDate: input.endDate,
     mode: input.mode,
     estimatedCost: input.estimatedCost,
+    paymentMethod: input.paymentMethod ?? "employee_reimbursement",
     costCentre: input.costCentre,
+    expenses: (input.expenses ?? []).map((expense, index) => ({
+      ...expense,
+      id: `TX-${String(index + 1).padStart(2, "0")}`,
+      approved: false,
+      rejected: false,
+      hrVerified: false,
+      reviewStatus: "Pending HR",
+      reviewHistory: [],
+    })),
     chain,
     // A chain with no approver left (every role vacant / self) is already cleared — it must not sit pending forever.
-    status: chainStatus(chain) === "Approved" ? "Approved" : "Pending Approval",
+    status: chainStatus(chain) === "Approved" ? "Pending HR Dispatch" : "Pending Approval",
     raisedOn: today(),
   };
   tourStore.set((p) => [row, ...p]);
-  notifyCurrentApprover(row);
+  if (row.status === "Pending HR Dispatch") notifyHrDispatch(row);
+  else notifyCurrentApprover(row);
   return row;
 }
 
@@ -413,7 +486,7 @@ export const withdrawTour = (id) =>
     ),
   );
 
-/** HR / Admin / Super Admin creates a tour and assigns it to one or more employees — approved on creation, employee notified. */
+/** HR/Admin assignments go to Finance first, then wait for HR to dispatch to the employee. */
 export function createAndAssignTour(input, by) {
   const emp = userById(input.employeeId);
   if (!emp) return { ok: false, message: "Choose an employee." };
@@ -421,18 +494,17 @@ export function createAndAssignTour(input, by) {
     return { ok: false, message: "Destination, dates and purpose are required." };
   if (input.endDate < input.startDate)
     return { ok: false, message: "The tour end date cannot be before its start date." };
+  if (!["company_direct", "advance", "employee_reimbursement"].includes(input.paymentMethod ?? "employee_reimbursement"))
+    return { ok: false, message: "Choose a valid travel payment arrangement." };
   if (input.estimatedCost < 0 || input.advancePaid < 0)
     return { ok: false, message: "Estimated cost and advance cannot be negative." };
+  if (input.paymentMethod === "advance" && !(input.advancePaid > 0))
+    return { ok: false, message: "Enter the travel advance amount." };
   for (const id of [emp.id, ...(input.travellers ?? [])]) {
     const clash = tourClashFor(id, input.startDate, input.endDate);
     if (clash) return { ok: false, message: `${userById(id)?.name ?? id}: ${clash}` };
   }
-  const chain = buildChain(input.employeeId, [...TOUR_CHAIN_ROLES]).map((s) => ({
-    ...s,
-    status: "Approved",
-    actedOn: today(),
-    note: `Assigned by ${by.name}`,
-  }));
+  const chain = buildTravelChain(input.employeeId, ["Finance Manager"]);
   const row = {
     id: nextTourId(),
     orgId: emp.orgId ?? ORG,
@@ -444,9 +516,10 @@ export function createAndAssignTour(input, by) {
     endDate: input.endDate,
     mode: input.mode,
     estimatedCost: input.estimatedCost,
+    paymentMethod: input.paymentMethod ?? "employee_reimbursement",
     costCentre: input.costCentre,
     chain,
-    status: "Approved",
+    status: chainStatus(chain) === "Approved" ? "Pending HR Dispatch" : "Pending Approval",
     raisedOn: today(),
     advancePaid: input.advancePaid || undefined,
     assignedBy: { name: by.name, on: today(), note: input.note },
@@ -456,34 +529,66 @@ export function createAndAssignTour(input, by) {
     itinerary: input.itinerary,
     accommodation: input.accommodation,
     bookingRefs: input.bookingRefs,
+    vendor: input.vendor,
     expenses: [],
     bills: [],
   };
   tourStore.set((p) => [row, ...p]);
-  [emp.id, ...(input.travellers ?? [])].forEach((id) =>
-    pushAlert({
-      empId: id,
-      kind: "general",
-      to: "/emp/tours",
-      title: `Tour assigned: ${input.destination}`,
-      body: `${input.startDate} → ${input.endDate} · ${input.mode} · ${input.purpose}${input.advancePaid ? ` · advance ₹${input.advancePaid.toLocaleString("en-IN")}` : ""}. Assigned by ${by.name}.`,
-    }),
-  );
+  if (row.status === "Pending HR Dispatch") notifyHrDispatch(row);
+  else notifyCurrentApprover(row);
   return {
     ok: true,
-    message: `${row.id} created and assigned to ${emp.name}${input.travellers?.length ? ` + ${input.travellers.length} co-traveller(s)` : ""}.`,
+    message: `${row.id} sent to Finance for approval before HR sends it to ${emp.name}.`,
     id: row.id,
   };
 }
 export const setTourAdvance = (id, amount) =>
-  tourStore.set((p) => p.map((t) => (t.id === id ? { ...t, advancePaid: amount } : t)));
+  tourStore.set((p) => p.map((t) => (t.id === id && !t.settlement && !t.encashment ? { ...t, advancePaid: amount } : t)));
+
+/** Record one final tour settlement. The stored settlement is idempotency protection for the UI workflow. */
+export function recordTourSettlement(id, { amount, direction, channel, reference, by }) {
+  const tour = tourStore.get().find((item) => item.id === id);
+  if (!tour) return { ok: false, message: "Tour not found." };
+  if (tour.settlement || tour.encashment) return { ok: false, message: "This tour already has a settlement record." };
+  if (tour.status !== "Completed") return { ok: false, message: "Settle expenses after the tour is completed." };
+  if ((tour.expenses ?? []).some((expense) => !expense.approved && !expense.rejected)) return { ok: false, message: "Complete HR and Finance review for every expense before settlement." };
+  if (!(Number(amount) > 0)) return { ok: false, message: "There is no settlement amount to record." };
+  if (channel === "bank" && !String(reference ?? "").trim()) return { ok: false, message: "Enter the bank transfer reference." };
+  const settlement = {
+    amount: Number(amount),
+    direction,
+    channel,
+    reference: String(reference ?? "").trim(),
+    by,
+    on: today(),
+  };
+  tourStore.set((items) => items.map((item) => item.id === id && !item.settlement && !item.encashment
+    ? { ...item, settlement, settlementHistory: [...(item.settlementHistory ?? []), settlement] }
+    : item));
+  const hrStep = tour.chain.find((step) => ["HR", "HR Manager"].includes(step.role) && step.approverId);
+  if (hrStep?.approverId) pushAlert({
+    empId: hrStep.approverId,
+    kind: "general",
+    to: "/org/tours",
+    title: `Travel reimbursement paid · ${tour.id}`,
+    body: `${tour.employeeName} · ${tour.destination} · ${direction === "refund" ? "Refund" : "Reimbursement"} ${Number(amount).toLocaleString("en-IN", { style: "currency", currency: "INR" })} recorded by Finance via ${channel}.`,
+  });
+  pushAlert({
+    empId: tour.employeeId,
+    kind: "general",
+    to: "/emp/tours",
+    title: `Travel payment recorded · ${tour.id}`,
+    body: `${direction === "refund" ? "Refund" : "Reimbursement"} ${Number(amount).toLocaleString("en-IN", { style: "currency", currency: "INR" })} recorded via ${channel}${reference ? ` · Ref ${reference}` : ""}.`,
+  });
+  return { ok: true, message: "Settlement recorded." };
+}
 export function addTourBill(id, b) {
   // Highest serial + 1: bills can be removed, so `length + 1` re-issued an existing bill id.
   const serial = (t) =>
     (t.bills ?? []).reduce((m, x) => Math.max(m, Number(x.id.replace(/\D/g, "")) || 0), 0) + 1;
   tourStore.set((p) =>
     p.map((t) =>
-      t.id === id
+      t.id === id && !t.settlement
         ? {
             ...t,
             bills: [
@@ -498,12 +603,13 @@ export function addTourBill(id, b) {
 export const removeTourBill = (id, billId) =>
   tourStore.set((p) =>
     p.map((t) =>
-      t.id === id ? { ...t, bills: (t.bills ?? []).filter((b) => b.id !== billId) } : t,
+      t.id === id && !t.settlement ? { ...t, bills: (t.bills ?? []).filter((b) => b.id !== billId) } : t,
     ),
   );
 /** Bill → expense line in one step (for reimbursement). */
 export function addBillAsExpense(id, billId, by) {
   const t = tourStore.get().find((x) => x.id === id);
+  if (t?.settlement) return;
   const b = t?.bills?.find((x) => x.id === billId);
   if (!t || !b) return;
   if (b.linkedExpenseId) return;
@@ -549,16 +655,21 @@ export function canDecideTour(t, user) {
   if (t.status !== "Pending Approval" || t.employeeId === user.id) return false;
   const step = currentStep(t.chain);
   if (!step) return false;
-  // One person may not clear two steps (e.g. a CHRO overriding HOD, then HR, then Finance in three clicks).
+  // One person may not clear two steps in the same request (HR and Finance remain separate approvals).
   if (isBarredFromChain(t.chain, user.id, t.employeeId)) return false;
   if (canActOn(t.chain, user.id, user.role, t.employeeId)) return true;
   if (user.orgId !== t.orgId) return false;
-  if (step.role === "HR") return can(user.role, "tour.hr.decide");
-  if (step.role === "CFO") return can(user.role, "tour.finance.decide");
+  const session = useSessionStore.getState();
+  const sessionRoles = session.userId === user.id ? session.roles ?? [] : [];
+  const hasSessionRole = (names) => sessionRoles.some((role) => names.some((name) => normalizedRoleName(name) === normalizedRoleName(typeof role === "string" ? role : role?.name)));
+  if (step.role === "HR" || step.role === "HR Manager")
+    return can(user.role, "tour.hr.decide") || userHasAssignedWorkflowRole(user.id, ["HR Manager"]) || hasSessionRole(["HR Manager"]);
+  if (step.role === "CFO" || step.role === "Finance Manager")
+    return can(user.role, "tour.finance.decide") || userHasAssignedWorkflowRole(user.id, ["Finance Manager"]) || hasSessionRole(["Finance Manager"]);
   return false;
 }
 
-/** HOD, then HR, then Finance — decideChain always acts on the current pending step. */
+/** Employee requests pass HR then Finance; HR-created assignments pass Finance then HR dispatch. */
 export function decideTour(id, userId, decision, note) {
   const t = tourStore.get().find((x) => x.id === id);
   const actor = userById(userId);
@@ -585,26 +696,50 @@ export function decideTour(id, userId, decision, note) {
       message: "You already acted on this tour — the next step needs a different approver.",
     };
   const stage = chainStatus(chain);
-  const status =
-    stage === "Rejected" ? "Rejected" : stage === "Pending" ? "Pending Approval" : "Approved";
+  const status = stage === "Rejected" ? "Rejected" : stage === "Pending" ? "Pending Approval" : t.assignedBy ? "Pending HR Dispatch" : "Approved";
   const next = { ...t, chain, status };
   tourStore.set((p) => p.map((x) => (x.id === id ? next : x)));
   if (status === "Pending Approval") notifyCurrentApprover(next);
-  else
-    pushAlert({
-      empId: t.employeeId,
-      kind: "general",
-      to: "/emp/tours",
-      title: `Tour ${t.id} ${status.toLowerCase()}`,
-      body: `${t.destination} · ${t.startDate} → ${t.endDate} — ${status.toLowerCase()} by ${actor.name}${note ? ` (${note})` : ""}.`,
-    });
+  else if (status === "Pending HR Dispatch") notifyHrDispatch(next);
+  else pushAlert({
+    empId: t.employeeId,
+    kind: "general",
+    to: "/emp/tours",
+    title: `Tour request approved · ${t.id}`,
+    body: `${t.destination} · ${t.startDate} → ${t.endDate}. Your request has been approved. Submit expense bills after travel for reimbursement.`,
+  });
   return {
     ok: true,
     message:
       status === "Pending Approval"
         ? `Approved — now with ${currentStep(chain)?.label ?? "next approver"}`
-        : `Tour ${status.toLowerCase()}`,
+        : status === "Rejected"
+          ? `Tour rejected${note ? `: ${note}` : "."}`
+          : status === "Pending HR Dispatch"
+            ? "Finance approved. HR must send the tour to the employee."
+            : "Tour approved. The employee can now submit expenses after travel.",
   };
+}
+
+/** HR sends the approved tour assignment to the employee and creates the employee portal notification. */
+export function dispatchTourToEmployee(id, by) {
+  const tour = tourStore.get().find((item) => item.id === id);
+  if (!tour) return { ok: false, message: "Tour not found." };
+  if (tour.status !== "Pending HR Dispatch") return { ok: false, message: "This tour is not awaiting HR dispatch." };
+  const session = useSessionStore.getState();
+  const hasSessionHrRole = session.userId === by?.id && (session.roles ?? []).some((role) => normalizedRoleName(typeof role === "string" ? role : role?.name) === "hr manager");
+  if (!by || by.orgId !== tour.orgId || (!can(by.role, "tour.hr.decide") && !userHasAssignedWorkflowRole(by.id, ["HR Manager"]) && !hasSessionHrRole))
+    return { ok: false, message: "Only HR for this organization can send the tour to the employee." };
+  const next = { ...tour, status: "Approved", dispatchedOn: today(), dispatchedBy: by.name };
+  tourStore.set((items) => items.map((item) => item.id === id ? next : item));
+  [tour.employeeId, ...(tour.travellers ?? []).map((traveller) => traveller.id)].forEach((empId) => pushAlert({
+    empId,
+    kind: "general",
+    to: "/emp/tours",
+    title: `Tour assigned: ${tour.destination}`,
+    body: `${tour.startDate} → ${tour.endDate} · ${tour.mode} · ${tour.purpose}${tour.advancePaid ? ` · advance ₹${tour.advancePaid.toLocaleString("en-IN")}` : ""}. Approved by Finance and sent by ${by.name}.`,
+  }));
+  return { ok: true, message: `Tour ${id} sent to ${tour.employeeName}.` };
 }
 
 /* ----------------------------- outcome ------------------------------ */
@@ -632,7 +767,7 @@ export function addTourExpense(id, e) {
   if (!(e.amount > 0)) return;
   tourStore.set((p) =>
     p.map((t) =>
-      t.id === id && t.status !== "Closed" && !t.encashment
+      t.id === id && t.status !== "Closed" && !t.encashment && !t.settlement
         ? {
             ...t,
             expenses: [
@@ -641,6 +776,10 @@ export function addTourExpense(id, e) {
                 ...e,
                 id: `TX-${String((t.expenses ?? []).reduce((m, x) => Math.max(m, Number(x.id.replace(/\D/g, "")) || 0), 0) + 1).padStart(2, "0")}`,
                 approved: false,
+                rejected: false,
+                hrVerified: false,
+                reviewStatus: "Pending HR",
+                reviewHistory: [],
               },
             ],
           }
@@ -648,12 +787,39 @@ export function addTourExpense(id, e) {
     ),
   );
 }
+/** HR verifies each receipt before Finance makes the final reimbursement decision. */
+export function reviewTourExpense(id, expId, { stage, decision, reviewer, reason = "" }) {
+  const tour = tourStore.get().find((item) => item.id === id);
+  const expense = tour?.expenses?.find((item) => item.id === expId);
+  if (!tour || !expense) return { ok: false, message: "Expense not found." };
+  if (tour.encashment || tour.settlement || tour.status === "Closed") return { ok: false, message: "This tour is locked for expense review." };
+  if (expense.approved || expense.rejected) return { ok: false, message: "This expense already has a final decision." };
+  if (stage === "hr" && expense.hrVerified) return { ok: false, message: "HR already verified this expense." };
+  if (stage === "finance" && !expense.hrVerified) return { ok: false, message: "HR verification is required before Finance review." };
+  if ((stage === "hr" && !["verify", "reject"].includes(decision)) || (stage === "finance" && !["approve", "reject"].includes(decision)) || !["hr", "finance"].includes(stage))
+    return { ok: false, message: "That decision is not available at this review stage." };
+  if (!["verify", "approve", "reject"].includes(decision)) return { ok: false, message: "Choose a valid review decision." };
+  if (decision === "reject" && !reason.trim()) return { ok: false, message: "Enter a reason for rejecting this expense." };
+  const action = { stage, decision, reviewer, reason: reason.trim(), on: today() };
+  tourStore.set((items) => items.map((item) => item.id !== id ? item : {
+    ...item,
+    expenses: item.expenses.map((line) => line.id !== expId ? line : {
+      ...line,
+      hrVerified: line.hrVerified || (stage === "hr" && decision === "verify"),
+      approved: stage === "finance" && decision === "approve",
+      rejected: decision === "reject",
+      reviewStatus: decision === "reject" ? "Rejected" : stage === "hr" ? "Pending Finance" : "Approved",
+      reviewHistory: [...(line.reviewHistory ?? []), action],
+    }),
+  }));
+  return { ok: true, message: decision === "verify" ? "Expense verified and sent to Finance." : decision === "approve" ? "Reimbursement approved." : "Expense rejected." };
+}
 export function approveTourExpense(id, expId, approved) {
   tourStore.set((p) =>
     p.map((t) =>
       // Once encashed (or closed) the approved total is final — approving more would change the encashable amount
       // after the petty cash claim was raised.
-      t.id === id && !t.encashment && t.status !== "Closed"
+      t.id === id && !t.encashment && !t.settlement && t.status !== "Closed"
         ? {
             ...t,
             expenses: (t.expenses ?? []).map((e) => (e.id === expId ? { ...e, approved } : e)),
@@ -665,17 +831,26 @@ export function approveTourExpense(id, expId, approved) {
 export const tourExpenseTotals = (t) => {
   const all = (t.expenses ?? []).reduce((s, e) => s + e.amount, 0);
   const approved = (t.expenses ?? []).filter((e) => e.approved).reduce((s, e) => s + e.amount, 0);
+  const employeeApproved = (t.expenses ?? []).filter((e) => e.approved && (e.paidBy ?? "Employee") === "Employee").reduce((s, e) => s + e.amount, 0);
+  const advanceUsed = (t.expenses ?? []).filter((e) => e.approved && e.paidBy === "Advance").reduce((s, e) => s + e.amount, 0);
+  const companyPaid = (t.expenses ?? []).filter((e) => e.approved && ["Company card", "Vendor invoice"].includes(e.paidBy)).reduce((s, e) => s + e.amount, 0);
+  const advance = t.advancePaid ?? 0;
+  const unusedAdvance = Math.max(advance - advanceUsed, 0);
   return {
     all,
     approved,
-    advance: t.advancePaid ?? 0,
-    encashable: Math.max(approved - (t.advancePaid ?? 0), 0),
-    refundable: Math.max((t.advancePaid ?? 0) - approved, 0),
+    companyPaid,
+    employeeApproved,
+    advanceUsed,
+    unusedAdvance,
+    advance,
+    encashable: Math.max(employeeApproved - unusedAdvance, 0),
+    refundable: Math.max(unusedAdvance - employeeApproved, 0),
   };
 };
 export const markEncashed = (id, amount, claimId) =>
   tourStore.set((p) =>
-    p.map((t) => (t.id === id ? { ...t, encashment: { amount, claimId, on: today() } } : t)),
+    p.map((t) => (t.id === id && !t.settlement && !t.encashment ? { ...t, encashment: { amount, claimId, on: today() } } : t)),
   );
 export const tourRoi = (t) => {
   const cost = tourExpenseTotals(t).approved || t.estimatedCost;

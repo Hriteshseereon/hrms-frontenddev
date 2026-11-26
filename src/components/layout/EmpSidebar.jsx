@@ -39,7 +39,12 @@ import { BrandLogo, useBrandLogo } from "@/components/brand/BrandLogo";
 import { BRAND_NAME } from "@/config/brand";
 import { cn } from "@/lib/utils";
 import { canOpen, signOut, useCurrentUser } from "@/features/auth/data/auth-session";
-import { useModuleAccess, grantedModules, moduleOfRoute } from "@/features/auth/data/module-access";
+import {
+  useModuleAccess,
+  useAssignedScreens,
+  grantedModules,
+  moduleOfRoute,
+} from "@/features/auth/data/module-access";
 import { useSessionStore } from "@/features/auth/data/session-store";
 import { ORG_NAV_GROUPS } from "@/components/layout/OrgSidebar";
 import { workspaceLoginPath } from "@/features/organization/data/tenancy";
@@ -116,6 +121,20 @@ export const EMP_NAV_ITEMS = [
   },
 ];
 
+// Icon of an "Assigned modules" entry, by Permission Matrix module key.
+const ASSIGNED_ICONS = {
+  overview: LayoutDashboard,
+  employee: UserCircle,
+  attendance: Clock,
+  leave: Plane,
+  timesheet: Timer,
+  payroll: Wallet,
+  recruitment: UserPlus,
+  performance: Target,
+  workplace: Megaphone,
+  configuration: Building2,
+};
+
 export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = false, onClose }) {
   const brandLogo = useBrandLogo();
   // Icon-only rail is desktop-only — the mobile drawer always shows labels.
@@ -134,11 +153,23 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
     Array.isArray(roles) &&
     roles.length > 0 &&
     roles.every((r) => /^employee[\s-]*self[\s-]*service$/i.test(String(r?.name ?? "").trim()));
-  // Org screens of the modules this employee's role grants (e.g. an HR role with the Employee module).
+  // "Assigned modules": one entry per screen the Company Admin ticked in the Permission Matrix for this employee's
+  // roles (`assigned_modules` from the backend), grouped by module. A screen whose page is closed to them (its module
+  // is switched off for the company) is left out.
+  const { loaded: assignedLoaded, screens: assignedScreens } = useAssignedScreens();
+  const hasRoleScreens = apiSession && me.role === "Employee" && !selfServiceOnly;
   const granted = grantedModules({ permissions });
-  const assigned =
-    apiSession && me.role === "Employee" && !selfServiceOnly
-      ? ORG_NAV_GROUPS.flatMap((g) => g.items).filter((i) => {
+  const assigned = !hasRoleScreens
+    ? []
+    : assignedLoaded
+      ? assignedScreens.flatMap((sc) => {
+          const to = [sc.to, sc.alt].find((p) => p && canOpen(me.role, p) && moduleOn(p));
+          return to
+            ? [{ key: sc.id, to, label: sc.label, section: sc.section, icon: ASSIGNED_ICONS[sc.module] ?? Building2 }]
+            : [];
+        })
+      : // older backend without `assigned_modules`: the org menu entries of the modules the roles grant
+        ORG_NAV_GROUPS.flatMap((g) => g.items).filter((i) => {
           const key = moduleOfRoute(i.to);
           return (
             i.to.startsWith("/org") &&
@@ -147,8 +178,7 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
             granted.has(key) &&
             permittedModules.includes(key)
           );
-        })
-      : [];
+        });
   const navItems = assigned.length
     ? [...EMP_NAV_ITEMS, { label: "Assigned modules", icon: Building2, children: assigned }]
     : EMP_NAV_ITEMS;
@@ -245,13 +275,21 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
             const groupActive = item.children.some((c) => isActive(c.to));
             const expanded = open[item.label] ?? groupActive;
             if (collapsed) {
-              return item.children.map((c) => (
-                <Link href={c.to} key={c.to} className={linkClass(isActive(c.to))} title={c.label}>
-                  <c.icon
-                    className={cn("h-[18px] w-[18px] shrink-0", isActive(c.to) && "text-gold")}
-                  />
-                </Link>
-              ));
+              // icon rail: several assigned screens can share one page, so each page gets one icon
+              return item.children
+                .filter((c, i, all) => all.findIndex((x) => x.to === c.to) === i)
+                .map((c) => (
+                  <Link
+                    href={c.to}
+                    key={`${item.label}:${c.to}`}
+                    className={linkClass(isActive(c.to))}
+                    title={c.label}
+                  >
+                    <c.icon
+                      className={cn("h-[18px] w-[18px] shrink-0", isActive(c.to) && "text-gold")}
+                    />
+                  </Link>
+                ));
             }
             return (
               <div key={item.label}>
@@ -274,11 +312,21 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
                 </button>
                 {expanded && (
                   <div className="mt-0.5 space-y-0.5">
-                    {item.children.map((c) => (
-                      <Link href={c.to} key={c.to} className={linkClass(isActive(c.to), true)}>
-                        <c.icon className={cn("h-4 w-4 shrink-0", isActive(c.to) && "text-gold")} />
-                        <span className="flex-1 truncate">{c.label}</span>
-                      </Link>
+                    {item.children.map((c, i) => (
+                      <div key={c.key ?? c.to}>
+                        {/* assigned screens are grouped under their Permission Matrix module */}
+                        {c.section && c.section !== item.children[i - 1]?.section && (
+                          <div className="text-sidebar-foreground/45 px-3 pt-2 pb-1 pl-9 text-[10px] font-semibold tracking-widest uppercase">
+                            {c.section}
+                          </div>
+                        )}
+                        <Link href={c.to} className={linkClass(isActive(c.to), true)}>
+                          <c.icon
+                            className={cn("h-4 w-4 shrink-0", isActive(c.to) && "text-gold")}
+                          />
+                          <span className="flex-1 truncate">{c.label}</span>
+                        </Link>
+                      </div>
                     ))}
                   </div>
                 )}

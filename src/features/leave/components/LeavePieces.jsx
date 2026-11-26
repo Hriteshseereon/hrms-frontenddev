@@ -286,7 +286,7 @@ const statusTone = (s) =>
 //             </SelectContent>
 //           </Select>
 //         </Field>
-//         <Field label="From" required>
+//         <Field label="From" required className="sm:col-span-2">
 //           <Input
 //             type="date"
 //             value={from}
@@ -296,10 +296,10 @@ const statusTone = (s) =>
 //             }}
 //           />
 //         </Field>
-//         <Field label="To" required>
+//         <Field label="To" required className="sm:col-span-2">
 //           <Input type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)} />
 //         </Field>
-//         <Field label="Day part" className="sm:col-span-2">
+//         <Field label="Day part" className="sm:col-span-4">
 //           <RadioGroup
 //             value={dayPart}
 //             onValueChange={(v) => {
@@ -307,7 +307,7 @@ const statusTone = (s) =>
 //               // A half day is a single date.
 //               if (v !== "Full day" && from) setTo(from);
 //             }}
-//             className="flex flex-wrap gap-4 pt-1"
+//             className="flex flex-wrap gap-2"
 //           >
 //             {["Full day", "First half", "Second half"].map((d) => (
 //               <div key={d} className="flex items-center gap-2">
@@ -903,7 +903,7 @@ const statusTone = (s) =>
 //           </Select>
 //         </Field>
 
-//         <Field label="From" required>
+//         <Field label="From" required className="sm:col-span-2">
 //           <Input
 //             type="date"
 //             value={from}
@@ -921,7 +921,7 @@ const statusTone = (s) =>
 //           />
 //         </Field>
 
-//         <Field label="To" required>
+//         <Field label="To" required className="sm:col-span-2">
 //           <Input
 //             type="date"
 //             value={to}
@@ -930,7 +930,7 @@ const statusTone = (s) =>
 //           />
 //         </Field>
 
-//         <Field label="Day part" className="sm:col-span-2">
+//         <Field label="Day part" className="sm:col-span-4">
 //           <RadioGroup
 //             value={dayPart}
 //             onValueChange={(v) => {
@@ -940,7 +940,7 @@ const statusTone = (s) =>
 //                 setTo(from);
 //               }
 //             }}
-//             className="flex flex-wrap gap-4 pt-1"
+//             className="flex flex-wrap gap-2"
 //           >
 //             {["Full day", "First half", "Second half"].map((d) => (
 //               <div key={d} className="flex items-center gap-2">
@@ -1594,7 +1594,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
   return (
     <div className="space-y-4">
       {!fixedEmpId && (
-        <>
+        <section className="border-border bg-muted/20 space-y-3 rounded-xl border p-4">
           <SectionTitle n={1} title="Employee" />
 
           <Select value={empId} onValueChange={setEmpId}>
@@ -1610,35 +1610,16 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
               ))}
             </SelectContent>
           </Select>
-        </>
+        </section>
       )}
 
-      {fixedEmpId && balances.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {balances
-            .filter((b) => Number.isFinite(b.available))
-            .map((b) => (
-              <Badge
-                key={b.type}
-                variant="outline"
-                className={cn(
-                  "font-normal",
-                  b.available <= 0 &&
-                    "border-destructive/40 text-destructive",
-                )}
-              >
-                {b.type}: <b className="ml-1">{b.available}</b>&nbsp;left
-              </Badge>
-            ))}
-        </div>
-      )}
-
+      <section className="border-border bg-muted/20 space-y-3 rounded-xl border p-4">
       <SectionTitle
         n={fixedEmpId ? 1 : 2}
         title="Leave & dates"
       />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-6">
         <Field label="Leave type" required className="sm:col-span-2">
           <Select
             value={leaveType}
@@ -1674,7 +1655,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           </Select>
         </Field>
 
-        <Field label="From" required>
+        <Field label="From" required className="sm:col-span-2">
           <Input
             type="date"
             value={from}
@@ -1692,7 +1673,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           />
         </Field>
 
-        <Field label="To" required>
+        <Field label="To" required className="sm:col-span-2">
           <Input
             type="date"
             value={to}
@@ -1701,7 +1682,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           />
         </Field>
 
-        <Field label="Day part" className="sm:col-span-2">
+        <Field label="Day part" className="sm:col-span-4">
           <RadioGroup
             value={dayPart}
             onValueChange={(v) => {
@@ -1711,36 +1692,38 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
                 setTo(from);
               }
             }}
-            className="flex flex-wrap gap-4 pt-1"
+            className="flex flex-wrap gap-2"
           >
             {["Full day", "First half", "Second half"].map((d) => (
-              <div key={d} className="flex items-center gap-2">
+              <Label
+                key={d}
+                htmlFor={`dp-${d}`}
+                className={cn(
+                  "bg-background flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-normal transition-colors",
+                  dayPart === d
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border hover:bg-muted/50",
+                )}
+              >
                 <RadioGroupItem value={d} id={`dp-${d}`} />
-                <Label
-                  htmlFor={`dp-${d}`}
-                  className="text-sm font-normal"
-                >
-                  {d}
-                </Label>
-              </div>
+                {d}
+              </Label>
             ))}
           </RadioGroup>
         </Field>
 
-        <div className="border-border bg-muted/30 rounded-lg border p-3 text-sm sm:col-span-2">
-          <div className="text-muted-foreground text-xs">
-            Number of days
-          </div>
-
-          <div className="text-2xl font-bold">
-            {days || 0}{" "}
-            <span className="text-muted-foreground text-xs font-normal">
-              working day(s) · weekly offs & holidays excluded
-              {dayPart !== "Full day" ? " · half day" : ""}
-            </span>
+        <div className="border-primary/20 bg-primary/5 flex items-center gap-3 rounded-lg border px-3 py-2 sm:col-span-2">
+          <div className="text-2xl leading-none font-bold">{days || 0}</div>
+          <div className="text-muted-foreground text-[11px] leading-tight">
+            <div className="text-foreground text-xs font-medium">
+              Working day(s)
+            </div>
+            Weekly offs &amp; holidays excluded
+            {dayPart !== "Full day" ? " · half day" : ""}
           </div>
         </div>
       </div>
+      </section>
 
       {validating && (
         <p className="text-muted-foreground text-xs">
@@ -1772,6 +1755,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           </div>
         )}
 
+      <section className="border-border bg-muted/20 space-y-3 rounded-xl border p-4">
       <SectionTitle
         n={fixedEmpId ? 2 : 3}
         title="Reason & supporting documents"
@@ -1873,7 +1857,9 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           </div>
         </Field>
       </div>
+      </section>
 
+      <section className="border-border bg-muted/20 space-y-3 rounded-xl border p-4">
       <SectionTitle
         n={fixedEmpId ? 3 : 4}
         title="Availability & handover"
@@ -1930,6 +1916,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           />
         </Field>
       </div>
+      </section>
 
       {dropdownError && (
         <p className="text-destructive text-xs">
@@ -1938,7 +1925,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
         </p>
       )}
 
-      <div className="text-muted-foreground text-[11px]">
+      <div className="text-muted-foreground bg-muted/30 rounded-lg px-3 py-2 text-[11px]">
         Approval chain:{" "}
         {leaveType
           ? chainStepsFor(leaveType).join(" → ")
@@ -1950,7 +1937,7 @@ export function LeaveApplyForm({ empId: fixedEmpId, onDone }) {
           : ""}
       </div>
 
-      <DialogFooter>
+      <DialogFooter className="border-border border-t pt-4">
         <Button variant="outline" onClick={onDone}>
           Cancel
         </Button>

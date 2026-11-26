@@ -148,39 +148,39 @@ export function CompOffCard({ employeeId }) {
 
   return (
     <Card className="shadow-card">
-      <CardContent className="space-y-3 p-5">
-        <div className="flex items-center justify-between">
+      <CardContent className="space-y-3 p-4">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <CalendarClock className="text-primary h-4 w-4" /> Comp-off
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)}>
-            <History className="h-3.5 w-3.5" /> Ledger
-          </Button>
-        </div>
 
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div className="bg-muted/50 rounded-lg p-2">
-            <div className="text-lg font-bold">{balance.earned}</div>
-            <div className="text-muted-foreground text-[11px]">Earned</div>
+          <div className="flex items-center gap-2">
+            <div className="bg-muted/50 rounded-lg px-3 py-1.5 text-center">
+              <div className="text-base leading-tight font-bold">{balance.earned}</div>
+              <div className="text-muted-foreground text-[10px]">Earned</div>
+            </div>
+            <div className="bg-muted/50 rounded-lg px-3 py-1.5 text-center">
+              <div className="text-base leading-tight font-bold">{balance.redeemed}</div>
+              <div className="text-muted-foreground text-[10px]">Redeemed</div>
+            </div>
+            <div className="bg-primary/10 rounded-lg px-3 py-1.5 text-center">
+              <div className="text-primary text-base leading-tight font-bold">{balance.available}</div>
+              <div className="text-muted-foreground text-[10px]">Available</div>
+            </div>
           </div>
-          <div className="bg-muted/50 rounded-lg p-2">
-            <div className="text-lg font-bold">{balance.redeemed}</div>
-            <div className="text-muted-foreground text-[11px]">Redeemed</div>
-          </div>
-          <div className="bg-primary/10 rounded-lg p-2">
-            <div className="text-primary text-lg font-bold">{balance.available}</div>
-            <div className="text-muted-foreground text-[11px]">Available</div>
-          </div>
-        </div>
 
-        <p className="text-muted-foreground text-xs">
-          Credited automatically when you work on a declared off day or are on tour during one — no
-          request needed for the credit itself. Redeeming a comp-off day needs your HOD's approval.
-        </p>
+          <p className="text-muted-foreground min-w-[240px] flex-1 text-xs">
+            Credited automatically when you work on a declared off day or are on tour during one — no
+            request needed for the credit itself. Redeeming a comp-off day needs your HOD's approval.
+          </p>
 
+          <div className="ml-auto flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)}>
+              <History className="h-3.5 w-3.5" /> Ledger
+            </Button>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button size="sm" variant="outline" className="w-full" disabled={free <= 0}>
+            <Button size="sm" variant="outline" disabled={free <= 0}>
               <Plus className="h-3.5 w-3.5" /> Redeem comp-off
             </Button>
           </DialogTrigger>
@@ -252,6 +252,8 @@ export function CompOffCard({ employeeId }) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+          </div>
+        </div>
 
         {redemptions.length > 0 && (
           <div className="space-y-1.5 pt-1">

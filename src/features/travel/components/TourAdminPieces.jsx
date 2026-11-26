@@ -48,8 +48,9 @@ import {
   addBillAsExpense,
   addTourBill,
   addTourExpense,
-  approveTourExpense,
   createAndAssignTour,
+  recordTourSettlement,
+  reviewTourExpense,
   removeTourBill,
   setTourAdvance,
   tourExpenseTotals,
@@ -57,8 +58,13 @@ import {
 
 const HEADS = ["Travel", "Lodging", "Food", "Local conveyance", "Client entertainment", "Other"];
 const COST_CENTRES = ["CC-SAP-DEL", "CC-CLOUD", "CC-PRODUCTS", "CC-SALES", "CC-HR", "CC-EXEC"];
+const paymentMethodName = (value) => ({
+  company_direct: "Company pays directly",
+  advance: "Company gives an advance",
+  employee_reimbursement: "Employee pays personally",
+}[value] ?? "Employee pays personally");
 
-export function CreateTourDialog({ open, onClose }) {
+export function CreateTourDialog({ open, onClose, initialPaymentMethod = "employee_reimbursement" }) {
   const me = useCurrentUser();
   const employees = useScopedEmployees();
   const [employeeId, setEmployeeId] = useState("");
@@ -69,6 +75,7 @@ export function CreateTourDialog({ open, onClose }) {
   const [endDate, setEndDate] = useState("");
   const [mode, setMode] = useState("Air");
   const [estimatedCost, setEstimatedCost] = useState("");
+  const paymentMethod = initialPaymentMethod;
   const [costCentre, setCostCentre] = useState(COST_CENTRES[0]);
   const [advancePaid, setAdvancePaid] = useState("0");
   const [client, setClient] = useState("");
@@ -76,6 +83,7 @@ export function CreateTourDialog({ open, onClose }) {
   const [itinerary, setItinerary] = useState("");
   const [accommodation, setAccommodation] = useState("");
   const [bookingRefs, setBookingRefs] = useState("");
+  const [vendor, setVendor] = useState("");
   const [note, setNote] = useState("");
   const [q, setQ] = useState("");
   const submit = () => {
@@ -91,11 +99,13 @@ export function CreateTourDialog({ open, onClose }) {
         estimatedCost: Number(estimatedCost) || 0,
         costCentre,
         advancePaid: Number(advancePaid) || 0,
+        paymentMethod,
         client,
         project,
         itinerary,
         accommodation,
         bookingRefs,
+        vendor,
         note,
       },
       me,
@@ -110,10 +120,9 @@ export function CreateTourDialog({ open, onClose }) {
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle>Create &amp; assign a tour</DialogTitle>
+          <DialogTitle>{paymentMethod === "company_direct" ? "Create company-paid tour" : paymentMethod === "advance" ? "Create tour with advance" : "Create & assign a tour"}</DialogTitle>
           <DialogDescription>
-            HR / Admin creates the tour on behalf of the business — it is approved on creation, the
-            employee is notified and can log expenses and bills from My Tours.
+            {paymentMethod === "company_direct" ? "Record company bookings. Finance approves the budget before the employee is notified." : paymentMethod === "advance" ? "Set the advance amount. Finance approves it before the employee is notified." : "Finance approval is required before this assignment is sent to the employee."}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -240,23 +249,26 @@ export function CreateTourDialog({ open, onClose }) {
                 placeholder="Day-wise plan, meetings, sites"
               />
             </Field>
-            <Field label="Accommodation">
+            {paymentMethod === "company_direct" && <Field label="Travel vendor">
+              <Input value={vendor} onChange={(e) => setVendor(e.target.value)} placeholder="Airline, railway or travel agency" />
+            </Field>}
+            {paymentMethod === "company_direct" && <Field label="Accommodation">
               <Input
                 value={accommodation}
                 onChange={(e) => setAccommodation(e.target.value)}
                 placeholder="Hotel / guest house"
               />
-            </Field>
-            <Field label="Booking references">
+            </Field>}
+            {paymentMethod === "company_direct" && <Field label="Booking references">
               <Input
                 value={bookingRefs}
                 onChange={(e) => setBookingRefs(e.target.value)}
                 placeholder="PNR / hotel booking IDs"
               />
-            </Field>
+            </Field>}
           </div>
-          <SectionTitle n={3} title="Budget & advance" />
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <SectionTitle n={3} title={paymentMethod === "company_direct" ? "Company booking budget" : "Advance & budget"} />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Estimated cost (₹)">
               <Input
                 type="number"
@@ -264,16 +276,12 @@ export function CreateTourDialog({ open, onClose }) {
                 onChange={(e) => setEstimatedCost(e.target.value)}
               />
             </Field>
-            <Field
-              label="Advance paid (₹)"
-              hint="Approved expenses less the advance become the petty-cash encashment"
-            >
-              <Input
-                type="number"
-                value={advancePaid}
-                onChange={(e) => setAdvancePaid(e.target.value)}
-              />
+            <Field label="Payment method">
+              <div className="flex h-10 items-center rounded-md border bg-muted/40 px-3 text-sm font-medium">{paymentMethodName(paymentMethod)}</div>
             </Field>
+            {paymentMethod === "advance" && <Field label="Travel advance (₹)" required hint="Finance reconciles the advance against approved bills after the trip.">
+              <Input type="number" min={0} value={advancePaid} onChange={(e) => setAdvancePaid(e.target.value)} />
+            </Field>}
             <Field label="Note to traveller">
               <Input value={note} onChange={(e) => setNote(e.target.value)} />
             </Field>
@@ -284,7 +292,7 @@ export function CreateTourDialog({ open, onClose }) {
             Cancel
           </Button>
           <Button className="bg-gradient-emerald text-white" onClick={submit}>
-            <Plus className="h-4 w-4" /> Create &amp; assign tour
+            <Plus className="h-4 w-4" /> {paymentMethod === "company_direct" ? "Send booking for approval" : paymentMethod === "advance" ? "Send advance for approval" : "Create & assign tour"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -293,13 +301,19 @@ export function CreateTourDialog({ open, onClose }) {
 }
 
 /** Per-tour expenses & bills ledger for HR / Finance — maintain expenses, attach bills, approve, set advance. */
-export function TourExpensePanel({ tour, canApprove }) {
+export function TourExpensePanel({ tour, canApprove, canSettle = false, canManageAdvance = false }) {
   const me = useCurrentUser();
+  const roleNames = [me.role, ...(me.roles ?? [])].map((role) => String(typeof role === "string" ? role : role?.name ?? "").toLowerCase());
+  const isHrReviewer = canApprove && roleNames.some((role) => /\bhr\b|human resource|chro|admin|superadmin/.test(role));
+  const isFinanceReviewer = canApprove && roleNames.some((role) => /finance|cfo|accountant|payroll admin|admin|superadmin/.test(role));
   const t = tourExpenseTotals(tour);
   const [expOpen, setExpOpen] = useState(false);
   const [billOpen, setBillOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [advance, setAdvance] = useState(String(tour.advancePaid ?? 0));
+  const expensePaidBy = tour.paymentMethod === "company_direct" ? (canApprove ? "Company card" : "Employee") : tour.paymentMethod === "advance" && canApprove ? "Advance" : "Employee";
+  const expensePaidByOptions = tour.paymentMethod === "company_direct" && canApprove ? ["Company card", "Employee"] : tour.paymentMethod === "advance" ? ["Advance", "Employee"] : ["Employee"];
+  const billPaidByOptions = tour.paymentMethod === "company_direct" && canApprove ? ["Vendor invoice", "Company card", "Employee"] : expensePaidByOptions;
   const [e, setE] = useState({
     head: "Travel",
     amount: 0,
@@ -307,7 +321,7 @@ export function TourExpensePanel({ tour, canApprove }) {
     receipt: "",
     vendor: "",
     invoiceNo: "",
-    paidBy: "Employee",
+    paidBy: expensePaidBy,
     note: "",
   });
   const [b, setB] = useState({
@@ -318,12 +332,15 @@ export function TourExpensePanel({ tour, canApprove }) {
     amount: 0,
     gst: 0,
     date: tour.endDate,
-    paidBy: "Employee",
+    paidBy: tour.paymentMethod === "company_direct" && canApprove ? "Vendor invoice" : expensePaidBy,
     file: "",
     note: "",
   });
+  const [settlementChannel, setSettlementChannel] = useState("payroll");
+  const [settlementReference, setSettlementReference] = useState("");
   const bills = tour.bills ?? [];
   const expenses = tour.expenses ?? [];
+  const expensesAwaitingDecision = expenses.some((expense) => !expense.approved && !expense.rejected);
   const billTotal = bills.reduce((s, x) => s + x.amount, 0);
   const auditPdf = () =>
     exportReportPdf({
@@ -332,8 +349,10 @@ export function TourExpensePanel({ tour, canApprove }) {
       summary: [
         { label: "Estimated", value: inr(tour.estimatedCost) },
         { label: "Expenses booked", value: inr(t.all) },
-        { label: "Approved", value: inr(t.approved) },
+        { label: "Company paid", value: inr(t.companyPaid) },
+        { label: "Employee claim approved", value: inr(t.employeeApproved) },
         { label: "Advance", value: inr(t.advance) },
+        { label: "Advance used", value: inr(t.advanceUsed) },
         { label: "Encashable", value: inr(t.encashable) },
         { label: "Bills attached", value: `${bills.length} · ${inr(billTotal)}` },
       ],
@@ -362,7 +381,7 @@ export function TourExpensePanel({ tour, canApprove }) {
           inr(x.amount),
           "—",
           x.receipt || "—",
-          x.approved ? "Approved" : "Pending",
+          x.approved ? "Finance approved" : x.rejected ? "Rejected" : x.hrVerified ? "Awaiting Finance" : "Awaiting HR",
         ]),
         ...bills.map((x) => [
           "Bill",
@@ -386,7 +405,7 @@ export function TourExpensePanel({ tour, canApprove }) {
           <Receipt className="text-primary h-3.5 w-3.5" /> Expenses &amp; bills
         </div>
         <div className="text-muted-foreground text-xs">
-          booked {inr(t.all)} · approved {inr(t.approved)} · advance {inr(t.advance)} · encashable{" "}
+          booked {inr(t.all)} · approved {inr(t.approved)} · advance {inr(t.advance)} · advance used {inr(t.advanceUsed)} · reimbursement due{" "}
           <b className="text-foreground">{inr(t.encashable)}</b>
           {t.refundable ? ` · refundable ${inr(t.refundable)}` : ""} · {bills.length} bill(s){" "}
           {inr(billTotal)}
@@ -396,7 +415,7 @@ export function TourExpensePanel({ tour, canApprove }) {
             size="sm"
             variant="outline"
             className="h-7"
-            disabled={tour.status === "Closed" || !!tour.encashment}
+            disabled={tour.status === "Closed" || !!tour.encashment || !!tour.settlement}
             title={
               tour.encashment
                 ? "Already encashed — raise a separate claim"
@@ -408,7 +427,7 @@ export function TourExpensePanel({ tour, canApprove }) {
           >
             <Plus className="h-3.5 w-3.5" /> Expense
           </Button>
-          <Button size="sm" variant="outline" className="h-7" onClick={() => setBillOpen(true)}>
+          <Button size="sm" variant="outline" className="h-7" disabled={!!tour.settlement || tour.status === "Closed"} onClick={() => setBillOpen(true)}>
             <Paperclip className="h-3.5 w-3.5" /> Add bill
           </Button>
           <Button size="sm" variant="outline" className="h-7" onClick={auditPdf}>
@@ -416,7 +435,36 @@ export function TourExpensePanel({ tour, canApprove }) {
           </Button>
         </div>
       </div>
-      {canApprove && (
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          ["Payment arrangement", paymentMethodName(tour.paymentMethod)],
+          ["Company paid", inr(t.companyPaid)],
+          ["Approved employee claim", inr(t.employeeApproved)],
+          [t.refundable > 0 ? "Advance refund due" : "Reimbursement due", inr(t.refundable > 0 ? t.refundable : t.encashable)],
+        ].map(([label, value]) => <div key={label} className="rounded-lg bg-muted/40 px-3 py-2"><div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div><div className="mt-0.5 text-sm font-semibold">{value}</div></div>)}
+      </div>
+      {tour.settlement ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+          <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">Settled</Badge>
+          <span>{tour.settlement.direction === "refund" ? "Employee refund" : "Employee reimbursement"} · {inr(tour.settlement.amount)} · {tour.settlement.channel === "payroll" ? "Next payroll" : tour.settlement.channel === "bank" ? "Direct bank transfer" : "Refund recorded"}</span>
+          {tour.settlement.reference && <span className="font-mono">Ref {tour.settlement.reference}</span>}
+          <span className="ml-auto text-muted-foreground">by {tour.settlement.by} on {tour.settlement.on}</span>
+        </div>
+      ) : canSettle && tour.status === "Completed" && (t.encashable > 0 || t.refundable > 0) && (
+        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+          <div className="mr-auto min-w-[210px]"><div className="text-xs font-semibold">{t.refundable > 0 ? "Record employee refund" : "Settle employee reimbursement"}</div><div className="text-[11px] text-muted-foreground">Amount to settle: {inr(t.refundable > 0 ? t.refundable : t.encashable)}</div></div>
+          {t.refundable > 0 ? <Badge variant="outline">Refund from employee</Badge> : <Select value={settlementChannel} onValueChange={setSettlementChannel}>
+            <SelectTrigger className="h-8 w-full sm:w-44"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="payroll">Next payroll</SelectItem><SelectItem value="bank">Direct bank transfer</SelectItem></SelectContent>
+          </Select>}
+          {t.refundable === 0 && settlementChannel === "bank" && <Input className="h-8 w-full sm:w-48" value={settlementReference} onChange={(event) => setSettlementReference(event.target.value)} placeholder="Bank transfer reference" />}
+          <Button size="sm" className="h-8" disabled={expensesAwaitingDecision || (t.encashable > 0 && settlementChannel === "bank" && !settlementReference.trim())} title={expensesAwaitingDecision ? "Approve or hold every expense before settlement" : undefined} onClick={() => {
+            const isRefund = t.refundable > 0;
+            const result = recordTourSettlement(tour.id, { amount: isRefund ? t.refundable : t.encashable, direction: isRefund ? "refund" : "reimburse", channel: isRefund ? "refund" : settlementChannel, reference: settlementReference, by: me.name });
+            toast[result.ok ? "success" : "error"](result.message);
+          }}>{t.refundable > 0 ? "Record refund" : "Record payment"}</Button>
+        </div>
+      )}
+      {canManageAdvance && (tour.paymentMethod === "advance" || Number(tour.advancePaid) > 0) && (
         <div className="flex items-center gap-2 text-xs">
           <Label className="text-muted-foreground">Advance paid (₹)</Label>
           <Input
@@ -430,7 +478,7 @@ export function TourExpensePanel({ tour, canApprove }) {
             size="sm"
             variant="ghost"
             className="h-7"
-            disabled={!!tour.encashment}
+            disabled={!!tour.encashment || !!tour.settlement}
             onClick={() => {
               const v = Number(advance);
               if (!(v >= 0)) {
@@ -455,11 +503,11 @@ export function TourExpensePanel({ tour, canApprove }) {
               <th className="p-1 text-left">Paid by</th>
               <th className="p-1 text-left">Receipt</th>
               <th className="p-1 text-right">Amount</th>
-              <th className="p-1 text-right">Status</th>
+              <th className="p-1 text-left">HR / Finance review</th>
             </tr>
           </thead>
           <tbody className="divide-border divide-y">
-            {expenses.map((x) => (
+              {expenses.map((x) => (
               <tr key={x.id} className={clickableRow} onClick={() => setDetail(x)}>
                 <td className="p-1">
                   {x.head}
@@ -475,36 +523,31 @@ export function TourExpensePanel({ tour, canApprove }) {
                 <td className="p-1">{x.paidBy ?? "Employee"}</td>
                 <td className="p-1 font-mono">{x.receipt || "—"}</td>
                 <td className="p-1 text-right">{inr(x.amount)}</td>
-                <td className="p-1 text-right" onClick={(ev) => ev.stopPropagation()}>
-                  {x.approved ? (
-                    <Badge
-                      variant="outline"
-                      className="border-primary/30 bg-primary/10 text-primary"
-                    >
-                      Approved
+                <td className="p-1" onClick={(ev) => ev.stopPropagation()}>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant="outline" className={x.approved ? "border-primary/30 bg-primary/10 text-primary" : x.rejected ? "border-destructive/30 bg-destructive/10 text-destructive" : ""}>
+                      {x.approved ? "Finance approved" : x.rejected ? "Rejected" : x.hrVerified ? "Awaiting Finance" : "Awaiting HR"}
                     </Badge>
-                  ) : canApprove && !tour.encashment && tour.status !== "Closed" ? (
-                    <span className="inline-flex flex-wrap gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-primary h-6 px-1"
-                        onClick={() => approveTourExpense(tour.id, x.id, true)}
-                      >
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive h-6 px-1"
-                        onClick={() => approveTourExpense(tour.id, x.id, false)}
-                      >
-                        Hold
-                      </Button>
-                    </span>
-                  ) : (
-                    <Badge variant="outline">Pending</Badge>
-                  )}
+                    {!x.approved && !x.rejected && !tour.encashment && !tour.settlement && tour.status !== "Closed" && (
+                      <>
+                        {!x.hrVerified && isHrReviewer && <Button size="sm" variant="ghost" className="h-6 px-1 text-primary" onClick={() => {
+                          const result = reviewTourExpense(tour.id, x.id, { stage: "hr", decision: "verify", reviewer: me.name });
+                          toast[result.ok ? "success" : "error"](result.message);
+                        }}>Verify</Button>}
+                        {x.hrVerified && isFinanceReviewer && <Button size="sm" variant="ghost" className="h-6 px-1 text-primary" onClick={() => {
+                          const result = reviewTourExpense(tour.id, x.id, { stage: "finance", decision: "approve", reviewer: me.name });
+                          toast[result.ok ? "success" : "error"](result.message);
+                        }}>{x.paidBy === "Employee" ? "Approve reimbursement" : "Approve expense"}</Button>}
+                        {((!x.hrVerified && isHrReviewer) || (x.hrVerified && isFinanceReviewer)) && <Button size="sm" variant="ghost" className="h-6 px-1 text-destructive" onClick={() => {
+                          const reason = window.prompt("Reason for rejecting this expense?")?.trim();
+                          if (!reason) return;
+                          const result = reviewTourExpense(tour.id, x.id, { stage: x.hrVerified ? "finance" : "hr", decision: "reject", reviewer: me.name, reason });
+                          toast[result.ok ? "success" : "error"](result.message);
+                        }}>Reject</Button>}
+                      </>
+                    )}
+                  </div>
+                  {x.reviewHistory?.length > 0 && <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground">{x.reviewHistory.map((action, index) => <div key={`${action.on}-${index}`}>{action.stage === "hr" ? "HR" : "Finance"} · {action.decision} by {action.reviewer} on {action.on}{action.reason ? ` · ${action.reason}` : ""}</div>)}</div>}
                 </td>
               </tr>
             ))}
@@ -534,7 +577,7 @@ export function TourExpensePanel({ tour, canApprove }) {
               </Badge>
               <span className="text-muted-foreground">by {x.uploadedBy}</span>
               <span className="ml-auto inline-flex gap-1">
-                {x.linkedExpenseId ? (
+              {x.linkedExpenseId ? (
                   <Badge
                     variant="outline"
                     className={cn("text-[10px]", "border-primary/30 text-primary")}
@@ -543,19 +586,20 @@ export function TourExpensePanel({ tour, canApprove }) {
                     {x.linkedExpenseId}
                   </Badge>
                 ) : (
-                  <Button
+                    <Button
                     size="sm"
                     variant="ghost"
                     className="text-primary h-6 px-1"
+                    disabled={!!tour.settlement}
                     onClick={() => {
                       addBillAsExpense(tour.id, x.id, me.name);
-                      toast.success("Bill added as an expense line for reimbursement");
+                      toast.success(x.paidBy === "Vendor invoice" || x.paidBy === "Company card" ? "Company cost recorded for review" : "Bill added to the employee claim");
                     }}
-                  >
-                    <Link2 className="h-3 w-3" /> Claim
+                    >
+                      <Link2 className="h-3 w-3" /> {x.paidBy === "Vendor invoice" || x.paidBy === "Company card" ? "Record cost" : "Claim"}
                   </Button>
                 )}
-                {canApprove && (
+                  {canApprove && !tour.settlement && (
                   <Button
                     size="sm"
                     variant="ghost"
@@ -618,8 +662,7 @@ export function TourExpensePanel({ tour, canApprove }) {
           <DialogHeader>
             <DialogTitle>Add tour expense — {tour.id}</DialogTitle>
             <DialogDescription>
-              Approved expenses less the advance become the petty-cash encashment for{" "}
-              {tour.employeeName}.
+              Approved employee-paid expenses less unused advance become reimbursement due. Company-paid costs are excluded.
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -658,7 +701,7 @@ export function TourExpensePanel({ tour, canApprove }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {["Employee", "Company card", "Advance"].map((h) => (
+                  {expensePaidByOptions.map((h) => (
                     <SelectItem key={h} value={h}>
                       {h}
                     </SelectItem>
@@ -675,7 +718,7 @@ export function TourExpensePanel({ tour, canApprove }) {
                 onChange={(ev) => setE({ ...e, invoiceNo: ev.target.value })}
               />
             </Field>
-            <Field label="Receipt file" className="sm:col-span-2">
+            <Field label="Receipt file" required={e.paidBy === "Employee"} hint={e.paidBy === "Employee" ? "Required for a personal reimbursement claim." : "Attach the vendor or advance receipt when available."} className="sm:col-span-2">
               <div className="flex items-center gap-2">
                 <label className="border-border hover:bg-muted inline-flex cursor-pointer items-center gap-1 rounded-md border border-dashed px-3 py-1.5 text-xs">
                   <Paperclip className="h-3.5 w-3.5" /> Choose file
@@ -701,7 +744,7 @@ export function TourExpensePanel({ tour, canApprove }) {
             </Button>
             <Button
               className="bg-gradient-emerald text-white"
-              disabled={!(e.amount > 0) || !e.date}
+              disabled={!(e.amount > 0) || !e.date || (e.paidBy === "Employee" && !e.receipt)}
               onClick={() => {
                 addTourExpense(tour.id, { ...e, addedBy: me.name });
                 toast.success("Expense added");
@@ -797,7 +840,7 @@ export function TourExpensePanel({ tour, canApprove }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {["Employee", "Company card", "Advance", "Vendor invoice"].map((h) => (
+                  {billPaidByOptions.map((h) => (
                     <SelectItem key={h} value={h}>
                       {h}
                     </SelectItem>
@@ -851,7 +894,7 @@ export function TourAuditButtons({ tours }) {
       x.amount,
       0,
       x.receipt || "",
-      x.approved ? "Approved" : "Pending",
+      x.approved ? "Finance approved" : x.rejected ? "Rejected" : x.hrVerified ? "Awaiting Finance" : "Awaiting HR",
     ]),
     ...(t.bills ?? []).map((x) => [
       t.id,
