@@ -382,7 +382,7 @@ function RoleWizard({ existing }) {
                 placeholder="Describe what responsibilities and scope this role blueprint covers..."
               />
             </div>
-            <label className="border-border flex cursor-pointer items-start gap-3 rounded-lg border p-3">
+            {/* <label className="border-border flex cursor-pointer items-start gap-3 rounded-lg border p-3">
               <Checkbox
                 checked={isAdminPortal}
                 onCheckedChange={(v) => setIsAdminPortal(Boolean(v))}
@@ -394,7 +394,7 @@ function RoleWizard({ existing }) {
                   People with this role open the admin portal after login instead of the employee portal.
                 </span>
               </span>
-            </label>
+            </label> */}
           </CardContent>
         </Card>
       )}
