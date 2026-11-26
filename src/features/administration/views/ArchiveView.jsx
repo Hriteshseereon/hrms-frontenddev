@@ -39,7 +39,8 @@ import {
   useArchiveConfig,
 } from "@/features/administration/data/archive-data";
 import { announcementStore } from "@/features/communications/data/announcement-data";
-import { restoreRole } from "@/features/auth/data/rbac-store";
+import { rbacApi, extractErrorMessage } from "@/api/rbacApi";
+import { RBAC_MODULES } from "@/features/auth/data/rbac";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { useActiveOrgId, useOrgs } from "@/features/organization/data/group-data";
 import "@/components/common/CrudSection"; // registers the master-data restore handler
@@ -56,7 +57,7 @@ const fmt = (iso) => new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kol
  * Puts an archived payload back into the store it was deleted from. Returns false when no module knows how to take
  * the record back — the row then stays in the archive instead of silently disappearing.
  */
-function restoreToOrigin(rec) {
+async function restoreToOrigin(rec) {
   if (
     rec.module === "Master Data" &&
     rec.recordId.startsWith("GEO-") &&
@@ -74,8 +75,22 @@ function restoreToOrigin(rec) {
       announcementStore.set((p) => [a, ...p]);
     return true;
   }
-  if (rec.module === "Roles & Permissions" && rec.payload && typeof rec.payload === "object")
-    return restoreRole(rec.payload);
+  if (rec.module === "Roles & Permissions" && rec.payload && typeof rec.payload === "object") {
+    const role = rec.payload;
+    await rbacApi.createRole({
+      name: role.name,
+      code: role.code ?? role.name?.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+      description: role.description ?? "",
+      permissions: role.permissions ?? {},
+      screen_catalog: RBAC_MODULES,
+      status: role.status ?? "Active",
+      is_admin_portal: Boolean(role.is_admin_portal ?? role.isAdminPortal),
+      ...(role.company_id ?? role.companyId
+        ? { company_id: role.company_id ?? role.companyId }
+        : {}),
+    });
+    return true;
+  }
   return restoreThroughHandlers(rec);
 }
 
@@ -450,19 +465,23 @@ function ArchivePage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => {
-                          if (!restoreToOrigin(r)) {
-                            toast.error(
-                              `${r.module} cannot take this record back automatically — it stays archived`,
+                        onClick={async () => {
+                          try {
+                            if (!(await restoreToOrigin(r))) {
+                              toast.error(
+                                `${r.module} cannot take this record back automatically — it stays archived`,
+                              );
+                              return;
+                            }
+                            const rec = restoreRecord(r.id);
+                            toast.success(
+                              rec
+                                ? `${rec.title} restored to ${rec.module}`
+                                : "Record no longer in the archive",
                             );
-                            return;
+                          } catch (error) {
+                            toast.error(extractErrorMessage(error));
                           }
-                          const rec = restoreRecord(r.id);
-                          toast.success(
-                            rec
-                              ? `${rec.title} restored to ${rec.module}`
-                              : "Record no longer in the archive",
-                          );
                         }}
                       >
                         <RotateCcw className="text-primary h-4 w-4" /> Restore

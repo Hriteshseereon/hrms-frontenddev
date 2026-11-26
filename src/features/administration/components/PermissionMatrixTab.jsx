@@ -5,7 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Check, Minus, Grid3X3, Search, Layers, Loader2 } from "lucide-react";
 import { RBAC_MODULES, PERMISSION_ACTIONS, screenId } from "@/features/auth/data/rbac";
-import { useRoles } from "@/features/auth/data/rbac-store";
 import { rbacApi } from "@/api/rbacApi";
 import { cn } from "@/lib/utils";
 
@@ -28,9 +27,9 @@ function moduleActions(role, moduleKey) {
 }
 
 export function PermissionMatrixTab() {
-  const fallbackRoles = useRoles();
   const [matrixData, setMatrixData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState("screen"); // "screen" | "module"
 
@@ -42,9 +41,10 @@ export function PermissionMatrixTab() {
         const data = await rbacApi.getPermissionMatrix();
         if (mounted && data) {
           setMatrixData(data);
+          setLoadError(null);
         }
-      } catch {
-        // Fallback to local computed matrix
+      } catch (error) {
+        if (mounted) setLoadError(error?.response?.data?.detail || error?.message || "Could not load permissions.");
       } finally {
         if (mounted) setLoading(false);
       }
@@ -55,12 +55,7 @@ export function PermissionMatrixTab() {
     };
   }, []);
 
-  const roles = useMemo(() => {
-    if (matrixData?.roles && Array.isArray(matrixData.roles)) {
-      return matrixData.roles;
-    }
-    return fallbackRoles;
-  }, [matrixData, fallbackRoles]);
+  const roles = Array.isArray(matrixData?.roles) ? matrixData.roles : [];
 
   // Flattened screen list for granular screen view
   const allScreens = useMemo(() => {
@@ -130,6 +125,7 @@ export function PermissionMatrixTab() {
             </div>
           </div>
         </div>
+        {loadError && <div className="text-destructive rounded-md border p-3 text-sm">{loadError}</div>}
       </CardContent>
 
       <div className="border-border overflow-x-auto border-t">

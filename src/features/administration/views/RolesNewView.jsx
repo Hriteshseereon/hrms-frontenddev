@@ -27,7 +27,6 @@ import { cn } from "@/lib/utils";
 import { RBAC_MODULES, PERMISSION_ACTIONS, screenId } from "@/features/auth/data/rbac";
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
 import { AccessDenied } from "@/components/common/AccessDenied";
-import { useRoles, saveRole } from "@/features/auth/data/rbac-store";
 import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import { rbacApi, extractErrorMessage } from "@/api/rbacApi";
 
@@ -40,7 +39,6 @@ const ALL_SCREEN_IDS = RBAC_MODULES.flatMap((m) =>
 function CreateRole() {
   const { edit } = useSearch(validateSearch);
   const me = useCurrentUser();
-  const fallbackRoles = useRoles();
   const [existing, setExisting] = useState(undefined);
   const [loading, setLoading] = useState(Boolean(edit));
 
@@ -60,12 +58,11 @@ function CreateRole() {
           setLoading(false);
           return;
         }
-      } catch {
-        // Fallback
+      } catch (error) {
+        console.error("Could not load role from the server:", error);
       }
       if (mounted) {
-        const found = fallbackRoles.find((r) => r.id === edit);
-        setExisting(found);
+        setExisting(null);
         setLoading(false);
       }
     };
@@ -73,7 +70,7 @@ function CreateRole() {
     return () => {
       mounted = false;
     };
-  }, [edit, fallbackRoles]);
+  }, [edit]);
 
   if (!can(me.role, "role.manage")) {
     return <AccessDenied role={me.role} homeTo="/org/dashboard" />;
@@ -105,8 +102,8 @@ function CreateRole() {
 function RoleWizard({ existing }) {
   const router = useRouter();
   const me = useCurrentUser();
-  const allRoles = useRoles();
   const scope = useCompanyScope();
+  const [allRoles, setAllRoles] = useState([]);
 
   const [step, setStep] = useState(0);
   const [name, setName] = useState(existing?.name ?? "");
@@ -115,6 +112,23 @@ function RoleWizard({ existing }) {
   const [submitting, setSubmitting] = useState(false);
   // Holders of an "Admin portal access" role land in the org portal after login.
   const [isAdminPortal, setIsAdminPortal] = useState(Boolean(existing?.is_admin_portal));
+
+  useEffect(() => {
+    let mounted = true;
+    rbacApi
+      .getRoles(scope.companyId ? { company_id: scope.companyId } : undefined)
+      .then((data) => {
+        const list = Array.isArray(data) ? data : data?.items ?? data?.roles ?? [];
+        if (mounted) setAllRoles(Array.isArray(list) ? list : []);
+      })
+      .catch((error) => {
+        console.error("Could not load roles from the server:", error);
+        if (mounted) setAllRoles([]);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [scope.companyId]);
 
   const isBuiltIn = Boolean(existing?.built_in || existing?.builtIn);
 
@@ -219,31 +233,8 @@ function RoleWizard({ existing }) {
         ...(scope.isSuper && !existing ? { company_id: scope.companyId } : {}),
       };
 
-      let savedId = existing?.id;
-      try {
-        if (existing?.id) {
-          const res = await rbacApi.updateRole(existing.id, payload);
-          savedId = res?.id || existing.id;
-        } else {
-          const res = await rbacApi.createRole(payload);
-          savedId = res?.id || res?.data?.id;
-        }
-      } catch (apiErr) {
-        // 4xx = the backend refused (duplicate name, module not enabled, wrong company): show it, do not save locally.
-        if (apiErr?.response?.status >= 400 && apiErr.response.status < 500) throw apiErr;
-        console.warn("Backend API sync notice:", apiErr);
-      }
-
-      // Synchronize with local store
-      saveRole({
-        id: savedId || existing?.id,
-        name: name.trim(),
-        description: description.trim(),
-        permissions: normalizedPermissions,
-        branches: existing?.branches || [],
-        assignedUsers: existing?.assignedUsers || {},
-        by: me.name,
-      });
+      if (existing?.id) await rbacApi.updateRole(existing.id, payload);
+      else await rbacApi.createRole(payload);
 
       toast.success(
         `Role "${name}" ${existing ? "updated" : "created"} successfully · ${configuredScreenIds.length} screens configured`,

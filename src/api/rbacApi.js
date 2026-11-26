@@ -100,16 +100,11 @@ export const rbacApi = {
     return res.data?.data ?? res.data;
   },
 
-  // Backward compatibility alias for revokeUserRole
   revokeUserRole: async (uid, rid) => {
-    const targetId = rid || uid;
-    try {
-      const res = await SuperAdmin_axios.delete(`/roles/assignments/${encodeURIComponent(targetId)}`);
-      return res.data?.data ?? res.data;
-    } catch {
-      const res = await SuperAdmin_axios.delete(`/user-branch-roles/${encodeURIComponent(targetId)}`);
-      return res.data?.data ?? res.data;
-    }
+    const res = await SuperAdmin_axios.delete(
+      `/users/${encodeURIComponent(uid)}/roles/${encodeURIComponent(rid)}`,
+    );
+    return res.data?.data ?? res.data;
   },
 
   // 14. Get Reporting Lines for an employee (supports /reporting-lines/:id and /employees/:id/reporting-lines)

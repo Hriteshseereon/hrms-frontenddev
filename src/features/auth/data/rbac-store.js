@@ -1,7 +1,6 @@
-// Persistent RBAC: roles created in Roles & Permissions live here (with their screens, permissions, branch scope
-// and user assignments), plus login / account state for Users & Logins. UI-only, persisted in the browser.
+// Role definitions are server-owned; the browser store has no built-in role definitions.
 import { createPersistentStore } from "@/lib/persist";
-import { RBAC_MODULES, ROLES, ROLE_PERMISSION_PRESETS, screenId } from "@/features/auth/data/rbac";
+import { RBAC_MODULES, screenId } from "@/features/auth/data/rbac";
 import {
   SEEREON_USERS,
   allUsers,
@@ -26,181 +25,18 @@ import { registerEmployee } from "@/features/employees/data/employee-directory";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-/** Expand a module-level preset ("employee": View/Edit) into screen-level permissions. */
-function presetToPermissions(preset) {
-  const out = {};
-  if (!preset) return out;
-  RBAC_MODULES.forEach((m) => {
-    const actions = preset[m.key];
-    if (!actions) return;
-    m.submodules.forEach((s) =>
-      s.screens.forEach((sc) => {
-        out[screenId(m.key, s.key, sc.key)] = {
-          View: actions.includes("View"),
-          Edit: actions.includes("Edit"),
-          Delete: actions.includes("Delete"),
-        };
-      }),
-    );
-  });
-  return out;
-}
-
-const SEED = ROLES.map((r) => {
-  const permissions = presetToPermissions(ROLE_PERMISSION_PRESETS[r.name]);
-  return {
-    ...r,
-    permissions,
-    screens: Object.keys(permissions).length || r.screens,
-    branches: [
-      "Bhubaneswar HQ::Whitefield",
-      "Bhubaneswar HQ::Koramangala",
-      "Mumbai::BKC",
-      "Pune::Hinjewadi",
-      "Chennai::OMR",
-    ],
-    assignedUsers: {},
-    builtIn: true,
-    createdBy: "System",
-    createdOn: "2026-05-01",
-    history: [{ at: r.updated, by: "System", action: "Seeded role" }],
-  };
-});
-
-export const roleStore = createPersistentStore("seereon.rbac.roles.v1", SEED);
+// Empty compatibility store for older workflows; server APIs are authoritative for role CRUD and assignments.
+export const roleStore = createPersistentStore("seereon.rbac.roles.v2", []);
 export const useRoles = () => roleStore.use();
 export const roleById = (id) => roleStore.get().find((r) => r.id === id);
-
-/**
- * @typedef {Object} SaveRoleInput
- * @property {string} [id]
- * @property {string} name
- * @property {string} description
- * @property {PermissionSelection} permissions
- * @property {string[]} branches
- * @property {Record<string, string[]>} assignedUsers
- * @property {RoleDef["status"]} [status]
- * @property {string} by
- */
-export function saveRole(input) {
-  const users = Object.values(input.assignedUsers).filter((b) => b.length > 0).length;
-  const screens = Object.values(input.permissions).filter((p) => p.View).length;
-  if (input.id) {
-    // People newly given the role while editing are told too (only a brand-new role used to alert its assignees).
-    const before = roleStore.get().find((r) => r.id === input.id)?.assignedUsers ?? {};
-    Object.keys(input.assignedUsers)
-      .filter((u) => input.assignedUsers[u].length && !(before[u] ?? []).length)
-      .forEach((u) =>
-        pushAlert({
-          empId: u,
-          kind: "general",
-          to: "/emp/dashboard",
-          title: `Role granted — ${input.name}`,
-          body: `${input.by} granted you the "${input.name}" role on ${input.assignedUsers[u].length} branch(es).`,
-        }),
-      );
-    roleStore.set((p) =>
-      p.map((r) =>
-        r.id === input.id
-          ? {
-              ...r,
-              name: input.name,
-              description: input.description,
-              permissions: input.permissions,
-              branches: input.branches,
-              assignedUsers: input.assignedUsers,
-              users,
-              screens,
-              status: input.status ?? r.status,
-              updated: today(),
-              history: [{ at: today(), by: input.by, action: "Role updated" }, ...r.history],
-            }
-          : r,
-      ),
-    );
-    return input.id;
-  }
-  // Next free number — a count-based id would reuse the id of a surviving role after one was deleted.
-  const n =
-    roleStore.get().reduce((m, r) => Math.max(m, Number(r.id.replace(/^ROL-/, "")) || 0), 0) + 1;
-  const id = `ROL-${String(n).padStart(2, "0")}`;
-  roleStore.set((p) => [
-    ...p,
-    {
-      id,
-      name: input.name,
-      description: input.description,
-      permissions: input.permissions,
-      branches: input.branches,
-      assignedUsers: input.assignedUsers,
-      users,
-      screens,
-      status: input.status ?? "Active",
-      updated: today(),
-      createdBy: input.by,
-      createdOn: today(),
-      history: [{ at: today(), by: input.by, action: "Role created" }],
-    },
-  ]);
-  Object.keys(input.assignedUsers)
-    .filter((u) => input.assignedUsers[u].length)
-    .forEach((u) =>
-      pushAlert({
-        empId: u,
-        kind: "general",
-        to: "/emp/dashboard",
-        title: `Role granted — ${input.name}`,
-        body: `${input.by} granted you the "${input.name}" role on ${input.assignedUsers[u].length} branch(es).`,
-      }),
-    );
-  return id;
-}
-/** Deletes a custom role (built-ins are protected). Returns the removed role so the caller can archive it. */
-export const deleteRole = (id) => {
-  const role = roleStore.get().find((r) => r.id === id && !r.builtIn) ?? null;
-  if (role) roleStore.set((p) => p.filter((r) => r.id !== id));
-  return role;
-};
-/** Puts an archived role back (restore from System Archive); false when the id or name is taken again. */
-export const restoreRole = (role) => {
-  if (
-    roleStore
-      .get()
-      .some(
-        (r) => r.id === role.id || r.name.trim().toLowerCase() === role.name.trim().toLowerCase(),
-      )
-  )
-    return false;
-  roleStore.set((p) => [
-    ...p,
-    {
-      ...role,
-      history: [{ at: today(), by: "System", action: "Restored from archive" }, ...role.history],
-    },
-  ]);
-  return true;
-};
-export const setRoleStatus = (id, status, by) =>
-  roleStore.set((p) =>
-    p.map((r) =>
-      r.id === id
-        ? {
-            ...r,
-            status,
-            updated: today(),
-            history: [{ at: today(), by, action: `Status → ${status}` }, ...r.history],
-          }
-        : r,
-    ),
-  );
-
 /** Screen names granted by a role (for review / delegation display). */
 export function roleScreens(role) {
   const out = [];
+  const permissions = role?.permissions ?? {};
   RBAC_MODULES.forEach((m) =>
     m.submodules.forEach((s) =>
       s.screens.forEach((sc) => {
-        const p = role.permissions[screenId(m.key, s.key, sc.key)];
+        const p = permissions[screenId(m.key, s.key, sc.key)];
         if (p?.View)
           out.push({
             module: m.name,
@@ -215,7 +51,7 @@ export function roleScreens(role) {
 
 /** RBAC roles granted to a user (across branches). */
 export const rolesOfUser = (userId) =>
-  roleStore.get().filter((r) => (r.assignedUsers[userId] ?? []).length > 0);
+  roleStore.get().filter((r) => ((r.assigned_users ?? r.assignedUsers ?? {})[userId] ?? []).length > 0);
 
 /* -------------------- RBAC roles widen navigation -------------------- */
 

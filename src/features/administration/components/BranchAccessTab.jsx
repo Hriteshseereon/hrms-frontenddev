@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Building2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,8 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ALL_MANAGED_BRANCHES } from "@/features/organization/data/branch-session";
-import { useRoles } from "@/features/auth/data/rbac-store";
-import { useOrgUsers, setUserAssignments } from "@/features/auth/data/user-store";
+import { useOrgUsers } from "@/features/auth/data/user-store";
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
 import { rbacApi } from "@/api/rbacApi";
 
@@ -24,13 +23,28 @@ export function BranchAccessTab() {
   const users = useOrgUsers();
   const me = useCurrentUser();
   const canManage = can(me.role, "role.manage");
-  // Roles from Roles & Permissions (including ones created in the wizard) — the static seed hid new roles.
-  // Draft roles stay listed only when the user already holds them, so they can still be removed.
-  const allRoles = useRoles();
+  const [allRoles, setAllRoles] = useState([]);
   const [draft, setDraft] = useState(null);
   const ROLES = allRoles.filter(
     (r) => r.status === "Active" || draft?.assignments.some((a) => a.roles.includes(r.name)),
   );
+
+  useEffect(() => {
+    let mounted = true;
+    rbacApi
+      .getRoles()
+      .then((data) => {
+        const list = Array.isArray(data) ? data : data?.items ?? data?.roles ?? [];
+        if (mounted) setAllRoles(Array.isArray(list) ? list : []);
+      })
+      .catch((error) => {
+        console.error("Could not load roles from the server:", error);
+        if (mounted) setAllRoles([]);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const toggleRole = (branchId, role, on) =>
     setDraft((u) => {
@@ -52,10 +66,10 @@ export function BranchAccessTab() {
         })),
       };
       await rbacApi.bulkUpdateBranchAccess(draft.id, payload);
-    } catch {
-      // Graceful local store sync
+    } catch (error) {
+      toast.error(error?.response?.data?.detail || error?.message || "Could not update branch access.");
+      return;
     }
-    setUserAssignments(draft.id, draft.assignments, me.name);
     toast.success(`Branch access updated for ${draft.name}`);
     setDraft(null);
   };

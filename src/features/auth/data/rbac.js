@@ -50,9 +50,9 @@ export const RBAC_MODULES = [
       name: "Employee Management",
       screens: [
         { key: "all-employees", name: "All Employees" },
-        { key: "add-employee", name: "Add Employee" },
-        { key: "employee-bulk-upload", name: "Bulk Upload" },
-        { key: "employee-export", name: "Export Employees" },
+        // { key: "add-employee", name: "Add Employee" },
+        // { key: "employee-bulk-upload", name: "Bulk Upload" },
+        // { key: "employee-export", name: "Export Employees" },
         { key: "employee-promotions", name: "Promotions" },
         { key: "employee-transfers", name: "Transfers" },
         { key: "employee-resignations", name: "Resignations" },
@@ -139,63 +139,6 @@ export const screenId = (m, s, sc) => `${m}.${s}.${sc}`;
  * @property {string} updated
  */
 
-export const ROLES = [
-  {
-    id: "ROL-01",
-    name: "Organization Admin",
-    description: "Full access to every module and setting.",
-    users: 2,
-    screens: 26,
-    status: "Active",
-    updated: "2026-07-12",
-  },
-  {
-    id: "ROL-02",
-    name: "HR Manager",
-    description: "Manage employees, leave, attendance and policies.",
-    users: 5,
-    screens: 18,
-    status: "Active",
-    updated: "2026-07-08",
-  },
-  {
-    id: "ROL-03",
-    name: "Payroll Admin",
-    description: "Process payroll, payslips and statutory filings.",
-    users: 3,
-    screens: 9,
-    status: "Active",
-    updated: "2026-06-30",
-  },
-  {
-    id: "ROL-04",
-    name: "Recruiter",
-    description: "Manage job openings, candidates and interviews.",
-    users: 4,
-    screens: 7,
-    status: "Active",
-    updated: "2026-06-22",
-  },
-  {
-    id: "ROL-05",
-    name: "Reporting Manager",
-    description: "View team, approve leave and attendance.",
-    users: 24,
-    screens: 6,
-    status: "Active",
-    updated: "2026-05-19",
-  },
-  {
-    id: "ROL-06",
-    name: "Employee Self-Service",
-    description: "Self-service for own attendance, leave and payslips.",
-    users: 448,
-    screens: 5,
-    status: "Draft",
-    updated: "2026-05-02",
-  },
-];
-
 /* ---------------- Multi-branch role assignment ---------------- */
 
 /**
@@ -214,67 +157,3 @@ export const ROLES = [
  */
 
 export const ORG_USERS = [];
-
-/* ---------------- Role → permission presets (UI-only) ---------------- */
-
-/** Module-level permissions granted by each role, used by the user detail view. */
-export const ROLE_PERMISSION_PRESETS = {
-  "Organization Admin": Object.fromEntries(
-    RBAC_MODULES.map((m) => [m.key, ["View", "Edit", "Delete"]]),
-  ),
-  "HR Manager": {
-    employee: ["View", "Edit"],
-    attendance: ["View", "Edit"],
-    leave: ["View", "Edit"],
-    payroll: ["View"],
-    workplace: ["View", "Edit"],
-    configuration: ["View"],
-  },
-  "Payroll Admin": {
-    employee: ["View"],
-    attendance: ["View"],
-    leave: ["View"],
-    payroll: ["View", "Edit", "Delete"],
-    workplace: ["View"],
-    configuration: ["View"],
-  },
-  Recruiter: { employee: ["View", "Edit"], workplace: ["View"] },
-  "Asset Manager": { assets: ["View", "Edit", "Delete"], employee: ["View"] },
-  "Reporting Manager": {
-    employee: ["View"],
-    attendance: ["View", "Edit"],
-    leave: ["View", "Edit"],
-  },
-  "Employee Self-Service": {
-    employee: ["View"],
-    attendance: ["View"],
-    leave: ["View"],
-    payroll: ["View"],
-    assets: ["View"],
-    tours: ["View", "Edit"],
-  },
-  "Head of Department": {
-    employee: ["View"],
-    attendance: ["View", "Edit"],
-    leave: ["View", "Edit"],
-    assets: ["View", "Edit"],
-    tours: ["View", "Edit"],
-  },
-};
-
-export const moduleName = (key) => RBAC_MODULES.find((m) => m.key === key)?.name ?? key;
-
-/** Merge the permissions of several roles into one module → actions map. */
-export function mergeRolePermissions(roles) {
-  const out = {};
-  roles.forEach((r) => {
-    Object.entries(ROLE_PERMISSION_PRESETS[r] ?? {}).forEach(([mod, actions]) => {
-      out[mod] = out[mod] ?? new Set();
-      actions.forEach((a) => out[mod].add(a));
-    });
-  });
-  return Object.entries(out).map(([mod, set]) => ({
-    module: moduleName(mod),
-    actions: PERMISSION_ACTIONS.filter((a) => set.has(a)),
-  }));
-}

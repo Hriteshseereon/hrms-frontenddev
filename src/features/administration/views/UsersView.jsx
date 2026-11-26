@@ -51,11 +51,13 @@ import {
   userById,
 } from "@/features/auth/data/auth-session";
 import { useActiveOrgId, useOrgs } from "@/features/organization/data/group-data";
+import { useRbacRoles } from "@/features/auth/hooks/useRbacRoles";
+import { rbacApi, extractErrorMessage } from "@/api/rbacApi";
+import { identityApi } from "@/services/api/endpoints";
 import { useDepartments } from "@/features/organization/data/dept-data";
 import { ALL_MANAGED_BRANCHES } from "@/features/organization/data/branch-session";
 import { exportCsv, exportReportPdf } from "@/lib/export-utils";
 import {
-  useRoles,
   useLogins,
   useLoginUsers,
   loginOf,
@@ -65,15 +67,14 @@ import {
   unlockUser,
   revokeSessions,
   setMfa,
-  grantRbacRole,
-  revokeRbacRole,
-  inviteUser,
   resendInvite,
   roleActionGroups,
   roleScreens,
   signInPolicyStore,
 } from "@/features/auth/data/rbac-store";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
+
+const assignedUsersOf = (role) => role?.assigned_users ?? role?.assignedUsers ?? {};
 
 const statusTone = {
   Active: "border-primary/30 bg-primary/10 text-primary",
@@ -116,7 +117,7 @@ function UsersPage() {
     [allUsers, hydrated],
   );
   const logins = useLogins();
-  const roles = useRoles();
+  const { roles } = useRbacRoles();
   const [q, setQ] = useState("");
   const [role, setRole] = useState("all");
   const [status, setStatus] = useState("all");
@@ -177,7 +178,7 @@ function UsersPage() {
       u.email,
       u.role,
       roles
-        .filter((r) => (r.assignedUsers[u.id] ?? []).length)
+        .filter((r) => (assignedUsersOf(r)[u.id] ?? []).length)
         .map((r) => r.name)
         .join(", ") || "—",
       orgs.find((o) => o.id === u.orgId)?.name ?? u.orgId,
@@ -359,7 +360,7 @@ function UsersPage() {
                 <tbody className="divide-border divide-y">
                   {rows.map((u) => {
                     const l = logins[u.id] ?? loginOf(u.id);
-                    const rb = roles.filter((r) => (r.assignedUsers[u.id] ?? []).length);
+                    const rb = roles.filter((r) => (assignedUsersOf(r)[u.id] ?? []).length);
                     return (
                       <tr key={u.id} className={clickableRow} onClick={() => setDetailId(u.id)}>
                         <td className="p-3">
@@ -520,13 +521,13 @@ function canManageAccount(actor, target) {
 
 function UserDetail({ user, login }) {
   const me = useCurrentUser();
-  const roles = useRoles();
+  const { roles, refresh: refreshRoles } = useRbacRoles();
   const orgs = useOrgs();
   const [reason, setReason] = useState("");
   const [grantRole, setGrantRole] = useState("");
   const [grantBranches, setGrantBranches] = useState([]);
   const [temp, setTemp] = useState(null);
-  const mine = roles.filter((r) => (r.assignedUsers[user.id] ?? []).length);
+  const mine = roles.filter((r) => (assignedUsersOf(r)[user.id] ?? []).length);
   const actionGroups = roleActionGroups(user.role);
   // Account actions on this person: an entity Admin / CHRO must not reset the password of (and so take over) the group
   // Super Admin, and a CHRO must not take over an Admin or the CEO — every account in the company used to be fair game.
@@ -733,16 +734,21 @@ function UserDetail({ user, login }) {
                   <span className="font-medium">{r.name}</span>
                   <span className="text-muted-foreground text-xs">
                     · {roleScreens(r).length} screens ·{" "}
-                    {(r.assignedUsers[user.id] ?? []).map(branchName).join(", ")}
+                    {(assignedUsersOf(r)[user.id] ?? []).map(branchName).join(", ")}
                   </span>
                   {canManage && (
                     <Button
                       size="sm"
                       variant="ghost"
                       className="text-destructive ml-auto h-7"
-                      onClick={() => {
-                        revokeRbacRole(user.id, r.id, me.name);
-                        toast.success("Role revoked");
+                      onClick={async () => {
+                        try {
+                          await rbacApi.revokeUserRole(user.id, r.id);
+                          refreshRoles();
+                          toast.success("Role revoked");
+                        } catch (error) {
+                          toast.error(extractErrorMessage(error));
+                        }
                       }}
                     >
                       Revoke
@@ -793,11 +799,19 @@ function UserDetail({ user, login }) {
                   size="sm"
                   className="bg-gradient-emerald text-white"
                   disabled={!grantRole || !grantBranches.length}
-                  onClick={() => {
-                    grantRbacRole(user.id, grantRole, grantBranches, me.name);
-                    setGrantRole("");
-                    setGrantBranches([]);
-                    toast.success("Role granted");
+                  onClick={async () => {
+                    try {
+                      await rbacApi.grantUserRole(user.id, {
+                        roleId: grantRole,
+                        branches: grantBranches,
+                      });
+                      setGrantRole("");
+                      setGrantBranches([]);
+                      refreshRoles();
+                      toast.success("Role granted");
+                    } catch (error) {
+                      toast.error(extractErrorMessage(error));
+                    }
                   }}
                 >
                   Grant role
@@ -830,7 +844,7 @@ function InviteForm({ onDone }) {
   const orgId = useActiveOrgId();
   const orgs = useOrgs();
   const departments = useDepartments();
-  const roles = useRoles();
+  const { roles } = useRbacRoles();
   const existingUsers = useLoginUsers();
   const [f, setF] = useState({
     name: "",
@@ -1036,33 +1050,29 @@ function InviteForm({ onDone }) {
         <Button
           disabled={!valid || (f.roleIds.length > 0 && f.branches.length === 0)}
           className="bg-gradient-emerald text-white"
-          onClick={() => {
-            let u;
+          onClick={async () => {
             try {
-              u = inviteUser(
-                {
-                  name: f.name.trim(),
-                  email: f.email.trim(),
-                  role: f.role,
-                  designation: f.designation.trim(),
-                  dept: f.dept,
-                  branch: f.branch || orgs.find((o) => o.id === f.orgId)?.branches?.[0]?.name || "",
-                  branchId: f.role === "BranchAdmin" ? f.branchId : undefined,
-                  orgId: f.orgId,
-                  groupId: orgs.find((o) => o.id === f.orgId)?.groupId ?? undefined,
-                  phone: f.phone.trim(),
-                  managerId: f.managerId || null,
-                  roleIds: f.roleIds,
-                  branches: f.branches,
-                },
-                me.name,
-              );
+              const response = await identityApi.invite({
+                name: f.name.trim(),
+                email: f.email.trim(),
+                role: f.role,
+                designation: f.designation.trim(),
+                dept: f.dept,
+                branch: f.branch || orgs.find((o) => o.id === f.orgId)?.branches?.[0]?.name || "",
+                branchId: f.role === "BranchAdmin" ? f.branchId : undefined,
+                orgId: f.orgId,
+                phone: f.phone.trim(),
+                managerId: f.managerId || null,
+                roleIds: f.roleIds,
+                branches: f.branches,
+                message: f.message,
+              });
+              const invitedUser = response?.data?.data ?? response?.data ?? response;
+              toast.success(`Invitation sent to ${invitedUser?.email ?? f.email.trim()}`);
+              onDone(invitedUser?.id ?? invitedUser?.user_id);
             } catch (err) {
-              toast.error(err instanceof Error ? err.message : "Could not create the invitation");
-              return;
+              toast.error(extractErrorMessage(err));
             }
-            toast.success(`Invitation sent to ${u.email} · temporary password Welcome@123`);
-            onDone(u.id);
           }}
         >
           Send invitation

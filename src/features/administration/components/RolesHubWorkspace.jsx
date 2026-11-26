@@ -27,7 +27,7 @@ import {
 import { KV } from "@/features/employees/components/CasePieces";
 import { can, useCurrentUser, userById } from "@/features/auth/data/auth-session";
 import { ALL_MANAGED_BRANCHES } from "@/features/organization/data/branch-session";
-import { useRoles, deleteRole, setRoleStatus, roleScreens } from "@/features/auth/data/rbac-store";
+import { roleScreens } from "@/features/auth/data/rbac-store";
 import { archiveRecord } from "@/features/administration/data/archive-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -47,12 +47,10 @@ const branchName = (b) => (b && typeof b === "object" ? (b.name ?? b.branch_name
 
 export function RolesHub() {
   const me = useCurrentUser();
-  const fallbackRoles = useRoles();
   const scope = useCompanyScope();
-  const fallbackRolesRef = useRef(fallbackRoles);
-  fallbackRolesRef.current = fallbackRoles;
 
   const [apiRoles, setApiRoles] = useState([]);
+  const [rolesError, setRolesError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState(null);
   const [viewDetail, setViewDetail] = useState(null);
@@ -68,14 +66,12 @@ export function RolesHub() {
     try {
       setLoading(true);
       const data = await rbacApi.getRoles(scope.companyId ? { company_id: scope.companyId } : undefined);
-      if (Array.isArray(data) && data.length > 0) {
-        setApiRoles(data);
-      } else {
-        setApiRoles(fallbackRolesRef.current);
-      }
-    } catch {
-      // Graceful fallback to local store if backend service isn't active
-      setApiRoles(fallbackRolesRef.current);
+      const list = Array.isArray(data) ? data : data?.items ?? data?.roles ?? [];
+      setApiRoles(Array.isArray(list) ? list : []);
+      setRolesError(null);
+    } catch (error) {
+      setApiRoles([]);
+      setRolesError(extractErrorMessage(error));
     } finally {
       setLoading(false);
       inFlightRolesRef.current = false;
@@ -86,9 +82,7 @@ export function RolesHub() {
     loadRoles();
   }, [loadRoles]);
 
-  const roles = useMemo(() => {
-    return apiRoles.length > 0 ? apiRoles : fallbackRoles;
-  }, [apiRoles, fallbackRoles]);
+  const roles = apiRoles;
 
   // KPI Calculations
   const kpis = useMemo(() => {
@@ -121,13 +115,9 @@ export function RolesHub() {
     try {
       await rbacApi.toggleRoleStatus(r.id, nextStatus);
       toast.success(`Role "${r.name}" set to ${nextStatus}`);
-      setRoleStatus(r.id, nextStatus, me.name);
       await loadRoles();
     } catch (err) {
       toast.error(extractErrorMessage(err));
-      // Local fallback
-      setRoleStatus(r.id, nextStatus, me.name);
-      await loadRoles();
     } finally {
       setActionInProgress(null);
     }
@@ -140,7 +130,8 @@ export function RolesHub() {
       toast.error("System built-in roles cannot be deleted");
       return;
     }
-    const holders = r.users ?? Object.values(r.assignedUsers ?? {}).filter((b) => b?.length).length;
+    const assignedUsers = r.assigned_users ?? r.assignedUsers ?? {};
+    const holders = r.users ?? Object.values(assignedUsers).filter((b) => b?.length).length;
     if (holders > 0) {
       toast.error(`Cannot delete role: granted to ${holders} user(s). Reassign them first.`);
       return;
@@ -149,18 +140,16 @@ export function RolesHub() {
 
     setActionInProgress(r.id);
     try {
+      const detail = await rbacApi.getRoleById(r.id).catch(() => r);
       await rbacApi.deleteRole(r.id);
-      const removed = deleteRole(r.id);
-      if (removed) {
-        archiveRecord({
-          module: "Roles & Permissions",
-          recordId: removed.id,
-          title: removed.name,
-          summary: `${roleScreens(removed).length} screens · no users`,
-          reason: `Deleted by ${me.name}`,
-          payload: removed,
-        });
-      }
+      archiveRecord({
+        module: "Roles & Permissions",
+        recordId: detail.id,
+        title: detail.name,
+        summary: `${roleScreens(detail).length} screens · no users`,
+        reason: `Deleted by ${me.name}`,
+        payload: detail,
+      });
       toast.success(`Role "${r.name}" deleted successfully`);
       await loadRoles();
     } catch (err) {
@@ -257,6 +246,10 @@ export function RolesHub() {
           {loading && roles.length === 0 ? (
             <div className="flex items-center justify-center p-12">
               <Loader2 className="text-primary h-8 w-8 animate-spin" />
+            </div>
+          ) : rolesError ? (
+            <div className="text-destructive rounded-lg border p-6 text-sm">
+              Could not load roles from the server: {rolesError}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
