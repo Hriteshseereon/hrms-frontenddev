@@ -121,9 +121,10 @@ export const EMP_NAV_ITEMS = [
   },
 ];
 
-// Icon of an "Assigned modules" entry, by Permission Matrix module key.
+// Icon of an assigned module, by Permission Matrix module key.
 const ASSIGNED_ICONS = {
   overview: LayoutDashboard,
+  "master-data": Building2,
   employee: UserCircle,
   attendance: Clock,
   leave: Plane,
@@ -153,20 +154,31 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
     Array.isArray(roles) &&
     roles.length > 0 &&
     roles.every((r) => /^employee[\s-]*self[\s-]*service$/i.test(String(r?.name ?? "").trim()));
-  // "Assigned modules": one entry per screen the Company Admin ticked in the Permission Matrix for this employee's
-  // roles (`assigned_modules` from the backend), grouped by module. A screen whose page is closed to them (its module
+  // Assigned screens come from the user's effective role grants (`assigned_modules` from GET /me), grouped by module.
+  // A screen whose page is closed to them (its module
   // is switched off for the company) is left out.
   const { loaded: assignedLoaded, screens: assignedScreens } = useAssignedScreens();
-  const hasRoleScreens = apiSession && me.role === "Employee" && !selfServiceOnly;
+  const hasRoleScreens = apiSession && String(me.role).trim().toLowerCase() === "employee" && !selfServiceOnly;
   const granted = grantedModules({ permissions });
   const assigned = !hasRoleScreens
     ? []
     : assignedLoaded
-      ? assignedScreens.flatMap((sc) => {
-          const to = [sc.to, sc.alt].find((p) => p && canOpen(me.role, p) && moduleOn(p));
-          return to
-            ? [{ key: sc.id, to, label: sc.label, section: sc.section, icon: ASSIGNED_ICONS[sc.module] ?? Building2 }]
-            : [];
+      ? [...new Set(assignedScreens.map((sc) => sc.module))].flatMap((moduleKey) => {
+          const screens = assignedScreens.filter((sc) => sc.module === moduleKey)
+            .map((sc) => ({ ...sc, to: sc.to ?? sc.alt }))
+            .filter((sc) => sc.to);
+          if (!screens.length) return [];
+          const icon = ASSIGNED_ICONS[moduleKey] ?? Building2;
+          const moduleLabel = screens[0].moduleLabel ?? screens[0].label;
+          if (new Set(screens.map((sc) => sc.to.split(/[?#]/)[0])).size === 1)
+            return [{ key: moduleKey, to: screens[0].to, label: moduleLabel, section: screens[0].section, icon }];
+          return [{
+            key: moduleKey,
+            label: moduleLabel,
+            section: screens[0].section,
+            icon,
+            children: screens.map((sc) => ({ key: sc.id, to: sc.to, label: sc.label, icon })),
+          }];
         })
       : // older backend without `assigned_modules`: the org menu entries of the modules the roles grant
         ORG_NAV_GROUPS.flatMap((g) => g.items).filter((i) => {
@@ -179,12 +191,18 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
             permittedModules.includes(key)
           );
         });
+  const assignedModuleKeys = new Set(assigned.map((item) => item.key));
+  const employeeNav = EMP_NAV_ITEMS.map((item) => {
+    if (!("children" in item)) return item;
+    const children = item.children.filter((child) => !assignedModuleKeys.has(moduleOfRoute(child.to)));
+    return { ...item, children };
+  });
   const navItems = assigned.length
-    ? [...EMP_NAV_ITEMS, { label: "Assigned modules", icon: Building2, children: assigned }]
-    : EMP_NAV_ITEMS;
+    ? [...employeeNav, { key: "assigned-modules", assignedModuleGroup: true, label: "Assigned modules", icon: Building2, children: assigned }]
+    : employeeNav;
   const visible = navItems.map((i) =>
     "children" in i
-      ? { ...i, children: i.children.filter((c) => canOpen(me.role, c.to) && moduleOn(c.to)) }
+      ? { ...i, children: i.children.filter((c) => i.assignedModuleGroup || (canOpen(me.role, c.to) && moduleOn(c.to))) }
       : i,
   ).filter((i) => ("children" in i ? i.children.length > 0 : canOpen(me.role, i.to) && moduleOn(i.to)));
 

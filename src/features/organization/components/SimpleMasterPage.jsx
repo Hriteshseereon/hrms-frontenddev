@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 const inputClass =
   "w-full rounded-xl border border-input bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none transition focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/20";
@@ -26,6 +27,7 @@ const deleteButtonClass =
   "inline-flex h-8 w-8 items-center justify-center rounded-md text-red-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/30 disabled:cursor-not-allowed disabled:opacity-50";
 const panelClass = "rounded-2xl border border-border bg-card text-card-foreground shadow-sm";
 const mutedClass = "text-muted-foreground";
+const listRequestsInFlight = new WeakMap();
 
 function Modal({ title, onClose, children, footer }) {
   useEffect(() => {
@@ -85,6 +87,7 @@ function getErrorMessage(error) {
 export function SimpleMasterPage({ config }) {
   const {
     api,
+    screenCode,
     fieldKey,
     icon: PageIcon,
     title,
@@ -96,6 +99,7 @@ export function SimpleMasterPage({ config }) {
     maxLength = 100,
     normalize = (v) => v,
   } = config;
+  const screenAccess = useScreenActions(screenCode);
 
   const [items, setItems] = useState([]);
   const [value, setValue] = useState("");
@@ -120,7 +124,12 @@ export function SimpleMasterPage({ config }) {
     setLoading(true);
     setPageError("");
     try {
-      const res = await api.list();
+      let request = listRequestsInFlight.get(api.list);
+      if (!request) {
+        request = api.list().finally(() => listRequestsInFlight.delete(api.list));
+        listRequestsInFlight.set(api.list, request);
+      }
+      const res = await request;
       setItems(extract(res.data).map(toItem));
     } catch (err) {
       setPageError(getErrorMessage(err));
@@ -285,10 +294,10 @@ export function SimpleMasterPage({ config }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={openAddForm} className={buttonClass}>
+          {screenAccess.can("Create") && <button type="button" onClick={openAddForm} className={buttonClass}>
             <Plus size={17} />
             Add {singular}
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -341,7 +350,7 @@ export function SimpleMasterPage({ config }) {
                 className={`${inputClass} pl-10`}
               />
             </div>
-            <button
+            {screenAccess.can("Export") && <button
               type="button"
               onClick={exportCSV}
               disabled={!items.length}
@@ -349,7 +358,7 @@ export function SimpleMasterPage({ config }) {
             >
               <Download size={16} />
               Export CSV
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -379,7 +388,7 @@ export function SimpleMasterPage({ config }) {
                     <td className="px-5 py-4 font-medium">{item.name}</td>
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-1">
-                        <button
+                        {screenAccess.can("View") && <button
                           type="button"
                           onClick={() => handleView(item)}
                           title="View"
@@ -388,8 +397,8 @@ export function SimpleMasterPage({ config }) {
                           className={actionButtonClass}
                         >
                           <Eye size={16} />
-                        </button>
-                        <button
+                        </button>}
+                        {screenAccess.can("Edit") && <button
                           type="button"
                           onClick={() => handleEdit(item)}
                           title="Edit"
@@ -397,8 +406,8 @@ export function SimpleMasterPage({ config }) {
                           className={actionButtonClass}
                         >
                           <Pencil size={16} />
-                        </button>
-                        <button
+                        </button>}
+                        {screenAccess.can("Delete") && <button
                           type="button"
                           onClick={() => setDeleteTarget(item)}
                           title="Delete"
@@ -411,7 +420,7 @@ export function SimpleMasterPage({ config }) {
                           ) : (
                             <Trash2 size={16} />
                           )}
-                        </button>
+                        </button>}
                       </div>
                     </td>
                   </tr>

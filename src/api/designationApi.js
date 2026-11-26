@@ -3,25 +3,25 @@ import SuperAdmin_axios from "./SuperAdmin_axios";
 
 const designationApi = {
   getDesignations(params, requestOptions = {}) {
-    return SuperAdmin_axios.get("/super-admin/designations", { ...requestOptions, params });
+    return SuperAdmin_axios.get("/masters/designations", { ...requestOptions, params });
   },
 
   getDesignationById(designationId) {
     return SuperAdmin_axios.get(
-      `/super-admin/designations/${designationId}`
+      `/masters/designations/${designationId}`
     );
   },
 
   createDesignation(data) {
     return SuperAdmin_axios.post(
-      "/super-admin/designations",
+      "/masters/designations",
       data
     );
   },
 
   updateDesignation(designationId, data) {
     return SuperAdmin_axios.put(
-      `/super-admin/designations/${designationId}`,
+      `/masters/designations/${designationId}`,
       data
     );
   },
@@ -31,12 +31,12 @@ const designationApi = {
     const formData = new FormData();
     formData.append("file", file);
     // No Content-Type header: SuperAdmin_axios lets the browser add the multipart boundary.
-    return SuperAdmin_axios.post("/super-admin/designations/import", formData, { params });
+    return SuperAdmin_axios.post("/masters/designations/import", formData, { params });
   },
 
   deleteDesignation(designationId) {
     return SuperAdmin_axios.delete(
-      `/super-admin/designations/${designationId}`
+      `/masters/designations/${designationId}`
     );
   },
 };

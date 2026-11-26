@@ -21,6 +21,44 @@
 export const PERMISSION_ACTIONS = ["Create", "View", "Edit", "Delete", "Export", "Bulk Upload", "Approve"];
 export const DEFAULT_SCREEN_ACTIONS = ["View"];
 export const actionsForScreen = (screen) => screen.actions ?? DEFAULT_SCREEN_ACTIONS;
+
+// Master Data is a single workspace with internal tabs. Keep tab ownership on the screen
+// definition so role navigation and the workspace tab filter use the same catalog.
+export const MASTER_DATA_TAB_BY_SCREEN = {
+  "workspace-settings": "branding",
+  department: "departments",
+  designation: "designations",
+  "department-grade": "deptgrades",
+  category: "categories",
+  "department-section": "sections",
+  "doc-master": "docmaster",
+  "employee-handbook": "handbook",
+  "onboarding-document-master": "documents",
+  "policies-circulars": "policies",
+  "award-master": "awards",
+  "job-types": "recmasters",
+  "job-sources": "recmasters",
+  "interview-types": "recmasters",
+  "onboarding-checklists": "recmasters",
+  "offer-letter-template": "recmasters",
+  "interview-rounds-stages": "rounds",
+  "job-locations": "locations",
+  "assessment-evaluation-parameters": "assessparams",
+  "shift-management": "shifts",
+  "workday-configuration": "workday",
+  "attendance-patterns-overrides": "patterns",
+  "penalty-overtime-rules": "rules",
+  "timesheet-formats": "timesheet",
+  "holiday-calendars": "holidays",
+  "leave-master-policy": "leavemaster",
+  "pay-grades-bands": "paygrade",
+  "salary-configuration": "salaryconfig",
+  "statutory-configuration": "statutory",
+  "state-policies": "states",
+  "asset-master": "assetmaster",
+  "termination-types": "termination",
+  "warning-types": "warning",
+};
 /**
  * @typedef {(typeof PERMISSION_ACTIONS)[number]} PermissionAction
  */
@@ -40,7 +78,7 @@ const sidebarScreen = (moduleKey, moduleName, screenKey, screenName, section, su
 });
 
 export const RBAC_MODULES = [
-  sidebarScreen("Dashboard", "Dashboard", "org-dashboard", "Dashboard", "Dashboard", "home", ["View"]),
+  sidebarScreen("dashboard", "Dashboard", "org-dashboard", "Dashboard", "Dashboard", "home", ["View"]),
   {
     key: "master-data", name: "Master Data", sidebarLabel: "Master Data", section: "Overview",
     submodules: [
@@ -64,9 +102,9 @@ export const RBAC_MODULES = [
       { key: "recruitment", name: "Recruitment", screens: [
         { key: "job-types", name: "Job Types", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
         { key: "job-sources", name: "Candidate Sources", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
-        { key: "Interview Types", name: "Interview Types", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
-        { key: "Onboarding Checklists", name: "Onboarding Checklists", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
-        { key: "Offer Letter Template", name: "Offer Letter Template", actions: ["Create", "View"] },
+        { key: "interview-types", name: "Interview Types", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
+        { key: "onboarding-checklists", name: "Onboarding Checklists", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
+        { key: "offer-letter-template", name: "Offer Letter Template", actions: ["Create", "View"] },
         { key: "interview-rounds-stages", name: "Interview Rounds & Stages", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
         { key: "job-locations", name: "Job Locations", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
         { key: "assessment-evaluation-parameters", name: "Assessment & Evaluation Parameters", actions: ["Create", "View"] },

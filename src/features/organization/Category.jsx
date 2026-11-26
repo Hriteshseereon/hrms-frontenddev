@@ -3,6 +3,7 @@ import departmentCategoryApi from "@/api/departmentCategoryApi";
 import { SimpleMasterPage } from "@/features/organization/components/SimpleMasterPage";
 
 const config = {
+  screenCode: "master-data.company-configuration.category",
   api: departmentCategoryApi,
   fieldKey: "category_name",
   icon: Tags,

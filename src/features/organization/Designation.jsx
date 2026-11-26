@@ -17,6 +17,7 @@ import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/com
 import designationApi from "@/api/designationApi";
 import departmentApi from "@/api/departmentApi";
 import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 function getErrorMessage(error) {
   const detail = error?.response?.data?.detail;
@@ -210,6 +211,7 @@ function Modal({ title, onClose, children, footer }) {
 }
 
 export default function Designation() {
+  const screenAccess = useScreenActions("master-data.company-configuration.designation");
   const [designations, setDesignations] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [designationName, setDesignationName] = useState("");
@@ -246,6 +248,7 @@ export default function Designation() {
   // sit on any page. Load every page, sort newest first here, then paginate in the browser.
   async function loadDesignations() {
     const all = [];
+    let previousPageIds = "";
     for (let current = 1; current <= 100; current += 1) {
       const response = await designationApi.getDesignations({
         ...scopeParams,
@@ -254,9 +257,12 @@ export default function Designation() {
         ...(debouncedSearch ? { search: debouncedSearch } : {}),
       });
       const batch = extractList(response.data, ["items", "results", "designations"]);
+      const pageIds = batch.map((item) => String(item.id ?? item.designation_id ?? "")).join("|");
+      const totalCount = Number(response.data?.total ?? response.data?.total_count ?? response.data?.count ?? response.data?.pagination?.total);
+      if (!batch.length || (current > 1 && pageIds === previousPageIds)) break;
       all.push(...batch);
-      const totalCount = Number(response.data?.total ?? 0);
-      if (!batch.length || !totalCount || all.length >= totalCount) break;
+      previousPageIds = pageIds;
+      if (!Number.isFinite(totalCount) || all.length >= totalCount) break;
     }
 
     const time = (item) => Date.parse(item.created_at ?? "") || 0;
@@ -269,6 +275,7 @@ export default function Designation() {
   // Departments feed the dropdown and bulk-upload matching, so load every page of them.
   async function loadDepartments() {
     const all = [];
+    let previousPageIds = "";
     for (let current = 1; current <= 200; current += 1) {
       const response = await departmentApi.getDepartments({
         ...scopeParams,
@@ -276,9 +283,12 @@ export default function Designation() {
         page_size: 50,
       });
       const batch = extractList(response.data, ["items", "results", "departments"]);
+      const pageIds = batch.map((item) => String(item.id ?? item.department_id ?? "")).join("|");
+      const totalCount = Number(response.data?.total ?? response.data?.total_count ?? response.data?.count ?? response.data?.pagination?.total);
+      if (!batch.length || (current > 1 && pageIds === previousPageIds)) break;
       all.push(...batch);
-      const totalCount = Number(response.data?.total ?? 0);
-      if (!batch.length || !totalCount || all.length >= totalCount) break;
+      previousPageIds = pageIds;
+      if (!Number.isFinite(totalCount) || all.length >= totalCount) break;
     }
 
     setDepartments(all.map(normalizeDepartment));
@@ -722,14 +732,14 @@ export default function Designation() {
 
         <div className="flex flex-wrap items-center gap-3">
           <CompanyScopeSelect scope={scope} />
-          <button
+          {screenAccess.can("Create") && <button
             type="button"
             onClick={openAddForm}
             className={buttonClass}
           >
             <Plus size={17} />
             Add Designation
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -786,7 +796,7 @@ export default function Designation() {
               />
             </div>
 
-            <button
+            {screenAccess.can("Export") && <button
               type="button"
               onClick={exportCSV}
               disabled={!total || exporting}
@@ -794,9 +804,9 @@ export default function Designation() {
             >
               {exporting ? <LoaderCircle size={16} className="animate-spin" /> : <Download size={16} />}
               Export CSV
-            </button>
+            </button>}
 
-            <button
+            {screenAccess.can("Bulk Upload") && <button
               type="button"
               onClick={() => {
                 setBulkResult(null);
@@ -806,7 +816,7 @@ export default function Designation() {
             >
               <Upload size={16} />
               Bulk Upload
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -870,7 +880,7 @@ export default function Designation() {
 
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-2">
-                        <button
+                        {screenAccess.can("View") && <button
                           type="button"
                           onClick={() => handleView(designation)}
                           title="View"
@@ -879,9 +889,9 @@ export default function Designation() {
                           className={actionButtonClass}
                         >
                           <Eye size={16} />
-                        </button>
+                        </button>}
 
-                        <button
+                        {screenAccess.can("Edit") && <button
                           type="button"
                           onClick={() => handleEdit(designation)}
                           title="Edit"
@@ -889,9 +899,9 @@ export default function Designation() {
                           className={actionButtonClass}
                         >
                           <Pencil size={16} />
-                        </button>
+                        </button>}
 
-                        <button
+                        {screenAccess.can("Delete") && <button
                           type="button"
                           onClick={() => handleDelete(designation)}
                           title="Delete"
@@ -907,7 +917,7 @@ export default function Designation() {
                           ) : (
                             <Trash2 size={16} />
                           )}
-                        </button>
+                        </button>}
                       </div>
                     </td>
                   </tr>

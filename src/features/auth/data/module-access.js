@@ -5,7 +5,7 @@ import { getMe } from "@/api/meApi";
 import { registerNavExtension } from "./auth-session";
 import { useSessionStore } from "./session-store";
 import { SCREEN_ROUTES } from "./rbac-store";
-import { RBAC_MODULES } from "./rbac";
+import { MASTER_DATA_TAB_BY_SCREEN, RBAC_MODULES } from "./rbac";
 import MODULE_ROUTES from "./module-routes.json";
 
 const ROUTE_MODULE = new Map(
@@ -29,6 +29,12 @@ const isAdminRole = (role) =>
   ["SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN"].includes(String(role ?? "").toUpperCase());
 
 const isSuperRole = (role) => ["SUPER_ADMIN", "SUPERADMIN"].includes(String(role ?? "").toUpperCase());
+const hasAssignedView = (moduleKey, modules) =>
+  (Array.isArray(modules) ? modules : []).some((module) => module.key === moduleKey &&
+    (module.submodules ?? []).some((submodule) => (submodule.screens ?? []).some((screen) => screen.view)));
+const moduleGrantedByRole = (moduleKey, modules, permissions) =>
+  hasAssignedView(moduleKey, modules) ||
+  (Array.isArray(permissions) && permissions.some((permission) => String(permission).startsWith(`${moduleKey}.`)));
 
 /**
  * Super Admin with no company picked is in organisation mode: the server answers 400 "Select a company" for every
@@ -212,13 +218,16 @@ export function assignedScreens(s = useSessionStore.getState()) {
       const presentation =
         RBAC_SCREEN_PRESENTATION.get(`${mod.key}.${screenKey}`) ??
         RBAC_SCREEN_PRESENTATION_BY_KEY.get(screenKey);
-      const org = SCREEN_ROUTES[screenKey] ?? null;
+      const org = mod.key === "master-data" && MASTER_DATA_TAB_BY_SCREEN[screenKey]
+        ? "/org/masters"
+        : SCREEN_ROUTES[screenKey] ?? null;
       const own = sc.self_service ? (SELF_SCREEN_ROUTES[screenKey] ?? null) : null;
       const [to, alt] = manages || !own ? [org ?? own, own] : [own, org];
       if (!to) continue;
       out.push({
         id: sc.screen_code,
-        label: presentation?.sidebarLabel ?? presentation?.label ?? sc.name,
+        label: presentation?.label ?? sc.name,
+        moduleLabel: presentation?.sidebarLabel ?? mod.sidebarLabel ?? mod.name,
         section:
           presentation?.section ??
           SIDEBAR_SECTION_BY_MODULE[mod.key] ??
@@ -240,11 +249,37 @@ export function assignedScreens(s = useSessionStore.getState()) {
   );
   const seenPages = new Set();
   return ordered.filter((screen) => {
-    const pageKey = `${screen.section}:${screen.to}`;
+    const pageKey = `${screen.module}:${String(screen.to).split("#")[0]}`;
     if (seenPages.has(pageKey)) return false;
     seenPages.add(pageKey);
     return true;
   });
+}
+
+/** Action grants on a specific screen from the session's effective assigned_modules / permissions. */
+export function useScreenActions(screenCode) {
+  const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
+  const role = useSessionStore((s) => s.role);
+  const assignedModules = useSessionStore((s) => s.assignedModules);
+  const permissions = useSessionStore((s) => s.permissions);
+  const screen = (assignedModules ?? [])
+    .flatMap((module) => module.submodules ?? [])
+    .flatMap((submodule) => submodule.screens ?? [])
+    .find((item) => item.screen_code === screenCode);
+  const screenPermissions = permissions && !Array.isArray(permissions) ? permissions[screenCode] : null;
+  const actions = Array.isArray(screen?.actions) && screen.actions.length
+    ? screen.actions
+    : Object.entries(screenPermissions ?? screen ?? {})
+        .filter(([, enabled]) => enabled === true)
+        .map(([action]) => action);
+  const can = (action) => {
+    if (!screenCode) return true;
+    if (!isAuthenticated || isAdminRole(role)) return true;
+    if (actions.some((granted) => String(granted).toLowerCase() === action.toLowerCase())) return true;
+    const permission = `${screenCode}.${action.toLowerCase().replaceAll(" ", "_")}`.toLowerCase();
+    return (Array.isArray(permissions) ? permissions : []).some((item) => String(item).toLowerCase() === permission);
+  };
+  return { actions, can };
 }
 
 /** Hook form of `assignedScreens`; `loaded` is false when the backend did not send `assigned_modules`. */
@@ -269,7 +304,7 @@ registerNavExtension((_user, pathname) => {
   // The organisation page of a screen ticked for one of the user's roles (also pages that belong to no module,
   // such as Timesheets or the Holiday Calendar). A page of a module the company switched off stays closed.
   if (
-    (!key || permitted.includes(key)) &&
+    (!key || permitted.includes(key) || moduleGrantedByRole(key, s.assignedModules, s.permissions)) &&
     assignedScreens(s).some((sc) => sc.to.startsWith("/org") && matchesRoute(pathname, sc.to))
   )
     return true;
@@ -280,13 +315,18 @@ registerNavExtension((_user, pathname) => {
 /** Route guard: false when the path belongs to a module that is not in `permitted_modules`. */
 export function useRouteModuleOk(pathname) {
   const permitted = useSessionStore((s) => s.permittedModules);
+  const assignedModules = useSessionStore((s) => s.assignedModules);
+  const permissions = useSessionStore((s) => s.permissions);
+  const role = useSessionStore((s) => s.role);
   const apiSession = useSessionStore((s) => s.isAuthenticated);
   const loaded = useSessionStore((s) => s.accessLoaded);
   const orgMode = useOrgMode();
   if (orgMode) return isOrgModePath(pathname);
   if (isOwnDataRoute(pathname)) return true;
+  if (!apiSession || !loaded) return true;
   const key = moduleOfRoute(pathname);
-  return !apiSession || !loaded || !key || keysOf(permitted).includes(key);
+  if (key && !isAdminRole(role) && moduleGrantedByRole(key, assignedModules, permissions)) return true;
+  return !key || keysOf(permitted).includes(key);
 }
 
 /** Returns `(to) => boolean`: true when the route's module is enabled (or the route has no module). */
@@ -312,14 +352,17 @@ export function useModuleAccess() {
   }, [apiSession]);
   const role = useSessionStore((s) => s.role);
   const permissions = useSessionStore((s) => s.permissions);
+  const assignedModules = useSessionStore((s) => s.assignedModules);
+  const accessLoaded = useSessionStore((s) => s.accessLoaded);
   const keys = new Set(keysOf(permitted));
   const orgMode = useOrgMode();
   return (to) => {
     if (!apiSession) return true; // mock / signed-out preview: no API session to gate by
     if (orgMode) return isOrgModePath(to);
     if (isOwnDataRoute(to)) return true;
+    if (!accessLoaded) return true;
     const key = moduleOfRoute(to);
-    if (key && !keys.has(key)) return false;
+    if (key && !keys.has(key) && !isAdminRole(role) && !moduleGrantedByRole(key, assignedModules, permissions)) return false;
     // Organization payroll actions need a payroll.* permission. Employee routes such as
     // payslips, tax documents and loans are self-service; the enabled company module is enough.
     if (key === "payroll" && String(to).startsWith("/org/") && !isAdminRole(role))
