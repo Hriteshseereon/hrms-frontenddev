@@ -476,8 +476,12 @@ export function RolesHub() {
                           Object.entries(r.permissions).map(([screenKey, perms]) => {
                             const activeActions = [];
                             if (perms.View) activeActions.push("View");
+                            if (perms.Create) activeActions.push("Create");
                             if (perms.Edit) activeActions.push("Edit");
                             if (perms.Delete) activeActions.push("Delete");
+                            if (perms.Export) activeActions.push("Export");
+                            if (perms["Bulk Upload"]) activeActions.push("Bulk Upload");
+                            if (perms.Approve) activeActions.push("Approve");
 
                             return (
                               <div

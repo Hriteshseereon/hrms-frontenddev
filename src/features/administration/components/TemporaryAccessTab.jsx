@@ -26,7 +26,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { RBAC_MODULES, PERMISSION_ACTIONS, screenId } from "@/features/auth/data/rbac";
+import { RBAC_MODULES, actionsForScreen, screenId } from "@/features/auth/data/rbac";
 import { ALL_MANAGED_BRANCHES } from "@/features/organization/data/branch-session";
 import { useOrgUsers } from "@/features/auth/data/user-store";
 import { tempGrantStore } from "@/features/auth/data/rbac-store";
@@ -286,7 +286,7 @@ export function TemporaryAccessTab() {
                                 >
                                   <div className="text-sm">{sc.name}</div>
                                   <div className="flex gap-3">
-                                    {PERMISSION_ACTIONS.map((a) => (
+                                    {actionsForScreen(sc).map((a) => (
                                       <label
                                         key={a}
                                         className="text-muted-foreground flex cursor-pointer items-center gap-1.5 text-xs"

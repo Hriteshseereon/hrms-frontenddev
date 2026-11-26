@@ -219,8 +219,9 @@ export function PermissionMatrixTab() {
                     const canView = p?.View ?? p?.can_view ?? false;
                     const canEdit = p?.Edit ?? p?.can_edit ?? false;
                     const canDelete = p?.Delete ?? p?.can_delete ?? false;
+                    const extraActions = PERMISSION_ACTIONS.filter((action) => !["View", "Edit", "Delete"].includes(action) && Boolean(p?.[action]));
 
-                    const hasAny = canView || canEdit || canDelete;
+                    const hasAny = canView || canEdit || canDelete || extraActions.length > 0;
 
                     return (
                       <td key={r.id} className="p-2.5 text-center">
@@ -261,6 +262,7 @@ export function PermissionMatrixTab() {
                             >
                               D
                             </span>
+                            {extraActions.map((action) => <span key={action} className="h-5 min-w-5 px-1 rounded flex items-center justify-center text-[9px] font-bold font-mono bg-violet-100 text-violet-800" title={`Can ${action}`}>{action === "Bulk Upload" ? "BU" : action === "Create" ? "C" : action === "Approve" ? "AP" : "EX"}</span>)}
                           </div>
                         )}
                       </td>

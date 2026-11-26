@@ -24,16 +24,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { RBAC_MODULES, PERMISSION_ACTIONS, screenId } from "@/features/auth/data/rbac";
+import { RBAC_MODULES, PERMISSION_ACTIONS, DEFAULT_SCREEN_ACTIONS, actionsForScreen, screenId } from "@/features/auth/data/rbac";
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
 import { AccessDenied } from "@/components/common/AccessDenied";
 import { CompanyScopeSelect, useCompanyScope } from "@/features/organization/components/CompanyScopeSelect";
 import { rbacApi, extractErrorMessage } from "@/api/rbacApi";
 
-const STEPS = ["Role Details", "Permissions Matrix", "Review & Submit"];
+const STEPS = ["Role Details", "Modules", "Tabs & Permissions", "Review & Submit"];
 
-const ALL_SCREEN_IDS = RBAC_MODULES.flatMap((m) =>
-  m.submodules.flatMap((s) => s.screens.map((sc) => screenId(m.key, s.key, sc.key))),
+const SCREEN_ACTIONS = Object.fromEntries(
+  RBAC_MODULES.flatMap((m) => m.submodules.flatMap((s) => s.screens.map((sc) => [screenId(m.key, s.key, sc.key), actionsForScreen(sc)]))),
 );
 
 function CreateRole() {
@@ -109,6 +109,22 @@ function RoleWizard({ existing }) {
   const [name, setName] = useState(existing?.name ?? "");
   const [description, setDescription] = useState(existing?.description ?? "");
   const [perms, setPerms] = useState(() => existing?.permissions ?? {});
+  const [selectedModuleKeys, setSelectedModuleKeys] = useState(() => {
+    const saved = existing?.permissions ?? {};
+    return RBAC_MODULES.filter((module) => module.submodules.some((submodule) =>
+      submodule.screens.some((screen) => PERMISSION_ACTIONS.some((action) => saved[screenId(module.key, submodule.key, screen.key)]?.[action])),
+    )).map((module) => module.key);
+  });
+  const [selectedModuleKey, setSelectedModuleKey] = useState(() => {
+    const saved = existing?.permissions ?? {};
+    return RBAC_MODULES.find((module) => module.submodules.some((submodule) =>
+      submodule.screens.some((screen) => PERMISSION_ACTIONS.some((action) => saved[screenId(module.key, submodule.key, screen.key)]?.[action])),
+    ))?.key ?? RBAC_MODULES[0]?.key;
+  });
+  const [selectedSubmoduleKey, setSelectedSubmoduleKey] = useState(() => {
+    const module = RBAC_MODULES.find((item) => item.key === selectedModuleKey) ?? RBAC_MODULES[0];
+    return module?.submodules[0]?.key;
+  });
   const [submitting, setSubmitting] = useState(false);
   // Holders of an "Admin portal access" role land in the org portal after login.
   const [isAdminPortal, setIsAdminPortal] = useState(Boolean(existing?.is_admin_portal));
@@ -133,23 +149,21 @@ function RoleWizard({ existing }) {
   const isBuiltIn = Boolean(existing?.built_in || existing?.builtIn);
 
   // Normalization Rule:
-  // If Edit or Delete is turned on -> View MUST be turned on.
-  // If View is turned off -> Edit and Delete MUST be turned off.
+  // Any granted operation also grants access to the screen.
   const setPerm = (id, action, on) => {
     setPerms((p) => {
-      const current = p[id] ?? { View: false, Edit: false, Delete: false };
+      const current = p[id] ?? {};
       const next = { ...current, [action]: on };
 
       if (action === "View" && !on) {
-        next.Edit = false;
-        next.Delete = false;
+        PERMISSION_ACTIONS.forEach((permission) => { if (permission !== "View") next[permission] = false; });
       }
-      if ((action === "Edit" || action === "Delete") && on) {
+      if (action !== "View" && on) {
         next.View = true;
       }
 
       // If all are false, delete from map
-      if (!next.View && !next.Edit && !next.Delete) {
+      if (!PERMISSION_ACTIONS.some((permission) => next[permission])) {
         const copy = { ...p };
         delete copy[id];
         return copy;
@@ -163,9 +177,11 @@ function RoleWizard({ existing }) {
       const next = { ...p };
       moduleIds.forEach((id) => {
         if (actionType === "full") {
-          next[id] = { View: true, Edit: true, Delete: true };
+          next[id] = Object.fromEntries((SCREEN_ACTIONS[id] ?? DEFAULT_SCREEN_ACTIONS).map((action) => [action, true]));
         } else if (actionType === "view") {
-          next[id] = { View: true, Edit: false, Delete: false };
+          next[id] = Object.fromEntries((SCREEN_ACTIONS[id] ?? DEFAULT_SCREEN_ACTIONS).map((action) => [action, action === "View"]));
+        } else if (actionType === "rw") {
+          next[id] = Object.fromEntries((SCREEN_ACTIONS[id] ?? DEFAULT_SCREEN_ACTIONS).map((action) => [action, ["View", "Create", "Edit"].includes(action)]));
         } else if (actionType === "clear") {
           delete next[id];
         }
@@ -175,9 +191,30 @@ function RoleWizard({ existing }) {
   };
 
   const configuredScreenIds = useMemo(
-    () => Object.keys(perms).filter((id) => perms[id]?.View),
+    () => Object.keys(perms).filter((id) => PERMISSION_ACTIONS.some((action) => perms[id]?.[action])),
     [perms],
   );
+  const activeModule = RBAC_MODULES.find((module) => module.key === selectedModuleKey) ?? RBAC_MODULES[0];
+  const activeSubmodule = activeModule?.submodules.find((submodule) => submodule.key === selectedSubmoduleKey) ?? activeModule?.submodules[0];
+
+  const toggleModule = (moduleKey, checked) => {
+    const module = RBAC_MODULES.find((item) => item.key === moduleKey);
+    if (!module) return;
+    if (checked) {
+      setSelectedModuleKeys((current) => current.includes(moduleKey) ? current : [...current, moduleKey]);
+      setSelectedModuleKey(moduleKey);
+      setSelectedSubmoduleKey(module.submodules[0]?.key);
+      return;
+    }
+    setSelectedModuleKeys((current) => current.filter((key) => key !== moduleKey));
+    const ids = module.submodules.flatMap((submodule) => submodule.screens.map((screen) => screenId(module.key, submodule.key, screen.key)));
+    setPerms((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !ids.includes(id))));
+    if (selectedModuleKey === moduleKey) {
+      const next = RBAC_MODULES.find((item) => item.key !== moduleKey && selectedModuleKeys.includes(item.key));
+      setSelectedModuleKey(next?.key ?? RBAC_MODULES.find((item) => item.key !== moduleKey)?.key);
+      setSelectedSubmoduleKey(next?.submodules[0]?.key);
+    }
+  };
 
   const nameTaken = allRoles.some(
     (r) => r.id !== existing?.id && r.name.trim().toLowerCase() === name.trim().toLowerCase(),
@@ -187,8 +224,10 @@ function RoleWizard({ existing }) {
     step === 0
       ? name.trim().length > 1 && (!nameTaken || isBuiltIn)
       : step === 1
-        ? configuredScreenIds.length > 0
-        : true;
+        ? selectedModuleKeys.length > 0
+        : step === 2
+          ? configuredScreenIds.some((id) => selectedModuleKeys.some((moduleKey) => id.startsWith(`${moduleKey}.`)))
+          : true;
 
   const submit = async () => {
     if (scope.isSuper && !existing && !scope.companyId) {
@@ -203,13 +242,10 @@ function RoleWizard({ existing }) {
       const normalizedPermissions = {};
       configuredScreenIds.forEach((id) => {
         const p = perms[id] || {};
-        const hasMutation = Boolean(p.Edit || p.Delete);
-        const canView = Boolean(p.View || hasMutation);
-        normalizedPermissions[id] = {
-          View: canView,
-          Edit: canView ? Boolean(p.Edit) : false,
-          Delete: canView ? Boolean(p.Delete) : false,
-        };
+        const hasAccess = PERMISSION_ACTIONS.some((action) => p[action]);
+        normalizedPermissions[id] = Object.fromEntries(
+          (SCREEN_ACTIONS[id] ?? DEFAULT_SCREEN_ACTIONS).map((action) => [action, action === "View" ? Boolean(p.View || hasAccess) : Boolean(p[action])]),
+        );
       });
 
       const generatedCode =
@@ -363,151 +399,88 @@ function RoleWizard({ existing }) {
         </Card>
       )}
 
-      {/* Step 1: Permissions Matrix */}
+      {/* Step 1: Choose modules */}
       {step === 1 && (
         <div className="space-y-4">
           <Card className="shadow-card">
             <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div>
-                <div className="font-semibold">Granular Module &amp; Screen Permissions</div>
+                <div className="font-semibold">Select modules</div>
                 <p className="text-muted-foreground text-xs">
-                  {configuredScreenIds.length} of {ALL_SCREEN_IDS.length} screens granted access.
+                  Choose the modules this role can access. You will select submodules and actions next.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setModulePermissions(ALL_SCREEN_IDS, "full")}
-                >
-                  Grant Full Access (All)
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setModulePermissions(ALL_SCREEN_IDS, "view")}
-                >
-                  View Only (All)
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setPerms({})}
-                >
-                  Clear All
-                </Button>
+                <Button variant="outline" size="sm" onClick={() => RBAC_MODULES.forEach((module) => toggleModule(module.key, true))}>Select all</Button>
+                <Button variant="ghost" size="sm" onClick={() => { setSelectedModuleKeys([]); setPerms({}); }}>Clear</Button>
               </div>
             </CardContent>
           </Card>
-
-          {/* Module Cards */}
-          {RBAC_MODULES.map((m, index) => {
-            const moduleScreenIds = m.submodules.flatMap((s) =>
-              s.screens.map((sc) => screenId(m.key, s.key, sc.key)),
-            );
-            const activeInModule = moduleScreenIds.filter((id) => perms[id]?.View).length;
-
-            return (
-              <Fragment key={m.key}>
-                {m.section && RBAC_MODULES[index - 1]?.section !== m.section && (
-                  <div className="pt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    {m.section}
-                  </div>
-                )}
-                <Card className="shadow-card overflow-hidden">
-                <div className="bg-muted/40 p-4 border-b flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <Layers className="h-4 w-4 text-primary" />
-                    <span className="font-semibold text-sm">{m.name}</span>
-                    <Badge variant="outline" className="text-[10px] ml-2">
-                      {activeInModule}/{moduleScreenIds.length} screens
-                    </Badge>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs px-2"
-                      onClick={() => setModulePermissions(moduleScreenIds, "full")}
-                    >
-                      Full Module
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs px-2"
-                      onClick={() => setModulePermissions(moduleScreenIds, "view")}
-                    >
-                      View Only
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs px-2 text-destructive hover:bg-destructive/10"
-                      onClick={() => setModulePermissions(moduleScreenIds, "clear")}
-                    >
-                      Clear
-                    </Button>
-                  </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {RBAC_MODULES.map((module, index) => (
+            <Fragment key={module.key}>
+              <div role="button" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggleModule(module.key, !selectedModuleKeys.includes(module.key)); } }} onClick={() => toggleModule(module.key, !selectedModuleKeys.includes(module.key))} className={cn("w-full cursor-pointer rounded-xl border p-4 text-left transition-colors hover:border-primary", selectedModuleKeys.includes(module.key) ? "border-primary bg-primary/5" : "border-border bg-card")}>
+                <div className="flex items-start gap-3">
+                  <Checkbox checked={selectedModuleKeys.includes(module.key)} onCheckedChange={(checked) => toggleModule(module.key, Boolean(checked))} onClick={(event) => event.stopPropagation()} />
+                  <div className="min-w-0 flex-1"><div className="font-semibold text-sm">{module.name}</div><div className="text-muted-foreground mt-1 text-xs">{module.submodules.length} submodules · {module.submodules.reduce((count, submodule) => count + submodule.screens.length, 0)} screens</div></div>
+                  {selectedModuleKeys.includes(module.key) && <Badge variant="outline">{module.submodules.reduce((count, submodule) => count + submodule.screens.filter((screen) => PERMISSION_ACTIONS.some((action) => perms[screenId(module.key, submodule.key, screen.key)]?.[action])).length, 0)} selected</Badge>}
                 </div>
-
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead className="bg-muted/20 text-muted-foreground uppercase text-[10px] tracking-wider border-b">
-                        <tr>
-                          <th className="p-2.5 text-left min-w-[200px]">Screen</th>
-                          <th className="p-2.5 text-left min-w-[120px]">Submodule</th>
-                          <th className="p-2.5 text-center w-20">View</th>
-                          <th className="p-2.5 text-center w-20">Edit</th>
-                          <th className="p-2.5 text-center w-20">Delete</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {m.submodules.flatMap((s) =>
-                          s.screens.map((sc) => {
-                            const id = screenId(m.key, s.key, sc.key);
-                            const p = perms[id] || { View: false, Edit: false, Delete: false };
-
-                            return (
-                              <tr key={id} className="hover:bg-muted/30">
-                                <td className="p-2.5 font-medium">{sc.name}</td>
-                                <td className="p-2.5 text-muted-foreground">{s.name}</td>
-                                <td className="p-2.5 text-center">
-                                  <Checkbox
-                                    checked={Boolean(p.View)}
-                                    onCheckedChange={(v) => setPerm(id, "View", Boolean(v))}
-                                  />
-                                </td>
-                                <td className="p-2.5 text-center">
-                                  <Checkbox
-                                    checked={Boolean(p.Edit)}
-                                    onCheckedChange={(v) => setPerm(id, "Edit", Boolean(v))}
-                                  />
-                                </td>
-                                <td className="p-2.5 text-center">
-                                  <Checkbox
-                                    checked={Boolean(p.Delete)}
-                                    onCheckedChange={(v) => setPerm(id, "Delete", Boolean(v))}
-                                  />
-                                </td>
-                              </tr>
-                            );
-                          }),
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-                </Card>
-              </Fragment>
-            );
-          })}
+              </div>
+            </Fragment>
+          ))}
+          </div>
         </div>
       )}
 
-      {/* Step 2: Review & Submit */}
-      {step === 2 && (
+      {/* Step 2: Choose a submodule and its screen actions */}
+      {step === 2 && activeModule && activeSubmodule && (
+        <div className="grid min-h-[560px] gap-4 lg:grid-cols-[260px_1fr]">
+          <Card className="shadow-card">
+            <CardContent className="space-y-3 p-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Selected modules</div>
+              {RBAC_MODULES.filter((module) => selectedModuleKeys.includes(module.key)).map((module) => (
+                <div key={module.key} className="space-y-1">
+                  <button type="button" onClick={() => { setSelectedModuleKey(module.key); setSelectedSubmoduleKey(module.submodules[0]?.key); }} className={cn("w-full rounded-md px-3 py-2 text-left text-sm font-semibold", activeModule.key === module.key ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>{module.name}</button>
+                  {activeModule.key === module.key && module.submodules.map((submodule) => {
+                    const ids = submodule.screens.map((screen) => screenId(module.key, submodule.key, screen.key));
+                    const granted = ids.filter((id) => PERMISSION_ACTIONS.some((action) => perms[id]?.[action])).length;
+                    return <button key={submodule.key} type="button" onClick={() => setSelectedSubmoduleKey(submodule.key)} className={cn("ml-2 flex w-[calc(100%-0.5rem)] items-center justify-between rounded-md px-3 py-2 text-left text-xs", activeSubmodule.key === submodule.key ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60")}>{submodule.name}<span>{granted}/{submodule.screens.length}</span></button>;
+                  })}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+          <Card className="shadow-card overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/30 p-4">
+              <div><div className="font-semibold">{activeSubmodule.name}</div><p className="text-muted-foreground mt-1 text-xs">{activeModule.name} · choose the allowed actions for each screen.</p></div>
+              <div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => setModulePermissions(activeSubmodule.screens.map((screen) => screenId(activeModule.key, activeSubmodule.key, screen.key)), "view")}>View only</Button><Button variant="outline" size="sm" onClick={() => setModulePermissions(activeSubmodule.screens.map((screen) => screenId(activeModule.key, activeSubmodule.key, screen.key)), "rw")}>R/W</Button><Button variant="outline" size="sm" onClick={() => setModulePermissions(activeSubmodule.screens.map((screen) => screenId(activeModule.key, activeSubmodule.key, screen.key)), "full")}>Full</Button></div>
+            </div>
+            <CardContent className="max-h-[520px] space-y-3 overflow-y-auto p-4">
+              {activeSubmodule.screens.map((screen) => {
+                const id = screenId(activeModule.key, activeSubmodule.key, screen.key);
+                const allowedActions = actionsForScreen(screen);
+                const current = perms[id] ?? {};
+                const selectedCount = allowedActions.filter((action) => current[action]).length;
+                return <div key={id} className="rounded-lg border border-border bg-card p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold">
+                      <Checkbox checked={selectedCount > 0} onCheckedChange={(checked) => setModulePermissions([id], checked ? "full" : "clear")} />
+                      {screen.name}
+                    </label>
+                    <Badge variant="secondary" className="shrink-0 text-[10px]">{selectedCount} {selectedCount === 1 ? "action" : "actions"}</Badge>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 pl-6">
+                    {allowedActions.map((action) => <label key={action} className="flex cursor-pointer items-center gap-1.5 text-xs text-foreground"><Checkbox checked={Boolean(current[action])} onCheckedChange={(checked) => setPerm(id, action, Boolean(checked))} />{action}</label>)}
+                  </div>
+                </div>;
+              })}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Step 3: Review & Submit */}
+      {step === 3 && (
         <div className="space-y-4">
           <Card className="shadow-card">
             <CardContent className="space-y-3 p-5">
@@ -562,6 +535,7 @@ function RoleWizard({ existing }) {
                         <div key={idx} className="flex items-center justify-between text-xs">
                           <span>{item.screen}</span>
                           <div className="flex gap-1">
+                            {item.p.Create && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-800 font-mono">C</span>}
                             {item.p.View && (
                               <span className="text-[9px] px-1 rounded bg-emerald-100 text-emerald-800 font-mono">
                                 V
@@ -577,6 +551,9 @@ function RoleWizard({ existing }) {
                                 D
                               </span>
                             )}
+                            {item.p.Export && <span className="text-[9px] px-1 rounded bg-violet-100 text-violet-800 font-mono">EX</span>}
+                            {item.p["Bulk Upload"] && <span className="text-[9px] px-1 rounded bg-cyan-100 text-cyan-800 font-mono">BU</span>}
+                            {item.p.Approve && <span className="text-[9px] px-1 rounded bg-orange-100 text-orange-800 font-mono">AP</span>}
                           </div>
                         </div>
                       ))}
