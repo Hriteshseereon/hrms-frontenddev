@@ -3,6 +3,7 @@ import { WorkspaceLoading } from "@/components/common/WorkspaceLoading";
 import { usePathname, useRouter } from "@/lib/router";
 import { useEffect, useState } from "react";
 import { OrgSidebar } from "@/components/layout/OrgSidebar";
+import { EmpSidebar } from "@/components/layout/EmpSidebar";
 import { OrgTopbar } from "@/components/layout/OrgTopbar";
 // import { AIAssistant } from "@/components/layout/AIAssistant"; // chatbot disabled for now
 import { AccessDenied } from "@/components/common/AccessDenied";
@@ -65,12 +66,21 @@ function OrgShell({ children }) {
   return (
     <div className="bg-background relative min-h-dvh [html[data-wallpaper=on]_&]:bg-transparent">
       <WallpaperLayer />
-      <OrgSidebar
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((v) => !v)}
-        mobileOpen={mobileOpen}
-        onClose={() => setMobileOpen(false)}
-      />
+      {me.role === "Employee" ? (
+        <EmpSidebar
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((v) => !v)}
+          mobileOpen={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+        />
+      ) : (
+        <OrgSidebar
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((v) => !v)}
+          mobileOpen={mobileOpen}
+          onClose={() => setMobileOpen(false)}
+        />
+      )}
       <div
         className={cn(
           "glass-main relative z-[1] min-h-dvh transition-all duration-300",

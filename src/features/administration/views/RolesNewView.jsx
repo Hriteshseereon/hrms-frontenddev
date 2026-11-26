@@ -211,6 +211,9 @@ function RoleWizard({ existing }) {
         code: generatedCode,
         description: description.trim(),
         permissions: normalizedPermissions,
+        // The matrix tree drawn on this screen. The backend registers any module / screen it has not seen yet
+        // from it, so adding one to RBAC_MODULES is all a new screen needs to become permissionable.
+        screen_catalog: RBAC_MODULES,
         status: existing?.status || "Active",
         is_admin_portal: isAdminPortal,
         ...(scope.isSuper && !existing ? { company_id: scope.companyId } : {}),

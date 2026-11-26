@@ -973,6 +973,17 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
   const [adminName, setAdminName] = useState("");
   const [adminEmail, setAdminEmail] = useState("");
 
+  // Work email domain (mandatory on create and edit; existing companies get it filled in on edit): "@" + company name + extension. Nothing is allowed before the "@".
+  const savedWorkPrefix = String(existing?.work_email_prefix || "").replace(/^@/, "");
+  const [workDomain, setWorkDomain] = useState(savedWorkPrefix.split(".")[0] || "");
+  const [workDomainTouched, setWorkDomainTouched] = useState(Boolean(savedWorkPrefix));
+  const [workExt, setWorkExt] = useState(savedWorkPrefix.split(".").slice(1).join(".") || "com");
+  const companySlug = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const effectiveWorkDomain = workDomainTouched ? workDomain : companySlug;
+  const workEmailPrefix = `@${effectiveWorkDomain}.${workExt}`;
+  const isValidWorkEmailPrefix = (v) =>
+    /^@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/.test(v);
+
   // Module entitlement: the optional keys only — core modules are always on and never sent.
   const [selectedModules, setSelectedModules] = useState(() =>
     optionalOf(existing?.optional_modules ?? existing?.enabled_modules ?? existing?.modules),
@@ -1036,6 +1047,11 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       }
     }
 
+    if (!isValidWorkEmailPrefix(workEmailPrefix)) {
+      setActiveTab("basic");
+      return toast.error("Work email prefix is required, e.g. @company.com");
+    }
+
     if (linNo.trim().length > 50) {
       setActiveTab("statutory");
       setLinError("LIN Number can be at most 50 characters");
@@ -1073,6 +1089,7 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
       esi_code: esiCode.trim(),
       // Edit: always send the input so an emptied box clears the LIN. Create: leave it out when empty.
       ...(isEdit || linNo.trim() ? { lin_no: linNo.trim() } : {}),
+      work_email_prefix: workEmailPrefix,
       logo_url: logoUrl,
       color_code: colorCode ? colorCode.toUpperCase() : null,
       gst_doc_url: gstDocUrl,
@@ -1379,6 +1396,41 @@ function CompanyDialog({ dialog, tenant, actor, onClose, onSuccess }) {
                     <p className="text-[11px] text-destructive">Use a 6-digit hex colour like #0F6B50.</p>
                   )}
                 </div>
+              </div>
+
+              {/* Work email prefix (create and edit) */}
+              <div className="space-y-1">
+                  <Label className="text-xs font-medium">
+                    Work Email Prefix <span className="text-destructive">*</span>
+                  </Label>
+                  <div className="flex items-center gap-1.5">
+                    <span className="rounded-md border border-border bg-muted px-2.5 py-2 text-sm text-muted-foreground">@</span>
+                    <Input
+                      value={effectiveWorkDomain}
+                      onChange={(e) => {
+                        setWorkDomainTouched(true);
+                        setWorkDomain(e.target.value.toLowerCase().replace(/[^a-z0-9.-]/g, ""));
+                      }}
+                      placeholder="company_name"
+                    />
+                    <span className="text-muted-foreground">.</span>
+                    <Input
+                      className="w-28"
+                      list="work-email-extensions"
+                      value={workExt}
+                      onChange={(e) => setWorkExt(e.target.value.toLowerCase().replace(/[^a-z.]/g, ""))}
+                      placeholder="com"
+                    />
+                    <datalist id="work-email-extensions">
+                      {["com", "in", "co.in", "org", "net", "io"].map((ext) => (
+                        <option key={ext} value={ext} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Employee work emails will use{" "}
+                    <strong className="text-foreground">{workEmailPrefix}</strong>. Nothing can be entered before the @.
+                  </p>
               </div>
 
               {/* Admin credentials section (Only for new company) */}

@@ -61,6 +61,24 @@ const EDITABLE = ["Draft", "Checks Failed", "Checks Passed"];
 
 const normalizeHeader = (value) => String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+function paymentRecordRows(response, status) {
+  const rows = Array.isArray(response)
+    ? response
+    : response?.payment_records ?? response?.records ?? response?.items ?? response?.results ?? response?.rows ?? response?.employees ?? response?.data ?? [];
+  return (Array.isArray(rows) ? rows : []).map((record) => {
+    const employee = record.employee ?? record;
+    return {
+      ...record,
+      employeeCode: record.employee_code ?? record.employeeCode ?? employee.employee_code ?? employee.code ?? "",
+      employeeName: record.employee_name ?? record.employeeName ?? employee.employee_name ?? employee.name ?? "",
+      net: record.net ?? record.net_pay ?? record.amount ?? record.paid_amount ?? record.payment_amount,
+      bankAccount: record.bank_account ?? record.account_no ?? record.bank?.account_no ?? record.bank?.account_number ?? "",
+      ifsc: record.ifsc ?? record.ifsc_code ?? record.bank?.ifsc ?? record.bank?.ifsc_code ?? "",
+      status: String(record.status ?? record.payment_status ?? status).toLowerCase() === "paid" ? "Paid" : "Unpaid",
+    };
+  });
+}
+
 async function parsePaymentStatusExcel(file) {
   if (!file || !/\.xlsx?$/i.test(file.name)) throw new Error("Choose an Excel file (.xlsx or .xls).");
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
@@ -421,7 +439,10 @@ function RunDetail({ runId, onBack, onChanged }) {
   const [view, setView] = useState("register");
   const [q, setQ] = useState("");
   const [state, setState] = useState("");
-  const [paymentRows, setPaymentRows] = useState([]);
+  const [paidRows, setPaidRows] = useState([]);
+  const [unpaidRows, setUnpaidRows] = useState([]);
+  const [paymentRowsLoading, setPaymentRowsLoading] = useState(false);
+  const [paymentRowsError, setPaymentRowsError] = useState("");
   const [uploadingPayments, setUploadingPayments] = useState(false);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(20);
@@ -455,8 +476,6 @@ function RunDetail({ runId, onBack, onChanged }) {
   );
   const slipsAvailable = run?.status === "Paid" || slipsPublished;
   const canUploadPayments = can("payroll.process") || can("finance.manage");
-  const paidRows = paymentRows.filter((row) => row.status === "Paid");
-  const unpaidRows = paymentRows.filter((row) => row.status === "Unpaid");
   const registerLines = run?.lines ?? [];
   const totalPages = Math.max(1, Math.ceil(registerLines.length / limit));
   const pageLines = registerLines.slice((page - 1) * limit, page * limit);
@@ -464,16 +483,60 @@ function RunDetail({ runId, onBack, onChanged }) {
   useEffect(() => {
     setPage((current) => Math.min(current, totalPages));
   }, [totalPages]);
+
+  const loadPaymentRecords = useCallback(async () => {
+    if (!run?.id || !run?.period) return;
+    setPaymentRowsLoading(true);
+    setPaymentRowsError("");
+    try {
+      const [paid, unpaid] = await Promise.all([
+        payrollRunApi.paymentRecords(run.id, run.period, "paid"),
+        payrollRunApi.paymentRecords(run.id, run.period, "unpaid"),
+      ]);
+      setPaidRows(paymentRecordRows(paid, "paid"));
+      setUnpaidRows(paymentRecordRows(unpaid, "unpaid"));
+    } catch (e) {
+      setPaidRows([]);
+      setUnpaidRows([]);
+      setPaymentRowsError(detailText(e, "Could not load payment records."));
+    } finally {
+      setPaymentRowsLoading(false);
+    }
+  }, [run?.id, run?.period]);
+
+  useEffect(() => {
+    loadPaymentRecords();
+  }, [loadPaymentRecords]);
+
   const uploadPaymentWorkbook = async (file) => {
     if (!file) return;
     setUploadingPayments(true);
     try {
-      const rows = await parsePaymentStatusExcel(file);
-      setPaymentRows(rows);
+      const result = await payrollRunApi.uploadPaymentAdvice(run.id, run.period, file);
+      if (!result?.success || result.errors?.length) {
+        const details = (result.errors ?? []).slice(0, 3).map((item) => {
+          const row = item.row ? `Row ${item.row}${item.employee_code ? ` (${item.employee_code})` : ""}: ` : "";
+          return `${row}${item.error}`;
+        });
+        const remaining = (result.errors?.length ?? 0) - details.length;
+        throw new Error(
+          details.length
+            ? `${details.join("; ")}${remaining > 0 ? `; and ${remaining} more error(s)` : ""}`
+            : "The payment advice could not be processed.",
+        );
+      }
+
       setView("paid");
-      toast.success(`Loaded ${rows.length} payment rows from ${file.name}`);
+      await load({ q, state });
+      await loadPaymentRecords();
+      onChanged();
+      const employeeCount = result.paid_employees ?? result.validated_rows ?? 0;
+      const transactionCount = result.transaction_count ?? 0;
+      toast.success(
+        `Payment advice uploaded for ${employeeCount} employee(s) across ${transactionCount} transaction(s).`,
+      );
     } catch (e) {
-      toast.error(e?.message || "Could not read the payment workbook.");
+      toast.error(detailText(e, "Could not upload the payment workbook."));
     } finally {
       setUploadingPayments(false);
       if (paymentFileInput.current) paymentFileInput.current.value = "";
@@ -792,8 +855,9 @@ function RunDetail({ runId, onBack, onChanged }) {
         <Card className="shadow-card overflow-hidden">
           <CardContent className="flex items-center justify-between gap-3 border-b p-3">
             <div className="text-sm font-semibold">{view === "paid" ? "Paid employees" : "Unpaid employees"}</div>
-            <div className="text-muted-foreground text-xs">Uploaded from Excel · {view === "paid" ? paidRows.length : unpaidRows.length} rows</div>
+            <div className="text-muted-foreground text-xs">{view === "paid" ? paidRows.length : unpaidRows.length} rows for {run.period}</div>
           </CardContent>
+          {paymentRowsError && <p className="text-destructive px-4 py-3 text-sm">{paymentRowsError}</p>}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/40 text-muted-foreground text-xs uppercase">
@@ -807,10 +871,14 @@ function RunDetail({ runId, onBack, onChanged }) {
                 </tr>
               </thead>
               <tbody className="divide-border divide-y">
-                {(view === "paid" ? paidRows : unpaidRows).length === 0 ? (
+                {paymentRowsLoading ? (
+                  <tr>
+                    <td colSpan={6} className="text-muted-foreground p-8 text-center">Loading payment records…</td>
+                  </tr>
+                ) : (view === "paid" ? paidRows : unpaidRows).length === 0 ? (
                   <tr>
                     <td colSpan={6} className="text-muted-foreground p-8 text-center">
-                      No {view} rows found in the uploaded workbook.
+                      No {view} payment records found for {run.period}.
                     </td>
                   </tr>
                 ) : (

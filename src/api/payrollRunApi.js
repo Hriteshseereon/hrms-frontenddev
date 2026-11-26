@@ -35,6 +35,9 @@ export const payrollRunApi = {
   get: (id, params) => axios.get(run(id), { params: clean(params) }).then(unwrap),
   line: (id, employeeId) =>
     axios.get(`${run(id)}/lines/${encodeURIComponent(employeeId)}`).then(unwrap),
+  /** List employees by payment status for a payroll month. */
+  paymentRecords: (id, month, status) =>
+    axios.get(`${run(id)}/payment-records`, { params: clean({ month, status }) }).then(unwrap),
 
   runChecks: (id) => axios.post(`${run(id)}/checks`).then(unwrap),
   resolveCheck: (id, checkId, body) =>
@@ -48,6 +51,13 @@ export const payrollRunApi = {
   sendBack: (id, remark) => axios.post(`${run(id)}/send-back`, { remark }).then(unwrap),
   process: (id) => axios.post(`${run(id)}/process`).then(unwrap),
   pay: (id, reference) => axios.post(`${run(id)}/payment`, { reference }).then(unwrap),
+  /** Upload a bank payment advice workbook; the server validates rows and marks the run paid on success. */
+  uploadPaymentAdvice: (id, month, file) => {
+    const form = new FormData();
+    form.append("month", month);
+    form.append("file", file);
+    return axios.post(`${run(id)}/payment-upload`, form).then(unwrap);
+  },
   publishPayslips: (id) =>
     axios.post(`${run(id)}/payslips/publish`, undefined, { responseType: "blob" }).then((response) => response.data),
   /** Download one generated payslip from its payroll run. */
