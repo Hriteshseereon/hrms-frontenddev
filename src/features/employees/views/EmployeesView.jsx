@@ -30,8 +30,8 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
-import { useSessionStore, canCreateEmployee } from "@/features/auth/data/session-store";
-import { useCan } from "@/features/auth/data/module-access";
+import { useSessionStore } from "@/features/auth/data/session-store";
+import { useCanScreen } from "@/features/auth/data/module-access";
 import SuperAdmin_auth from "@/api/SuperAdmin_auth";
 import Branch_api from "@/api/branch";
 import {
@@ -170,19 +170,10 @@ function Employees() {
   const me = useCurrentUser();
   const session = useSessionStore();
   const roleUpper = String(session.role || me?.role || "").toUpperCase();
-  const isEmployeeRole = roleUpper === "EMPLOYEE";
+  const canOnEmployeeScreen = useCanScreen();
+  const employeeScreenCode = (screenKey) => `employee.employee-management.${screenKey}`;
   const canViewEmployeeScreen = (screenKey) =>
-    !session.isAuthenticated ||
-    ["COMPANY_ADMIN", "SUPER_ADMIN"].includes(roleUpper) ||
-    (session.assignedModules?.some(
-      (module) =>
-        module.key === "employee" &&
-        module.submodules?.some((submodule) =>
-          submodule.screens?.some(
-            (screen) => screen.key === screenKey && screen.view,
-          ),
-        ),
-    ) ?? false);
+    canOnEmployeeScreen(employeeScreenCode(screenKey), "View");
   const employeeTabs = [
     { value: "all", screen: "all-employees" },
     { value: "promotions", screen: "employee-promotions" },
@@ -196,12 +187,14 @@ function Employees() {
     { value: "retirement", screen: "employee-retirement" },
   ];
   const visibleEmployeeTabs = employeeTabs.filter((tab) => canViewEmployeeScreen(tab.screen));
-  // `permissions` from the backend: add / edit need "employee.edit" (module level), admins hold it by scope.
-  const canDo = useCan();
-  const canManagePeople =
-    (can(me.role, "employee.manage") || canCreateEmployee(session.role)) &&
-    !isEmployeeRole &&
-    canDo("employee.edit");
+  // Employee actions are granted per screen by the role's permission matrix.
+  const canCreateOnAllEmployees =
+    canOnEmployeeScreen(employeeScreenCode("all-employees"), "Create");
+  const canEditOnAllEmployees =
+    canOnEmployeeScreen(employeeScreenCode("all-employees"), "Edit");
+  const canExportAllEmployees = canOnEmployeeScreen(employeeScreenCode("all-employees"), "Export");
+  const canBulkUploadEmployees = canOnEmployeeScreen(employeeScreenCode("all-employees"), "Bulk Upload");
+  const canDownloadEmployeeForm = canOnEmployeeScreen(employeeScreenCode("all-employees"), "Download");
   const orgName = useOrgs().find((o) => o.id === orgId)?.name ?? "Organization";
   const directory = useDirectory();
   // Always show the live record — the dialog kept the row captured at click time, so a promotion / transfer made from
@@ -427,21 +420,25 @@ function Employees() {
 
         {canViewEmployeeScreen("all-employees") && <TabsContent value="all" className="space-y-6 pt-4">
           <div className="flex flex-wrap justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={exportList}>
-              <Download className="h-4 w-4" /> Export
-              {chosen.length ? ` (${chosen.length} selected)` : ""}
-            </Button>
-            {canManagePeople && <HireEmployeeDialog />}
-            {canManagePeople && <BulkEmployeeImportDialog open={openBulk} onOpenChange={setOpenBulk} onCreated={fetchBackendEmployees} />}
+            {canExportAllEmployees && (
+              <Button variant="outline" size="sm" onClick={exportList}>
+                <Download className="h-4 w-4" /> Export
+                {chosen.length ? ` (${chosen.length} selected)` : ""}
+              </Button>
+            )}
+            {canCreateOnAllEmployees && <HireEmployeeDialog />}
+            {canBulkUploadEmployees && <BulkEmployeeImportDialog open={openBulk} onOpenChange={setOpenBulk} onCreated={fetchBackendEmployees} />}
             <Dialog open={openAdd} onOpenChange={setOpenAdd}>
-              {canManagePeople && (
+              {canCreateOnAllEmployees && (
                 <DialogTrigger asChild>
                   <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
                     <Plus className="h-4 w-4" /> Add Employee (Detailed Form)
                   </Button>
                 </DialogTrigger>
               )}
-              <AddEmployeeDialog onClose={() => setOpenAdd(false)} onCreated={() => fetchBackendEmployees()} />
+              {canCreateOnAllEmployees && (
+                <AddEmployeeDialog onClose={() => setOpenAdd(false)} onCreated={() => fetchBackendEmployees()} />
+              )}
             </Dialog>
           </div>
           <Card className="shadow-card">
@@ -677,7 +674,7 @@ function Employees() {
                         </td>
                         <td className="p-3 whitespace-nowrap" onClick={(ev) => ev.stopPropagation()}>
                           <div className="flex items-center gap-1">
-                            <Button
+                            {canDownloadEmployeeForm && <Button
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7"
@@ -691,7 +688,7 @@ function Employees() {
                               ) : (
                                 <Download className="h-4 w-4" />
                               )}
-                            </Button>
+                            </Button>}
                             <Button
                               variant="ghost"
                               size="sm"
@@ -701,7 +698,7 @@ function Employees() {
                             >
                               <CalendarDays className="h-3.5 w-3.5 mr-1" /> Leave
                             </Button>
-                            {canManagePeople && (
+                            {canEditOnAllEmployees && (
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1253,10 +1250,14 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
   } = session;
 
   const roleUpper = String(sessionRole || me?.backendRole || me?.role || "").toUpperCase();
+  const canOnEmployeeScreen = useCanScreen();
+  const canSaveEmployee = canOnEmployeeScreen(
+    "employee.employee-management.all-employees",
+    isEdit ? "Edit" : "Create",
+  );
   const isSuperAdmin = roleUpper === "SUPER_ADMIN" || roleUpper === "SUPERADMIN";
   const isCompanyAdmin = roleUpper === "COMPANY_ADMIN";
   const isBranchAdmin = roleUpper === "BRANCH_ADMIN" || roleUpper === "BRANCHADMIN";
-  const isEmployee = roleUpper === "EMPLOYEE";
 
   // Values the uncontrolled inputs start with when editing — the full record from GET /employees/{id}.
   const [init] = useState(() => {
@@ -1582,8 +1583,8 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
     const root = formRef.current;
     if (!root || submittingRef.current) return;
 
-    if (isEmployee) {
-      toast.error("Employees are not authorized to create or onboard employees.");
+    if (!canSaveEmployee) {
+      toast.error(`You do not have permission to ${isEdit ? "edit" : "create"} employees.`);
       return;
     }
 
@@ -2820,12 +2821,6 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
 
               {/* Placement scope */}
               <div className="space-y-3 rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 dark:border-emerald-950 dark:bg-emerald-950/20">
-                {isEmployee && (
-                  <p className="text-destructive text-xs font-medium">
-                    Access Restricted: Employees cannot create or onboard other employees.
-                  </p>
-                )}
-
                 {isSuperAdmin && (
                   <FieldRow>
                     <Field label="Company Placement">
@@ -3311,7 +3306,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
           </Button>
           <Button
             type="submit"
-            disabled={submitting || isEmployee}
+            disabled={submitting || !canSaveEmployee}
             className="bg-gradient-emerald shadow-premium text-white flex items-center gap-2"
           >
             {submitting ? (

@@ -95,13 +95,48 @@ export function useCan() {
  * The backend sends one permission per granted action as "<screen_code>.<action slug>".
  */
 export function canScreen(screenCode, action, s = useSessionStore.getState()) {
-  return canDo(`${screenCode}.${actionSlug(action)}`, s);
+  return hasScreenAction(screenCode, action, s);
 }
 
 /** Hook form of `canScreen`: `const canOn = useCanScreen(); {canOn(SCREEN, "Export") && <ExportButton />}`. */
 export function useCanScreen() {
-  const can = useCan();
-  return (screenCode, action) => can(`${screenCode}.${actionSlug(action)}`);
+  const session = useSessionStore();
+  return (screenCode, action) => hasScreenAction(screenCode, action, session);
+}
+
+const screenFor = (screenCode, assignedModules) =>
+  (Array.isArray(assignedModules) ? assignedModules : [])
+    .flatMap((module) => module.submodules ?? [])
+    .flatMap((submodule) => submodule.screens ?? [])
+    .find((screen) => String(screen.screen_code ?? "").toLowerCase() === String(screenCode ?? "").toLowerCase());
+
+/** Screen permissions are authoritative for screen actions; module-level grants must not imply Create/Edit/etc. */
+function hasScreenAction(screenCode, action, s) {
+  if (!screenCode || !action) return false;
+  if (!s.isAuthenticated) return true; // demo / signed-out preview
+  if (isAdminRole(s.role)) return true;
+
+  const slug = actionSlug(action);
+  const screen = screenFor(screenCode, s.assignedModules);
+  const booleanFlag = slug === "bulk_upload" ? screen?.bulk_upload : screen?.[slug];
+  if (typeof booleanFlag === "boolean") return booleanFlag;
+  // `actions` is the API's explicit list of granted actions. An empty list means no actions.
+  if (Array.isArray(screen?.actions)) {
+    return screen.actions.some((granted) => actionSlug(granted) === slug);
+  }
+
+  // Older APIs may send action flags on the screen or a screen-keyed permissions object.
+  const screenPermissions = !Array.isArray(s.permissions) ? s.permissions?.[screenCode] : null;
+  const flags = screenPermissions ?? screen;
+  if (flags && Object.entries(flags).some(([key, enabled]) => actionSlug(key) === slug && enabled === true)) {
+    return true;
+  }
+
+  // When the screen object is missing, accept only an exact screen/action permission string.
+  const exact = `${screenCode}.${slug}`.toLowerCase();
+  return (Array.isArray(s.permissions) ? s.permissions : []).some(
+    (permission) => String(permission).toLowerCase() === exact,
+  );
 }
 
 /** Branch ids the user may pick, or null for every branch (`branch_scope` "ALL"). */
@@ -276,27 +311,15 @@ export function assignedScreens(s = useSessionStore.getState()) {
 
 /** Action grants on a specific screen from the session's effective assigned_modules / permissions. */
 export function useScreenActions(screenCode) {
-  const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
-  const role = useSessionStore((s) => s.role);
-  const assignedModules = useSessionStore((s) => s.assignedModules);
-  const permissions = useSessionStore((s) => s.permissions);
-  const screen = (assignedModules ?? [])
-    .flatMap((module) => module.submodules ?? [])
-    .flatMap((submodule) => submodule.screens ?? [])
-    .find((item) => item.screen_code === screenCode);
-  const screenPermissions = permissions && !Array.isArray(permissions) ? permissions[screenCode] : null;
-  const actions = Array.isArray(screen?.actions) && screen.actions.length
+  const session = useSessionStore();
+  const screen = screenFor(screenCode, session.assignedModules);
+  const screenPermissions = !Array.isArray(session.permissions) ? session.permissions?.[screenCode] : null;
+  const actions = Array.isArray(screen?.actions)
     ? screen.actions
     : Object.entries(screenPermissions ?? screen ?? {})
         .filter(([, enabled]) => enabled === true)
-        .map(([action]) => action);
-  const can = (action) => {
-    if (!screenCode) return true;
-    if (!isAuthenticated || isAdminRole(role)) return true;
-    if (actions.some((granted) => String(granted).toLowerCase() === action.toLowerCase())) return true;
-    const permission = `${screenCode}.${action.toLowerCase().replaceAll(" ", "_")}`.toLowerCase();
-    return (Array.isArray(permissions) ? permissions : []).some((item) => String(item).toLowerCase() === permission);
-  };
+        .map(([name]) => name);
+  const can = (action) => hasScreenAction(screenCode, action, session);
   return { actions, can };
 }
 
