@@ -28,6 +28,7 @@ import {
   useTeamScope,
 } from "@/features/attendance/data/attendance-live";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { exportCsv, exportReportPdf } from "@/lib/export-utils";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
 import { PunchCorrectionsCard } from "@/features/attendance/components/PunchCorrectionsCard";
@@ -44,10 +45,15 @@ const PAL_STYLES = {
 
 const LABELS = { P: "Present", A: "Absent", L: "Leave" };
 
-const HR_ROLES = ["HR", "CHRO", "Admin", "SuperAdmin"];
+// This register is only rendered for the signed-out demo (a real login gets EmployeeAttendanceTab), where the
+// permission layer grants every action; the demo persona list keeps punch corrections off Manager / Employee personas.
+const DEMO_HR_PERSONAS = ["HR", "CHRO", "Admin", "SuperAdmin"];
 
 export function AttendanceLogTab() {
   const user = useCurrentUser();
+  const access = useScreenAccess("attendance.daily.attendance-log");
+  const canExport = access.can("Export");
+  const canCorrect = access.can("Edit") && DEMO_HR_PERSONAS.includes(user.role);
   // The register used to be frozen on the seeded month (2026-07); it now opens on the current month and any month from
   // the seed onwards can be picked (the seeded July data is still shown when July is selected).
   const [month, setMonth] = useState(currentMonth);
@@ -212,6 +218,7 @@ export function AttendanceLogTab() {
                 {LABELS[k]} · {totals[k]}
               </Badge>
             ))}
+            {canExport && (
             <Button
               size="sm"
               variant="outline"
@@ -223,6 +230,8 @@ export function AttendanceLogTab() {
             >
               <Download className="h-4 w-4" /> CSV
             </Button>
+            )}
+            {canExport && (
             <Button
               size="sm"
               variant="outline"
@@ -249,11 +258,12 @@ export function AttendanceLogTab() {
             >
               <Download className="h-4 w-4" /> PDF
             </Button>
+            )}
           </div>
         </CardContent>
       </Card>
 
-      {HR_ROLES.includes(user.role) && <PunchCorrectionsCard />}
+      {canCorrect && <PunchCorrectionsCard />}
 
       <Card className="shadow-card overflow-hidden">
         {teamScope && (

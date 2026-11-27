@@ -35,7 +35,8 @@ import {
   TASK_STATUSES,
 } from "@/features/projects/data/task-data";
 import { useProjects } from "@/features/projects/data/project-data";
-import { useCurrentUser, can } from "@/features/auth/data/auth-session";
+import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenActions } from "@/features/auth/data/module-access";
 import { exportCsv, exportReportPdf } from "@/lib/export-utils";
 import { TaskForm, TaskDetail, nameOf } from "@/features/projects/components/TaskPieces";
 
@@ -66,10 +67,12 @@ export function TaskBoard({
   scopeManagerId,
 }) {
   const me = useCurrentUser();
+  const taskAccess = useScreenActions("workplace.work.tasks");
+  const canExportTasks = taskAccess.can("Export");
   const all = useTasks();
   const projects = useProjects();
   // Creating / assigning tasks is a manager-level action (same gate the Projects workspace applies).
-  const mayCreate = canCreate && can(me.role, "task.assign");
+  const mayCreate = canCreate && taskAccess.can("Create");
   const tasks = useMemo(() => {
     if (scopeEmployeeId) return all.filter((t) => t.assignees.includes(scopeEmployeeId));
     // A line manager works their own reporting line: tasks they created / are concerned on, or assigned to their team.
@@ -251,7 +254,7 @@ export function TaskBoard({
             <span className="text-muted-foreground text-xs">
               {rows.length} of {tasks.length}
             </span>
-            <Button
+            {canExportTasks && <Button
               size="sm"
               variant="outline"
               onClick={() => {
@@ -260,10 +263,10 @@ export function TaskBoard({
               }}
             >
               <Download className="h-4 w-4" /> CSV
-            </Button>
-            <Button size="sm" variant="outline" onClick={downloadPdf}>
+            </Button>}
+            {canExportTasks && <Button size="sm" variant="outline" onClick={downloadPdf}>
               <FileText className="h-4 w-4" /> PDF
-            </Button>
+            </Button>}
             {mayCreate && (
               <Button
                 size="sm"
@@ -392,7 +395,7 @@ export function TaskBoard({
           {detail && (
             <TaskDetail
               task={all.find((t) => t.id === detail.id) ?? detail}
-              mode={mode ?? (scopeEmployeeId ? "self" : "manage")}
+              mode={scopeEmployeeId || !taskAccess.can("Edit") ? "self" : (mode ?? "manage")}
             />
           )}
         </DialogContent>

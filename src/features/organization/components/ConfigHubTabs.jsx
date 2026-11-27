@@ -98,9 +98,12 @@ import {
   saveLeavePolicy,
 } from "@/features/organization/data/hr-masters";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
+import { useScreenGate } from "@/components/common/useScreenGate";
 
 /* ------------------------------ Doc Master ------------------------------ */
-export function DocMasterTab() {
+export function DocMasterTab({ screen } = {}) {
+  // Master Data scopes this to "doc-master"; elsewhere (no scope) every button is shown.
+  const gate = useScreenGate(screen);
   const me = useCurrentUser();
   const tenant = useCurrentTenant();
   const orgs = useOrgs();
@@ -169,7 +172,7 @@ export function DocMasterTab() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button
+              {gate.can("Create") && <Button
                 size="sm"
                 className="bg-gradient-emerald text-white"
                 onClick={() =>
@@ -191,7 +194,7 @@ export function DocMasterTab() {
                 }
               >
                 <Plus className="h-4 w-4" /> New template
-              </Button>
+              </Button>}
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -255,15 +258,15 @@ export function DocMasterTab() {
                         >
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
-                        <Button
+                        {gate.can("Edit") && <Button
                           size="sm"
                           variant="ghost"
                           className="h-7"
                           onClick={() => setEdit(t)}
                         >
                           Edit
-                        </Button>
-                        <Button
+                        </Button>}
+                        {gate.can("Create") && <Button
                           size="sm"
                           variant="ghost"
                           className="h-7"
@@ -273,8 +276,8 @@ export function DocMasterTab() {
                           }}
                         >
                           <Copy className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
+                        </Button>}
+                        {gate.can("Delete") && <Button
                           size="sm"
                           variant="ghost"
                           className="text-destructive h-7"
@@ -291,7 +294,7 @@ export function DocMasterTab() {
                           }}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        </Button>}
                       </div>
                     </td>
                   </tr>
@@ -306,7 +309,7 @@ export function DocMasterTab() {
         <CardContent className="p-5">
           <div className="mb-3 flex items-center justify-between">
             <div className="text-sm font-semibold">Design styles (header · footer · watermark)</div>
-            <Button
+            {gate.can("Create") && <Button
               size="sm"
               variant="outline"
               onClick={() =>
@@ -325,7 +328,7 @@ export function DocMasterTab() {
               }
             >
               <Plus className="h-4 w-4" /> Style
-            </Button>
+            </Button>}
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {styles.map((s) => (
@@ -573,7 +576,7 @@ export function DocMasterTab() {
             <Button variant="outline" onClick={() => edit && preview(edit)}>
               <Eye className="h-4 w-4" /> Preview
             </Button>
-            <Button
+            {gate.can(templates.some((t) => t.id === edit?.id) ? "Edit" : "Create") && <Button
               className="bg-gradient-emerald text-white"
               disabled={!edit?.name.trim() || !edit?.subject.trim()}
               onClick={() => {
@@ -583,7 +586,7 @@ export function DocMasterTab() {
               }}
             >
               <Save className="h-4 w-4" /> Save
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -662,7 +665,7 @@ export function DocMasterTab() {
             </div>
           )}
           <DialogFooter>
-            <Button
+            {gate.can(styles.some((s) => s.id === styleEdit?.id) ? "Edit" : "Create") && <Button
               className="bg-gradient-emerald text-white"
               disabled={!styleEdit?.name.trim()}
               onClick={() => {
@@ -672,7 +675,7 @@ export function DocMasterTab() {
               }}
             >
               Save
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -681,7 +684,9 @@ export function DocMasterTab() {
 }
 
 /* --------------------------- Salary configuration --------------------------- */
-export function SalaryConfigTab() {
+export function SalaryConfigTab({ screen } = {}) {
+  // Master Data scopes this to "salary-configuration"; elsewhere (no scope) every button is shown.
+  const gate = useScreenGate(screen);
   const me = useCurrentUser();
   const structures = useSalaryStructures();
   const [grade, setGrade] = useState(structures[0]?.grade ?? "G3");
@@ -744,7 +749,7 @@ export function SalaryConfigTab() {
                   ))}
                 </SelectContent>
               </Select>
-              <Button
+              {gate.can("Edit") && <Button
                 size="sm"
                 variant="outline"
                 onClick={() => {
@@ -753,8 +758,8 @@ export function SalaryConfigTab() {
                 }}
               >
                 Edit structure
-              </Button>
-              <Button
+              </Button>}
+              {gate.can("Create") && <Button
                 size="sm"
                 className="bg-gradient-emerald text-white"
                 onClick={() => {
@@ -771,7 +776,7 @@ export function SalaryConfigTab() {
                 }}
               >
                 <Plus className="h-4 w-4" /> New
-              </Button>
+              </Button>}
             </div>
           </div>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
@@ -981,7 +986,7 @@ export function SalaryConfigTab() {
               ; evaluation window opens {pol.evaluationLeadDays} day(s) earlier; attendance inputs
               close on the {pol.cutoffDay}th.
             </span>
-            <Button
+            {gate.can("Edit") && <Button
               size="sm"
               className="bg-gradient-emerald ml-auto text-white"
               onClick={() => {
@@ -990,7 +995,7 @@ export function SalaryConfigTab() {
               }}
             >
               <Save className="h-4 w-4" /> Save
-            </Button>
+            </Button>}
           </div>
         </CardContent>
       </Card>
@@ -1252,7 +1257,9 @@ export function SalaryConfigTab() {
 }
 
 /* --------------------- Assessment & evaluation parameters --------------------- */
-export function AssessmentParamsTab() {
+export function AssessmentParamsTab({ screen } = {}) {
+  // Master Data scopes this to "assessment-evaluation-parameters"; elsewhere every button is shown.
+  const gate = useScreenGate(screen);
   const orgId = useActiveOrgId();
   const api = useMemo(() => createAssessmentParamApi(orgId), [orgId]);
   const evalApi = useMemo(() => createEvaluationParamApi(orgId), [orgId]);
@@ -1357,7 +1364,7 @@ export function AssessmentParamsTab() {
                 Used in the recruitment scorecard; weights must total 100 % (currently {totalW} %).
               </div>
             </div>
-            <Button
+            {gate.can("Create") && <Button
               size="sm"
               className="bg-gradient-emerald ml-auto text-white"
               onClick={() =>
@@ -1375,7 +1382,7 @@ export function AssessmentParamsTab() {
               }
             >
               <Plus className="h-4 w-4" /> Parameter
-            </Button>
+            </Button>}
           </div>
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">
@@ -1413,20 +1420,20 @@ export function AssessmentParamsTab() {
                   </td>
                   <td className="p-2">{p.mandatory ? "Yes" : "—"}</td>
                   <td className="p-2">
-                    <Switch checked={p.active} onCheckedChange={(v) => handleToggle(p, v)} />
+                    <Switch checked={p.active} disabled={!gate.can("Edit")} onCheckedChange={(v) => handleToggle(p, v)} />
                   </td>
                   <td className="p-2">
-                    <Button size="sm" variant="ghost" className="h-7" onClick={() => setEdit(p)}>
+                    {gate.can("Edit") && <Button size="sm" variant="ghost" className="h-7" onClick={() => setEdit(p)}>
                       Edit
-                    </Button>
-                    <Button
+                    </Button>}
+                    {gate.can("Delete") && <Button
                       size="sm"
                       variant="ghost"
                       className="text-destructive h-7"
                       onClick={() => handleRemove(p)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    </Button>}
                   </td>
                 </tr>
               ))}
@@ -1446,7 +1453,7 @@ export function AssessmentParamsTab() {
                 annual appraisal.
               </div>
             </div>
-            <Button
+            {gate.can("Create") && <Button
               size="sm"
               variant="outline"
               className="ml-auto"
@@ -1462,7 +1469,7 @@ export function AssessmentParamsTab() {
               }
             >
               <Plus className="h-4 w-4" /> Parameter
-            </Button>
+            </Button>}
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {evals.map((e) => (
@@ -1585,14 +1592,14 @@ export function AssessmentParamsTab() {
             </div>
           )}
           <DialogFooter>
-            <Button
+            {gate.can(params.some((p) => p.id === edit?.id) ? "Edit" : "Create") && <Button
               className="bg-gradient-emerald text-white"
               disabled={!edit?.name.trim() || !(edit.weight > 0 && edit.weight <= 100)}
               title="Weight must be between 1 and 100"
               onClick={handleSave}
             >
               Save
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1648,13 +1655,13 @@ export function AssessmentParamsTab() {
             </div>
           )}
           <DialogFooter>
-            <Button
+            {gate.can(evals.some((e) => e.id === ev?.id) ? "Edit" : "Create") && <Button
               className="bg-gradient-emerald text-white"
               disabled={!ev?.name.trim() || !(ev.weight >= 0 && ev.weight <= 100)}
               onClick={handleSaveEval}
             >
               Save
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1663,7 +1670,7 @@ export function AssessmentParamsTab() {
 }
 
 /* --------------------------- Leave master & calendars --------------------------- */
-function LeavePolicyCard() {
+function LeavePolicyCard({ gate }) {
   const me = useCurrentUser();
   const cur = useLeavePolicy();
   const [p, setP] = useState(cur);
@@ -1769,7 +1776,7 @@ function LeavePolicyCard() {
           <div className="text-muted-foreground text-xs">
             Updated <span className="whitespace-nowrap">{cur.updatedOn}</span> by {cur.updatedBy}
           </div>
-          <Button
+          {gate.can("Edit") && <Button
             size="sm"
             className="bg-gradient-emerald text-white"
             onClick={() => {
@@ -1780,7 +1787,7 @@ function LeavePolicyCard() {
             }}
           >
             <Save className="h-4 w-4" /> Save policy
-          </Button>
+          </Button>}
         </div>
       </CardContent>
     </Card>
@@ -1806,7 +1813,10 @@ function calendarError(c) {
   return null;
 }
 
-export function LeaveMasterTab({ section = "both" }) {
+export function LeaveMasterTab({ section = "both", screen } = {}) {
+  // Master Data scopes section "holidays" to "holiday-calendars" and "leave" to "leave-master-policy";
+  // elsewhere (no scope) every button is shown.
+  const gate = useScreenGate(screen);
   const storeRows = useLeaveMaster();
   const orgId = useActiveOrgId();
   const calApi = useMemo(() => createHolidayCalendarApi(orgId), [orgId]);
@@ -2184,7 +2194,7 @@ export function LeaveMasterTab({ section = "both" }) {
         confirmLabel="Deactivate"
         onConfirm={confirmDeactivateLeaveType}
       />
-      {showLeave && <LeavePolicyCard />}
+      {showLeave && <LeavePolicyCard gate={gate} />}
       {showLeave && (
         <Card className="shadow-card">
           <CardContent className="p-5">
@@ -2198,7 +2208,7 @@ export function LeaveMasterTab({ section = "both" }) {
                   and encashment rules live here.
                 </div>
               </div>
-              {leaveStatus === "ready" && missingDefaults.length > 0 && (
+              {gate.can("Create") && leaveStatus === "ready" && missingDefaults.length > 0 && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -2211,17 +2221,20 @@ export function LeaveMasterTab({ section = "both" }) {
                   {addingDefaults ? "Adding…" : `Add default leaves (${missingDefaults.length})`}
                 </Button>
               )}
-              <Button
+              {gate.can("Bulk Upload") && <Button
                 size="sm"
                 variant="outline"
-                className={leaveStatus === "ready" && missingDefaults.length > 0 ? "" : "ml-auto"}
+                className={gate.can("Create") && leaveStatus === "ready" && missingDefaults.length > 0 ? "" : "ml-auto"}
                 onClick={() => setLeaveBulkOpen(true)}
               >
                 <FileSpreadsheet className="h-4 w-4" /> Bulk upload
-              </Button>
-              <Button
+              </Button>}
+              {gate.can("Create") && <Button
                 size="sm"
-                className="bg-gradient-emerald text-white"
+                className={cn(
+                  "bg-gradient-emerald text-white",
+                  !gate.can("Bulk Upload") && !(leaveStatus === "ready" && missingDefaults.length > 0) && "ml-auto",
+                )}
                 onClick={() =>
                   setEdit({
                     id: `LM-${String(rows.reduce((m, r) => Math.max(m, Number(r.id.replace(/\D/g, "")) || 0), 0) + 1).padStart(2, "0")}`,
@@ -2247,7 +2260,7 @@ export function LeaveMasterTab({ section = "both" }) {
                 }
               >
                 <Plus className="h-4 w-4" /> Leave type
-              </Button>
+              </Button>}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -2304,7 +2317,7 @@ export function LeaveMasterTab({ section = "both" }) {
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button
+                          {gate.can("Edit") && <Button
                             size="icon"
                             variant="ghost"
                             className="h-7 w-7"
@@ -2314,8 +2327,8 @@ export function LeaveMasterTab({ section = "both" }) {
                             onClick={() => openLeaveType(r, "edit")}
                           >
                             <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
+                          </Button>}
+                          {gate.can("Delete") && <Button
                             size="icon"
                             variant="ghost"
                             className="text-destructive hover:text-destructive h-7 w-7"
@@ -2325,7 +2338,7 @@ export function LeaveMasterTab({ section = "both" }) {
                             onClick={() => deleteLeaveType(r)}
                           >
                             <Trash2 className="h-4 w-4" />
-                          </Button>
+                          </Button>}
                         </div>
                       </td>
                     </tr>
@@ -2372,10 +2385,10 @@ export function LeaveMasterTab({ section = "both" }) {
                 </div>
               </div>
               <div className="ml-auto flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
+                {gate.can("Bulk Upload") && <Button size="sm" variant="outline" onClick={() => setBulkOpen(true)}>
                   <FileSpreadsheet className="h-4 w-4" /> Bulk upload
-                </Button>
-                <Button
+                </Button>}
+                {gate.can("Create") && <Button
                   size="sm"
                   variant="outline"
                   onClick={() =>
@@ -2392,7 +2405,7 @@ export function LeaveMasterTab({ section = "both" }) {
                   }
                 >
                   <Plus className="h-4 w-4" /> Calendar
-                </Button>
+                </Button>}
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -2436,7 +2449,7 @@ export function LeaveMasterTab({ section = "both" }) {
                         >
                           <Eye className="h-4 w-4" />
                         </Button>
-                        <Button
+                        {gate.can("Edit") && <Button
                           size="icon"
                           variant="ghost"
                           className="h-7 w-7"
@@ -2446,8 +2459,8 @@ export function LeaveMasterTab({ section = "both" }) {
                           onClick={() => openCalendar(c, "edit")}
                         >
                           <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
+                        </Button>}
+                        {gate.can("Delete") && <Button
                           size="icon"
                           variant="ghost"
                           className="text-destructive hover:text-destructive h-7 w-7"
@@ -2456,7 +2469,7 @@ export function LeaveMasterTab({ section = "both" }) {
                           onClick={() => handleDeleteCalendar(c)}
                         >
                           <Trash2 className="h-4 w-4" />
-                        </Button>
+                        </Button>}
                       </div>
                     </div>
                   </div>
@@ -2686,7 +2699,7 @@ export function LeaveMasterTab({ section = "both" }) {
             <Button variant="outline" onClick={() => setViewLeave(null)}>
               Close
             </Button>
-            <Button
+            {gate.can("Edit") && <Button
               className="bg-gradient-emerald text-white"
               onClick={() => {
                 const r = viewLeave;
@@ -2695,7 +2708,7 @@ export function LeaveMasterTab({ section = "both" }) {
               }}
             >
               <Pencil className="h-4 w-4" /> Edit
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2924,7 +2937,7 @@ export function LeaveMasterTab({ section = "both" }) {
             <Button variant="outline" onClick={() => setViewCal(null)}>
               Close
             </Button>
-            <Button
+            {gate.can("Edit") && <Button
               className="bg-gradient-emerald text-white"
               onClick={() => {
                 const c = viewCal;
@@ -2933,7 +2946,7 @@ export function LeaveMasterTab({ section = "both" }) {
               }}
             >
               <Pencil className="h-4 w-4" /> Edit
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

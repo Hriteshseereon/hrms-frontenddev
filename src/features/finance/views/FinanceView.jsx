@@ -1,47 +1,21 @@
 import { DollarSign, FileText, SlidersHorizontal, Wallet } from "lucide-react";
 import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollTabsList } from "@/components/common/ScrollTabs";
-import { PayrollTab } from "@/features/payroll/components/PayrollTab";
 import { PayrollRunsTab } from "@/features/payroll/components/PayrollRunsTab";
 import { PayrollPolicyTab } from "@/features/payroll/components/PayrollPolicyTab";
 import { PayslipsTab } from "@/features/payroll/components/PayslipsTab";
 import { LoansTab } from "@/features/payroll/components/LoansTab";
-import { useSessionStore } from "@/features/auth/data/session-store";
-import { canDo } from "@/features/auth/data/module-access";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 function FinancePage() {
-  // Signed in through the API: payroll runs come from the server and need a payroll.* permission.
-  const apiSession = useSessionStore((s) => s.isAuthenticated);
-  const permissions = useSessionStore((s) => s.permissions);
-  const role = useSessionStore((s) => s.role);
-  const roles = useSessionStore((s) => s.roles);
-  
-  const canPreparePayroll = canDo("payroll.run", { isAuthenticated: apiSession, role, roles, permissions });
-  const canSeePayroll =
-    !apiSession ||
-    canDo("payroll.view", { isAuthenticated: apiSession, role, permissions }) ||
-    canPreparePayroll ||
-    (permissions ?? []).some((p) => String(p).startsWith("payroll."));
-  const assignedModules = useSessionStore((s) => s.assignedModules);
-  const isPrivilegedFinanceRole = ["COMPANY_ADMIN", "SUPER_ADMIN"].includes(
-    String(role ?? "").toUpperCase(),
-  );
-  const canViewFinanceScreen = (screenKey) =>
-    !apiSession ||
-    isPrivilegedFinanceRole ||
-    (assignedModules?.some(
-      (module) =>
-        module.key === "payroll" &&
-        module.submodules?.some((submodule) =>
-          submodule.screens?.some(
-            (screen) => screen.key === screenKey && screen.view,
-          ),
-        ),
-    ) ?? false);
-  const canViewPayroll = canViewFinanceScreen("payroll-run");
-  const canViewPayslips = canViewFinanceScreen("payslips");
-  const canViewLoans = canViewFinanceScreen("loan-requests");
-  const canViewPolicy = canViewFinanceScreen("wage-statutory-policy");
+  const payrollAccess = useScreenActions("payroll.finance.payroll-run");
+  const payslipAccess = useScreenActions("payroll.finance.payslips");
+  const loanAccess = useScreenActions("payroll.finance.loan-requests");
+  const policyAccess = useScreenActions("payroll.finance.wage-statutory-policy");
+  const canViewPayroll = payrollAccess.can("View");
+  const canViewPayslips = payslipAccess.can("View");
+  const canViewLoans = loanAccess.can("View");
+  const canViewPolicy = policyAccess.can("View");
   const defaultTab = canViewPayroll
     ? "payroll"
     : canViewPayslips
@@ -85,16 +59,7 @@ function FinancePage() {
           )}
         </ScrollTabsList>
         {canViewPayroll && <TabsContent value="payroll" className="pt-4">
-          {!apiSession ? (
-            <PayrollTab />
-          ) : canSeePayroll ? (
-            <PayrollRunsTab />
-          ) : (
-            <div className="text-muted-foreground rounded-md border p-10 text-center text-sm">
-              <div className="text-foreground text-base font-semibold">No access</div>
-              You do not have permission to open payroll. Ask your administrator if you need it.
-            </div>
-          )}
+          <PayrollRunsTab />
         </TabsContent>}
         {canViewPayslips && <TabsContent value="payslips" className="pt-4">
           <PayslipsTab />

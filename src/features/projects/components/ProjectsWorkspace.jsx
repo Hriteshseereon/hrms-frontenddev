@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   FolderKanban,
   Plus,
@@ -47,6 +47,7 @@ import {
 import { TASK_STATUSES, canDecideTaskUpdate } from "@/features/projects/data/task-data";
 import { exportCsv, exportReportPdf } from "@/lib/export-utils";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenActions } from "@/features/auth/data/module-access";
 import { Kpi, nameOf } from "@/features/projects/components/project-shared";
 import {
   NewProjectForm,
@@ -55,8 +56,21 @@ import {
 } from "@/features/projects/components/ProjectPieces";
 import { TaskForm, TaskEditForm, TaskDetail } from "@/features/projects/components/TaskPieces";
 
-export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeManagerId, team }) {
+export function ProjectsWorkspace({ scopeEmployeeId, scopeManagerId, team }) {
   const me = useCurrentUser();
+  const projectAccess = useScreenActions("workplace.projects.projects");
+  const taskAccess = useScreenActions("workplace.work.tasks");
+  const canViewProjects = projectAccess.can("View");
+  const canViewTasks = taskAccess.can("View");
+  const canCreateProject = projectAccess.can("Create");
+  const canEditProject = projectAccess.can("Edit");
+  const canDeleteProject = projectAccess.can("Delete");
+  const canExportProjects = projectAccess.can("Export");
+  const canCreateTask = taskAccess.can("Create");
+  const canEditTask = taskAccess.can("Edit");
+  const canApproveTask = taskAccess.can("Approve");
+  const canRejectTask = taskAccess.can("Reject");
+  const canExportTasks = taskAccess.can("Export");
   const allProjects = useProjects();
   const allTasks = useProjectTasks();
 
@@ -87,7 +101,16 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
     return allTasks;
   }, [allTasks, allProjects, scopeEmployeeId, scopeManagerId, team]);
 
-  const [tab, setTab] = useState("projects");
+  const firstWorkspaceTab = canViewProjects ? "projects" : canViewTasks ? "tasks" : "updates";
+  const [tab, setTab] = useState(firstWorkspaceTab);
+  const visibleWorkspaceTabs = [
+    canViewProjects && "projects",
+    canViewTasks && "tasks",
+    canViewTasks && "updates",
+  ].filter(Boolean);
+  useEffect(() => {
+    if (!visibleWorkspaceTabs.includes(tab)) setTab(firstWorkspaceTab);
+  }, [tab, firstWorkspaceTab, visibleWorkspaceTabs.join("|")]);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [newTaskFor, setNewTaskFor] = useState(false); // false = closed, null = misc, string = project id
   const [projectDetailId, setProjectDetailId] = useState(null);
@@ -103,7 +126,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
 
   // A line manager runs only the projects they manage — being a member does not let them edit or delete it.
   const canManageProject = (p) =>
-    canManage && !!p && (me.role !== "Manager" || p.managerId === me.id);
+    canEditProject && !!p && (me.role !== "Manager" || p.managerId === me.id);
   // Line managers assign within their own reporting line (same rule as the Tasks module).
   const assignable = scopeManagerId ? [scopeManagerId, ...(team ?? [])] : undefined;
   const projectDetail = allProjects.find((p) => p.id === projectDetailId) ?? null;
@@ -284,23 +307,23 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
   return (
     <Tabs value={tab} onValueChange={setTab} className="space-y-6">
       <ScrollTabsList>
-        <TabsTrigger value="projects">
+        {canViewProjects && <TabsTrigger value="projects">
           <FolderKanban className="h-4 w-4" /> Projects
-        </TabsTrigger>
-        <TabsTrigger value="tasks">
+        </TabsTrigger>}
+        {canViewTasks && <TabsTrigger value="tasks">
           <ListTodo className="h-4 w-4" /> Tasks
-        </TabsTrigger>
-        <TabsTrigger value="updates">
+        </TabsTrigger>}
+        {canViewTasks && <TabsTrigger value="updates">
           <MessageSquareText className="h-4 w-4" /> Updates{" "}
           {pendingUpdates.length > 0 && (
             <Badge variant="outline" className="ml-1">
               {pendingUpdates.length}
             </Badge>
           )}
-        </TabsTrigger>
+        </TabsTrigger>}
       </ScrollTabsList>
 
-      <TabsContent value="projects" className="space-y-6">
+      {canViewProjects && <TabsContent value="projects" className="space-y-6">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Kpi label="Total Projects" value={String(projectKpi.total)} icon={FolderKanban} />
           <Kpi label="Active" value={String(projectKpi.active)} icon={Clock3} />
@@ -333,7 +356,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
               <span className="text-muted-foreground text-xs">
                 {shownProjects.length} of {projects.length}
               </span>
-              <Button
+              {canExportProjects && <Button
                 size="sm"
                 variant="outline"
                 onClick={() => {
@@ -342,11 +365,11 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
                 }}
               >
                 <Download className="h-4 w-4" /> CSV
-              </Button>
-              <Button size="sm" variant="outline" onClick={downloadProjectsPdf}>
+              </Button>}
+              {canExportProjects && <Button size="sm" variant="outline" onClick={downloadProjectsPdf}>
                 <FileText className="h-4 w-4" /> PDF
-              </Button>
-              {canManage && (
+              </Button>}
+              {canCreateProject && (
                 <Button
                   size="sm"
                   className="bg-gradient-emerald shadow-premium text-white"
@@ -422,9 +445,9 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
             </div>
           )}
         </div>
-      </TabsContent>
+      </TabsContent>}
 
-      <TabsContent value="tasks" className="space-y-6">
+      {canViewTasks && <TabsContent value="tasks" className="space-y-6">
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Kpi label="Total Tasks" value={String(taskKpi.total)} icon={ListTodo} />
           <Kpi label="In Progress" value={String(taskKpi.active)} icon={Clock3} />
@@ -471,7 +494,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
               <span className="text-muted-foreground text-xs">
                 {filteredTasks.length} of {tasks.length}
               </span>
-              <Button
+              {canExportTasks && <Button
                 size="sm"
                 variant="outline"
                 onClick={() => {
@@ -480,11 +503,11 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
                 }}
               >
                 <Download className="h-4 w-4" /> CSV
-              </Button>
-              <Button size="sm" variant="outline" onClick={downloadTasksPdf}>
+              </Button>}
+              {canExportTasks && <Button size="sm" variant="outline" onClick={downloadTasksPdf}>
                 <FileText className="h-4 w-4" /> PDF
-              </Button>
-              {canManage && (
+              </Button>}
+              {canCreateTask && (
                 <Button
                   size="sm"
                   className="bg-gradient-emerald shadow-premium text-white"
@@ -597,9 +620,9 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
             </table>
           </div>
         </Card>
-      </TabsContent>
+      </TabsContent>}
 
-      <TabsContent value="updates" className="space-y-4">
+      {canViewTasks && <TabsContent value="updates" className="space-y-4">
         {pendingUpdates.length === 0 && tasks.every((t) => t.updates.length === 0) && (
           <div className="text-muted-foreground py-10 text-center text-sm">
             No task updates yet.
@@ -609,7 +632,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
           .filter((t) => t.updates.length > 0)
           .map((t) => {
             const project = allProjects.find((p) => p.id === t.projectId);
-            if (canManage && canDecideTaskUpdate(t, me.id, me.name))
+            if ((canApproveTask || canRejectTask) && canDecideTaskUpdate(t, me.id, me.name))
               return (
                 <PendingUpdateRow
                   key={t.id}
@@ -618,6 +641,8 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
                   by={me.name}
                   byId={me.id}
                   onOpen={() => setTaskDetailId(t.id)}
+                  canApprove={canApproveTask}
+                  canReject={canRejectTask}
                 />
               );
             const latest = pendingUpdateOf(t) ?? t.updates[0];
@@ -651,7 +676,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
               </Card>
             );
           })}
-      </TabsContent>
+      </TabsContent>}
 
       {/* New project (detailed, with inline tasks) */}
       <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
@@ -674,10 +699,11 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
             <ProjectDetail
               project={projectDetail}
               canManage={canManageProject(projectDetail)}
+              canAddTask={canCreateTask}
               onOpenTask={(t) => setTaskDetailId(t.id)}
-              onAddTask={() => setNewTaskFor(projectDetail.id)}
-              onEdit={() => setEditProjectId(projectDetail.id)}
-              onDelete={() => {
+              onAddTask={canCreateTask ? () => setNewTaskFor(projectDetail.id) : undefined}
+              onEdit={canManageProject(projectDetail) ? () => setEditProjectId(projectDetail.id) : undefined}
+              onDelete={canDeleteProject && canManageProject(projectDetail) ? () => {
                 if (
                   !window.confirm(
                     `Delete ${projectDetail.code} — ${projectDetail.name}? Its tasks stay as miscellaneous tasks.`,
@@ -687,7 +713,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
                 deleteProject(projectDetail.id);
                 toast.success("Project deleted — its tasks are now miscellaneous");
                 setProjectDetailId(null);
-              }}
+              } : undefined}
             />
           )}
         </DialogContent>
@@ -704,7 +730,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
       {/* New task (project locked when opened from a project) */}
       <Dialog open={newTaskFor !== false} onOpenChange={(o) => !o && setNewTaskFor(false)}>
         <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
-          {newTaskFor !== false && (
+          {newTaskFor !== false && canCreateTask && (
             <TaskForm
               projectId={newTaskFor}
               restrictAssignees={assignable}
@@ -717,7 +743,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
 
       <Dialog open={!!editTask} onOpenChange={(o) => !o && setEditTaskId(null)}>
         <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
-          {editTask && <TaskEditForm task={editTask} onDone={() => setEditTaskId(null)} />}
+          {editTask && canEditTask && <TaskEditForm task={editTask} onDone={() => setEditTaskId(null)} />}
         </DialogContent>
       </Dialog>
 
@@ -727,9 +753,9 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
             <>
               <TaskDetail
                 task={taskDetail}
-                mode={scopeEmployeeId || !canManage ? "self" : "manage"}
+                mode={scopeEmployeeId || !canEditTask ? "self" : "manage"}
               />
-              {canManage && !scopeEmployeeId && (
+              {canEditTask && !scopeEmployeeId && (
                 <div className="-mt-2 flex justify-end">
                   <Button size="sm" variant="outline" onClick={() => setEditTaskId(taskDetail.id)}>
                     Edit task details
@@ -744,7 +770,7 @@ export function ProjectsWorkspace({ scopeEmployeeId, canManage = false, scopeMan
   );
 }
 
-function PendingUpdateRow({ task, project, by, byId, onOpen }) {
+function PendingUpdateRow({ task, project, by, byId, onOpen, canApprove, canReject }) {
   const [reason, setReason] = useState("");
   const latest = pendingUpdateOf(task);
   return (
@@ -781,7 +807,7 @@ function PendingUpdateRow({ task, project, by, byId, onOpen }) {
           onChange={(e) => setReason(e.target.value)}
           className="max-w-xs"
         />
-        <Button
+        {canApprove && <Button
           size="sm"
           className="bg-gradient-emerald text-white"
           onClick={() => {
@@ -790,8 +816,8 @@ function PendingUpdateRow({ task, project, by, byId, onOpen }) {
           }}
         >
           Approve
-        </Button>
-        <Button
+        </Button>}
+        {canReject && <Button
           size="sm"
           variant="outline"
           className="text-destructive"
@@ -804,7 +830,7 @@ function PendingUpdateRow({ task, project, by, byId, onOpen }) {
           }}
         >
           Reject
-        </Button>
+        </Button>}
       </div>
     </div>
   );

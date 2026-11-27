@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner";
 import { listLeaveApprovals, decideLeaveApproval } from "@/features/leave/data/leaveApprovalAdapter";
 import { exportCsv, exportReportPdf } from "@/lib/export-utils";
+import { useScreenActions } from "@/features/auth/data/module-access";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
 
 /**
@@ -46,6 +47,10 @@ const errorText = (err, fallback) => {
 };
 
 export function LeaveApplicationsTab() {
+  const leaveAccess = useScreenActions("leave.leave.leave-requests");
+  const canApproveLeave = leaveAccess.can("Approve");
+  const canRejectLeave = leaveAccess.can("Reject");
+  const canExportLeave = leaveAccess.can("Export");
   const [rows, setRows] = useState([]);
   const [loadState, setLoadState] = useState("loading"); // loading | ready | failed
   const [decision, setDecision] = useState(null);
@@ -187,7 +192,7 @@ export function LeaveApplicationsTab() {
           >
             <RefreshCw className={`h-4 w-4 ${loadState === "loading" ? "animate-spin" : ""}`} />
           </Button>
-          <Button
+          {canExportLeave && <Button
             size="sm"
             variant="outline"
             onClick={() => {
@@ -196,10 +201,10 @@ export function LeaveApplicationsTab() {
             }}
           >
             <Download className="h-4 w-4" /> CSV
-          </Button>
-          <Button size="sm" variant="outline" onClick={downloadPdf}>
+          </Button>}
+          {canExportLeave && <Button size="sm" variant="outline" onClick={downloadPdf}>
             <FileText className="h-4 w-4" /> PDF
-          </Button>
+          </Button>}
           <div className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
             <Info className="h-3.5 w-3.5" />
             <span className="min-w-0">
@@ -301,9 +306,9 @@ export function LeaveApplicationsTab() {
                     )}
                   </td>
                   <td className="p-3 text-right" onClick={(e) => e.stopPropagation()}>
-                    {a.status === "Pending" && (a.canApprove || a.canReject) ? (
+                    {a.status === "Pending" && ((a.canApprove && canApproveLeave) || (a.canReject && canRejectLeave)) ? (
                       <div className="flex flex-wrap justify-end gap-2">
-                        {a.canApprove && (
+                        {a.canApprove && canApproveLeave && (
                           <Button
                             size="sm"
                             className="bg-gradient-emerald shadow-premium text-white"
@@ -315,7 +320,7 @@ export function LeaveApplicationsTab() {
                             <Check className="h-4 w-4" /> Approve
                           </Button>
                         )}
-                        {a.canReject && (
+                        {a.canReject && canRejectLeave && (
                           <Button
                             size="sm"
                             variant="outline"

@@ -36,6 +36,8 @@ import { PayslipBreakdown } from "@/features/payroll/components/PayslipBreakdown
 import { createPersistentStore } from "@/lib/persist";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
+import { useScreenActions } from "@/features/auth/data/module-access";
+import { getEmployees } from "@/api/employeeApi";
 
 const payslipConfigStore = createPersistentStore(
   "seereon.payroll.payslip-config",
@@ -108,6 +110,9 @@ export function payslipExportOpts(slip, status, cfg = payslipConfigStore.get()) 
 }
 
 export function PayslipsTab() {
+  const payslipAccess = useScreenActions("payroll.finance.payslips");
+  const canExportPayslips = payslipAccess.can("Export");
+  const canEditPayslipConfig = payslipAccess.can("Edit");
   const inScope = useScopeMatch();
   const orgId = useActiveOrgId();
   const allRuns = usePayrollRuns();
@@ -122,6 +127,46 @@ export function PayslipsTab() {
         .sort((a, b) => (a.period < b.period ? 1 : -1)),
     [allRuns, inScope, orgId],
   );
+  const [employees, setEmployees] = useState([]);
+  const [employeesError, setEmployeesError] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    async function loadEmployees() {
+      setEmployeesError("");
+      try {
+        const all = [];
+        let page = 1;
+        let total = Infinity;
+        while (all.length < total) {
+          const response = await getEmployees({ page, limit: 100 });
+          const payload = response?.data ?? response;
+          const items = Array.isArray(payload)
+            ? payload
+            : payload?.items ??
+              payload?.results ??
+              (Array.isArray(payload?.data) ? payload.data : payload?.data?.items) ??
+              [];
+          if (!Array.isArray(items) || !items.length) break;
+          all.push(...items);
+          const reportedTotal = Number(payload?.total ?? payload?.total_count);
+          if (Number.isFinite(reportedTotal) && reportedTotal >= 0) total = reportedTotal;
+          if (items.length < 100) break;
+          page += 1;
+        }
+        if (!cancelled) setEmployees(all);
+      } catch (error) {
+        if (!cancelled) {
+          setEmployeesError(
+            error?.response?.data?.detail ?? error?.message ?? "Could not load employees.",
+          );
+        }
+      }
+    }
+    loadEmployees();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const config = payslipConfigStore.use();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(config);
@@ -180,7 +225,7 @@ export function PayslipsTab() {
               </div>
             </div>
             <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">
-              <Button
+              {canExportPayslips && <Button
                 size="sm"
                 variant="outline"
                 disabled={!run}
@@ -200,8 +245,8 @@ export function PayslipsTab() {
                 }}
               >
                 <Download className="h-4 w-4" /> All payslips (PDF)
-              </Button>
-              <Button
+              </Button>}
+              {canExportPayslips && <Button
                 size="sm"
                 variant="outline"
                 disabled={!run}
@@ -234,7 +279,7 @@ export function PayslipsTab() {
                 }}
               >
                 <Download className="h-4 w-4" /> CSV
-              </Button>
+              </Button>}
               <Select value={run?.id ?? ""} onValueChange={setRunId}>
                 <SelectTrigger className="w-full sm:w-[240px]">
                   <SelectValue placeholder="Select processed run" />
@@ -247,7 +292,7 @@ export function PayslipsTab() {
                   ))}
                 </SelectContent>
               </Select>
-              <Dialog
+              {canEditPayslipConfig && <Dialog
                 open={open}
                 onOpenChange={(v) => {
                   setOpen(v);
@@ -331,7 +376,7 @@ export function PayslipsTab() {
                     </Button>
                   </DialogFooter>
                 </DialogContent>
-              </Dialog>
+              </Dialog>}
             </div>
           </div>
         </CardContent>
@@ -406,7 +451,7 @@ export function PayslipsTab() {
                           <Button size="sm" variant="ghost" onClick={() => setSlip(l)}>
                             View
                           </Button>
-                          <Button
+                          {canExportPayslips && <Button
                             size="sm"
                             variant="outline"
                             onClick={() => {
@@ -421,7 +466,7 @@ export function PayslipsTab() {
                             }}
                           >
                             <Download className="h-3.5 w-3.5" /> PDF
-                          </Button>
+                          </Button>}
                         </div>
                       </td>
                     </tr>

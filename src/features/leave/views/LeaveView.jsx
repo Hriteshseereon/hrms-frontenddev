@@ -6,8 +6,17 @@ import { ScrollTabsList } from "@/components/common/ScrollTabs";
 import { LeaveApplicationsTab } from "@/features/leave/components/LeaveApplicationsTab";
 import { LeaveBalanceTab } from "@/features/leave/components/LeaveBalanceTab";
 import { CompOffApprovalsTab } from "@/features/attendance/components/CompOffApprovalsTab";
+import { useVisibleTabs } from "@/features/auth/data/module-access";
+
+// Each tab is controlled by its own screen on the role permission screen (RBAC_MODULES "leave").
+const LEAVE_TABS = [
+  { value: "applications", label: "Leave Applications", screen: "leave.leave.leave-requests", Component: LeaveApplicationsTab },
+  { value: "balance", label: "Balance Leave", screen: "leave.leave.leave-balances", Component: LeaveBalanceTab },
+  { value: "compoff", label: "Comp-off", screen: "leave.leave.comp-off-approvals", Component: CompOffApprovalsTab },
+];
 
 function LeavePage() {
+  const tabs = useVisibleTabs(LEAVE_TABS);
   return (
     <div className="space-y-6">
       <div>
@@ -27,22 +36,22 @@ function LeavePage() {
         </p>
       </div>
 
-      <Tabs defaultValue="applications">
-        <ScrollTabsList>
-          <TabsTrigger value="applications">Leave Applications</TabsTrigger>
-          <TabsTrigger value="balance">Balance Leave</TabsTrigger>
-          <TabsTrigger value="compoff">Comp-off</TabsTrigger>
-        </ScrollTabsList>
-        <TabsContent value="applications" className="pt-4">
-          <LeaveApplicationsTab />
-        </TabsContent>
-        <TabsContent value="balance" className="pt-4">
-          <LeaveBalanceTab />
-        </TabsContent>
-        <TabsContent value="compoff" className="pt-4">
-          <CompOffApprovalsTab />
-        </TabsContent>
-      </Tabs>
+      {tabs.first ? (
+        <Tabs defaultValue={tabs.first}>
+          <ScrollTabsList>
+            {tabs.list.map((tab) => (
+              <TabsTrigger key={tab.value} value={tab.value}>{tab.label}</TabsTrigger>
+            ))}
+          </ScrollTabsList>
+          {tabs.list.map(({ value, Component }) => (
+            <TabsContent key={value} value={value} className="pt-4">
+              <Component />
+            </TabsContent>
+          ))}
+        </Tabs>
+      ) : (
+        <p className="text-muted-foreground text-sm">You do not have access to any Leave screen.</p>
+      )}
     </div>
   );
 }

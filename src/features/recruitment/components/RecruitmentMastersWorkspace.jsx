@@ -1,6 +1,8 @@
 import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollTabsList } from "@/components/common/ScrollTabs";
 import { CrudSection } from "@/components/common/CrudSection";
+import { useScreenGate } from "@/components/common/useScreenGate";
+import { useVisibleTabs } from "@/features/auth/data/module-access";
 import {
   SOURCE_MASTER_SEED,
   INTERVIEW_TYPE_MASTER_SEED,
@@ -84,7 +86,24 @@ const nameDescStatus = [
   },
 ];
 
-export function RecruitmentMasters() {
+// Each sub-tab is its own RBAC screen (Master Data > Recruitment).
+const SUB_TAB_SCREENS = {
+  "job-type": "job-types",
+  sources: "job-sources",
+  "interview-types": "interview-types",
+  checklists: "onboarding-checklists",
+  offer: "offer-letter-template",
+};
+
+/**
+ * `gateByScreen` (set by Master Data) hides the sub-tabs the user may not view and gates every button by the
+ * sub-tab's own screen. Without it (other pages) everything is shown as before.
+ */
+export function RecruitmentMasters({ gateByScreen = false } = {}) {
+  const screenOf = (tab) => (gateByScreen ? SUB_TAB_SCREENS[tab] : undefined);
+  const tabs = useVisibleTabs(
+    Object.keys(SUB_TAB_SCREENS).map((value) => ({ value, screen: screenOf(value) })),
+  );
   const activeOrgId = useActiveOrgId();
   // Stable adapters, re-created only when the organization changes
   const jobTypeApi = useMemo(() => createJobTypeApi(activeOrgId), [activeOrgId]);
@@ -110,20 +129,20 @@ export function RecruitmentMasters() {
         </p>
       </div>
 
-      <Tabs defaultValue="job-type">
+      <Tabs key={tabs.values.join("|")} defaultValue={tabs.first ?? "job-type"}>
         <ScrollTabsList>
-          <TabsTrigger value="job-type">
+          {tabs.has("job-type") && <TabsTrigger value="job-type">
             <Briefcase className="h-4 w-4" /> Job Type
-          </TabsTrigger>
-          <TabsTrigger value="sources">
+          </TabsTrigger>}
+          {tabs.has("sources") && <TabsTrigger value="sources">
             <Users className="h-4 w-4" /> Candidate Sources
-          </TabsTrigger>
-          <TabsTrigger value="interview-types">
+          </TabsTrigger>}
+          {tabs.has("interview-types") && <TabsTrigger value="interview-types">
             <MessagesSquare className="h-4 w-4" /> Interview Types
-          </TabsTrigger>
-          <TabsTrigger value="checklists">
+          </TabsTrigger>}
+          {tabs.has("checklists") && <TabsTrigger value="checklists">
             <ListChecks className="h-4 w-4" /> Onboarding Checklists
-          </TabsTrigger>
+          </TabsTrigger>}
           {/* <TabsTrigger value="brand">
             <Palette className="h-4 w-4" /> Brand Settings
           </TabsTrigger> */}
@@ -131,13 +150,14 @@ export function RecruitmentMasters() {
           <TabsTrigger value="about">
             <Building className="h-4 w-4" /> About Company
           </TabsTrigger> */}
-          <TabsTrigger value="offer">
+          {tabs.has("offer") && <TabsTrigger value="offer">
             <FileSignature className="h-4 w-4" /> Offer Letter Template
-          </TabsTrigger>
+          </TabsTrigger>}
         </ScrollTabsList>
 
-        <TabsContent value="job-type" className="mt-6">
+        {tabs.has("job-type") && <TabsContent value="job-type" className="mt-6">
           <CrudSection
+            screen={screenOf("job-type")}
             icon={Briefcase}
             title="Job Type"
             desc="Employment types used across job postings."
@@ -152,10 +172,11 @@ export function RecruitmentMasters() {
             }))}
             api={jobTypeApi}
           />
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="sources" className="mt-6">
+        {tabs.has("sources") && <TabsContent value="sources" className="mt-6">
           <CrudSection
+            screen={screenOf("sources")}
             icon={Users}
             title="Candidate Sources"
             desc="Where your applicants come from."
@@ -165,10 +186,11 @@ export function RecruitmentMasters() {
             seed={SOURCE_MASTER_SEED}
             api={candidateSourceApi}
           />
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="interview-types" className="mt-6">
+        {tabs.has("interview-types") && <TabsContent value="interview-types" className="mt-6">
           <CrudSection
+            screen={screenOf("interview-types")}
             icon={MessagesSquare}
             title="Interview Types"
             desc="Modes in which interviews are conducted."
@@ -178,10 +200,11 @@ export function RecruitmentMasters() {
             seed={INTERVIEW_TYPE_MASTER_SEED}
             api={interviewTypeApi}
           />
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="checklists" className="mt-6">
+        {tabs.has("checklists") && <TabsContent value="checklists" className="mt-6">
           <CrudSection
+            screen={screenOf("checklists")}
             icon={ListChecks}
             title="Onboarding Checklists"
             desc="Tasks completed before a candidate becomes an employee."
@@ -225,7 +248,7 @@ export function RecruitmentMasters() {
             ]}
             api={onboardingChecklistApi}
           />
-        </TabsContent>
+        </TabsContent>}
 
         {/* <TabsContent value="brand" className="mt-6">
           <BrandSettings />
@@ -234,9 +257,9 @@ export function RecruitmentMasters() {
         <TabsContent value="about" className="mt-6">
           <AboutCompany />
         </TabsContent> */}
-        <TabsContent value="offer" className="mt-6">
-          <OfferTemplate />
-        </TabsContent>
+        {tabs.has("offer") && <TabsContent value="offer" className="mt-6">
+          <OfferTemplate screen={screenOf("offer")} />
+        </TabsContent>}
       </Tabs>
     </div>
   );
@@ -383,7 +406,8 @@ function AboutCompany() {
   );
 }
 
-function OfferTemplate() {
+function OfferTemplate({ screen }) {
+  const gate = useScreenGate(screen);
   const orgId = useActiveOrgId();
   const saved = useCareerSettings(orgId);
   const [tpl, setTpl] = useState(saved.offerTemplate);
@@ -417,18 +441,21 @@ function OfferTemplate() {
           rows={16}
           className="font-mono text-xs"
           value={tpl}
+          readOnly={!gate.can("Edit")}
           onChange={(e) => setTpl(e.target.value)}
         />
-        <Button
-          className="bg-gradient-emerald text-white"
-          disabled={!tpl.trim()}
-          onClick={() => {
-            saveCareerSettings(orgId, { offerTemplate: tpl });
-            toast.success("Offer letter template saved");
-          }}
-        >
-          Save template
-        </Button>
+        {gate.can("Edit") && (
+          <Button
+            className="bg-gradient-emerald text-white"
+            disabled={!tpl.trim()}
+            onClick={() => {
+              saveCareerSettings(orgId, { offerTemplate: tpl });
+              toast.success("Offer letter template saved");
+            }}
+          >
+            Save template
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

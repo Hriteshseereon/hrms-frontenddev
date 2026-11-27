@@ -35,6 +35,7 @@ import {
 import { inr } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenGate } from "@/components/common/useScreenGate";
 import { useDirectory } from "@/features/employees/data/employee-directory";
 import {
   savePattern,
@@ -65,7 +66,9 @@ const patternApi = createAttendancePatternApi();
  * @property {number} lop
  */
 
-export function PatternsTab() {
+export function PatternsTab({ screen } = {}) {
+  // Master Data scopes this to "attendance-patterns-overrides"; elsewhere the legacy role check still applies.
+  const gate = useScreenGate(screen);
   const me = useCurrentUser();
   const storePatterns = usePatterns();
   const configs = useWorkConfigs();
@@ -76,7 +79,10 @@ const [deletingPatternId, setDeletingPatternId] = useState(null);
 const [deleteTarget, setDeleteTarget] = useState(null);
 const [period, setPeriod] = useState("2026-07");
 const [detail, setDetail] = useState(null);
-  const editable = can(me.role, "employee.manage");
+  const legacyEditable = can(me.role, "employee.manage");
+  const editable = gate.gated ? gate.can("Edit") : legacyEditable;
+  const canCreatePattern = gate.gated ? gate.can("Create") : legacyEditable;
+  const canDeletePattern = gate.gated ? gate.can("Delete") : legacyEditable;
 
   // Attendance patterns come from the API (GET /attendance/patterns). They are also written
   // into the local pattern store so employee assignments and payroll keep resolving them.
@@ -276,7 +282,7 @@ async function confirmDeletePattern() {
                   deduct pay.
                 </div>
               </div>
-              {editable && (
+              {canCreatePattern && (
                 <Button
                   size="sm"
                   className="bg-gradient-emerald text-white"
@@ -354,7 +360,7 @@ async function confirmDeletePattern() {
             </Button>
           )}
 
-          {editable && (
+          {canDeletePattern && (
             <Button
               type="button"
               variant="ghost"

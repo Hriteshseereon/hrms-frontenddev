@@ -17,6 +17,9 @@ import {
 import sectionApi from "@/api/departmentSectionApi";
 import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
 import { nameError } from "@/lib/name-validation";
+import { useScreenAccess } from "@/features/auth/data/module-access";
+
+const SCREEN = "master-data.company-configuration.department-section";
 
 const toSection = (raw) => ({
   id: raw.id,
@@ -88,6 +91,7 @@ function Modal({ title, onClose, children, footer }) {
 }
 
 export default function Section() {
+  const access = useScreenAccess(SCREEN);
   const [items, setItems] = useState([]);
   const [sectionName, setSectionName] = useState("");
   const [sectionCode, setSectionCode] = useState("");
@@ -281,10 +285,12 @@ export default function Section() {
           </p>
         </div>
 
-        <button type="button" onClick={openAddForm} className={buttonClass}>
-          <Plus size={17} />
-          Add Section
-        </button>
+        {access.can("Create") && (
+          <button type="button" onClick={openAddForm} className={buttonClass}>
+            <Plus size={17} />
+            Add Section
+          </button>
+        )}
       </div>
 
       {pageError && (
@@ -334,7 +340,7 @@ export default function Section() {
                 className={`${inputClass} pl-10`}
               />
             </div>
-            <button
+            {access.can("Export") && <button
               type="button"
               onClick={exportCSV}
               disabled={!items.length}
@@ -342,7 +348,7 @@ export default function Section() {
             >
               <Download size={16} />
               Export CSV
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -384,7 +390,7 @@ export default function Section() {
                       >
                         <Eye size={16} />
                       </button>
-                      <button
+                      {access.can("Edit") && <button
                         type="button"
                         onClick={() => handleEdit(item)}
                         title="Edit"
@@ -392,8 +398,8 @@ export default function Section() {
                         className={actionButtonClass}
                       >
                         <Pencil size={16} />
-                      </button>
-                      <button
+                      </button>}
+                      {access.can("Delete") && <button
                         type="button"
                         onClick={() => setDeleteTarget(item)}
                         title="Delete"
@@ -406,7 +412,7 @@ export default function Section() {
                         ) : (
                           <Trash2 size={16} />
                         )}
-                      </button>
+                      </button>}
                     </div>
                   </td>
                 </tr>

@@ -36,6 +36,7 @@ import {
   useScopedIds,
 } from "@/features/employees/components/CasePieces";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { useDirectory } from "@/features/employees/data/employee-directory";
 import { useSharedList } from "@/lib/shared-list";
 import { WARNING_TYPE_MASTER } from "@/features/organization/data/master-data";
@@ -49,7 +50,6 @@ import {
   renderWarningLetter,
 } from "@/features/employees/data/people-cases";
 
-const APPROVER_ROLES = ["HR", "CHRO", "Admin", "SuperAdmin", "CEO", "COO", "Manager"];
 const sevTone = (s) =>
   s === "Level 3 (final)"
     ? "border-destructive/40 bg-destructive/10 text-destructive"
@@ -81,7 +81,10 @@ export function WarningsTab() {
           .includes(q.toLowerCase())),
   );
   const live = detail ? (rows.find((c) => c.id === detail.id) ?? detail) : null;
-  const canAct = APPROVER_ROLES.includes(me.role);
+  const access = useScreenAccess("employee-warnings");
+  const canCreate = access.can("Create");
+  // Escalating / closing a warning changes the case record → Edit.
+  const canAct = access.can("Edit");
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
@@ -129,13 +132,15 @@ export function WarningsTab() {
               </SelectContent>
             </Select>
           </Toolbar>
-          <Button
-            size="sm"
-            className="bg-gradient-emerald shadow-premium ml-auto text-white"
-            onClick={() => setOpen(true)}
-          >
-            <Plus className="h-4 w-4" /> Issue warning
-          </Button>
+          {canCreate && (
+            <Button
+              size="sm"
+              className="bg-gradient-emerald shadow-premium ml-auto text-white"
+              onClick={() => setOpen(true)}
+            >
+              <Plus className="h-4 w-4" /> Issue warning
+            </Button>
+          )}
         </CardContent>
       </Card>
       <Card className="shadow-card overflow-hidden">

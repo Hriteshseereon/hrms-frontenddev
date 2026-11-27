@@ -25,7 +25,8 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { inr } from "@/lib/store";
-import { can, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import { getEmployeeProfile } from "@/features/employees/data/employee-directory";
 import {
@@ -51,7 +52,8 @@ export function RetirementTab() {
   const [reEngage, setReEngage] = useState(true);
   const [months, setMonths] = useState(String(policy.contractExtensionMonths));
   const [ctc, setCtc] = useState("");
-  const editable = can(me.role, "employee.manage");
+  // Processing a retirement finalises the employee's exit → Approve on the Retirement screen.
+  const editable = useScreenAccess("employee-retirement").can("Approve");
   const rows = useMemo(
     () =>
       candidates.filter((c) =>

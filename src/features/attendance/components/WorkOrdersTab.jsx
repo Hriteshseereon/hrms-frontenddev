@@ -39,6 +39,7 @@ import {
 import { OFFICES } from "@/features/employees/data/hr-data";
 import { useShifts } from "@/features/attendance/data/attendance-data";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import { useDirectory } from "@/features/employees/data/employee-directory";
 import { exportReportPdf } from "@/lib/export-utils";
@@ -79,6 +80,10 @@ const fmtMoney = (n, c = "INR") =>
   `${c === "INR" ? "₹" : c + " "}${Math.round(n).toLocaleString("en-IN")}`;
 
 export function WorkOrdersTab() {
+  const access = useScreenAccess("attendance.daily.attendance-work-orders");
+  const canCreate = access.can("Create");
+  const canEdit = access.can("Edit");
+  const canExport = access.can("Export");
   const activeOrgId = useActiveOrgId();
   const allWorkOrders = useWorkOrders();
   const inScope = useScopeMatch();
@@ -174,17 +179,21 @@ export function WorkOrdersTab() {
             </div>
           </div>
           <div className="ml-auto flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" disabled={!workOrders.length} onClick={report}>
-              <Download className="h-4 w-4" /> Work orders report
-            </Button>
-            <Dialog open={open} onOpenChange={setOpen}>
-              <DialogTrigger asChild>
-                <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
-                  <Plus className="h-4 w-4" /> New work order
-                </Button>
-              </DialogTrigger>
-              <NewWorkOrderDialog orgId={activeOrgId} onDone={() => setOpen(false)} />
-            </Dialog>
+            {canExport && (
+              <Button size="sm" variant="outline" disabled={!workOrders.length} onClick={report}>
+                <Download className="h-4 w-4" /> Work orders report
+              </Button>
+            )}
+            {canCreate && (
+              <Dialog open={open} onOpenChange={setOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm" className="bg-gradient-emerald shadow-premium text-white">
+                    <Plus className="h-4 w-4" /> New work order
+                  </Button>
+                </DialogTrigger>
+                <NewWorkOrderDialog orgId={activeOrgId} onDone={() => setOpen(false)} />
+              </Dialog>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -282,13 +291,13 @@ export function WorkOrdersTab() {
                   <span className="whitespace-nowrap">{wo.endDate ?? "open"}</span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 pt-1">
-                  {wo.status !== "Completed" && (
+                  {canEdit && wo.status !== "Completed" && (
                     <AssignEmployeeDialog workOrderId={wo.id} employees={orgEmployees} />
                   )}
                   <Button size="sm" variant="ghost" onClick={() => setView(wo)}>
                     <Eye className="h-4 w-4" /> Details
                   </Button>
-                  {wo.status === "Active" ? (
+                  {!canEdit ? null : wo.status === "Active" ? (
                     <Button
                       size="sm"
                       variant="outline"
@@ -311,7 +320,7 @@ export function WorkOrdersTab() {
                       Reactivate
                     </Button>
                   ) : null}
-                  {wo.status !== "Completed" && (
+                  {canEdit && wo.status !== "Completed" && (
                     <Button
                       size="sm"
                       variant="ghost"
@@ -339,6 +348,7 @@ export function WorkOrdersTab() {
                       return (
                         <Badge key={a.employeeId} variant="outline" className="text-[11px]">
                           {emp?.name ?? a.employeeId}
+                          {canEdit && (
                           <button
                             className="text-muted-foreground hover:text-destructive ml-1.5"
                             onClick={() => {
@@ -348,6 +358,7 @@ export function WorkOrdersTab() {
                           >
                             ×
                           </button>
+                          )}
                         </Badge>
                       );
                     })}
@@ -438,6 +449,7 @@ export function WorkOrdersTab() {
                   .join(", ") || "none"}
               </div>
               <DialogFooter>
+                {canExport && (
                 <Button
                   variant="outline"
                   onClick={() =>
@@ -484,6 +496,7 @@ export function WorkOrdersTab() {
                 >
                   <Download className="h-4 w-4" /> Work order PDF
                 </Button>
+                )}
                 <Button onClick={() => setView(null)}>Close</Button>
               </DialogFooter>
             </div>

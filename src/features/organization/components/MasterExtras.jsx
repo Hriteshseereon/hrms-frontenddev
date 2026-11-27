@@ -52,6 +52,7 @@ import {
   RecordDetailDialog,
   clickableRow,
 } from "@/components/common/RecordDetail";
+import { useScreenGate } from "@/components/common/useScreenGate";
 
 
 function Head({ icon: Icon, title, desc, children }) {
@@ -82,7 +83,10 @@ export function NamedMasterTab({
   addLabel,
   prefix,
   store,
+  // RBAC screen gating "Add"; defaults to the nearest <ScreenScope>, none = always shown.
+  screen,
 }) {
+  const gate = useScreenGate(screen);
   const rows = store.use();
 
   const [open, setOpen] = useState(false);
@@ -114,12 +118,14 @@ export function NamedMasterTab({
       <CardContent className="p-6">
         <Head icon={icon} title={title} desc={desc}>
           <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-gradient-emerald text-white">
-                <Plus className="h-4 w-4" />
-                {addLabel}
-              </Button>
-            </DialogTrigger>
+            {gate.can("Create") && (
+              <DialogTrigger asChild>
+                <Button size="sm" className="bg-gradient-emerald text-white">
+                  <Plus className="h-4 w-4" />
+                  {addLabel}
+                </Button>
+              </DialogTrigger>
+            )}
 
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
@@ -239,7 +245,9 @@ export function NamedMasterTab({
    TIMESHEET FORMATS
    ========================================================= */
 
-export function TimesheetFormatsTab() {
+export function TimesheetFormatsTab({ screen } = {}) {
+  // Master Data scopes this to "timesheet-formats"; elsewhere (no scope) every button is shown.
+  const gate = useScreenGate(screen);
   const orgId = useActiveOrgId();
 
   const api = useMemo(
@@ -503,16 +511,18 @@ export function TimesheetFormatsTab() {
               }
             }}
           >
-            <DialogTrigger asChild>
-              <Button
-                size="sm"
-                className="bg-gradient-emerald text-white"
-                onClick={resetForm}
-              >
-                <Plus className="h-4 w-4" />
-                Add Format
-              </Button>
-            </DialogTrigger>
+            {gate.can("Create") && (
+              <DialogTrigger asChild>
+                <Button
+                  size="sm"
+                  className="bg-gradient-emerald text-white"
+                  onClick={resetForm}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Format
+                </Button>
+              </DialogTrigger>
+            )}
 
             <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
               <DialogHeader>
@@ -731,6 +741,7 @@ export function TimesheetFormatsTab() {
                   >
                     <Switch
                       checked={r.active}
+                      disabled={!gate.can("Edit")}
                       onCheckedChange={(value) =>
                         toggleActive(r, value)
                       }
@@ -756,28 +767,32 @@ export function TimesheetFormatsTab() {
                       </Button>
 
                       {/* Edit */}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        title="Edit"
-                        onClick={() => handleEdit(r)}
-                        className="h-8 w-8 text-muted-foreground hover:text-primary"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
+                      {gate.can("Edit") && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Edit"
+                          onClick={() => handleEdit(r)}
+                          className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      )}
 
                       {/* Delete */}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        title="Delete"
-                        onClick={() => handleDelete(r)}
-                        className="h-8 w-8 text-red-400 hover:bg-red-50 hover:text-red-600"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {gate.can("Delete") && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          title="Delete"
+                          onClick={() => handleDelete(r)}
+                          className="h-8 w-8 text-red-400 hover:bg-red-50 hover:text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

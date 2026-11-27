@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { can, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { inr } from "@/lib/store";
 import { exportReportPdf } from "@/lib/export-utils";
 import { chainSummary, currentStep } from "@/features/administration/data/approval-chain";
@@ -30,8 +30,8 @@ import {
 import { Plus } from "lucide-react";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useSessionStore } from "@/features/auth/data/session-store";
 import { AttachmentChips } from "@/components/common/AttachmentViewer";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 const statusTone = {
   "Pending Approval": "bg-gold/15 text-gold border-gold/30",
@@ -55,12 +55,12 @@ const isReadyToClose = (tour) => {
 
 export function TourWorkspace({ audience = "admin" }) {
   const me = useCurrentUser();
-  const sessionRoles = useSessionStore((state) => state.userId === me.id ? state.roles : []);
+  const tourAccess = useScreenActions("tours.tours.all-tours");
   const inScope = useScopeMatch();
   const allTours = useTours();
   // Roles without `tour.viewAll` (Managers) only see their own tours and the ones routed to them — the list used to
   // expose every tour and its cost in the entity.
-  const viewAll = can(me.role, "tour.viewAll");
+  const viewAll = tourAccess.can("View");
   const tours = allTours.filter(
     (t) =>
       inScope(t.orgId, t.employeeId) &&
@@ -73,12 +73,13 @@ export function TourWorkspace({ audience = "admin" }) {
   const [stageFilter, setStageFilter] = useState("all");
   const [create, setCreate] = useState(false);
   const [createMethod, setCreateMethod] = useState("company_direct");
-  const roleNames = [me.role, ...(me.roles ?? []), ...(sessionRoles ?? [])].map((role) => String(typeof role === "string" ? role : role?.name ?? "").toLowerCase());
-  const isAdminRole = roleNames.some((role) => /admin|superadmin/.test(role));
-  const isFinanceRole = roleNames.some((role) => /finance|cfo|accountant|payroll admin/.test(role));
-  const canManage = roleNames.some((role) => /\bhr\b|hr manager|chro|admin|superadmin|finance|cfo|ceo|coo/.test(role));
-  const canCreateTour = roleNames.some((role) => /\bhr\b|chro|admin|superadmin/.test(role));
-  const canSettle = isAdminRole || isFinanceRole;
+  const canCreateTour = tourAccess.can("Create");
+  const canApproveTour = tourAccess.can("Approve");
+  const canRejectTour = tourAccess.can("Reject");
+  const canExportTours = tourAccess.can("Export");
+  const canDispatchTour = tourAccess.can("Dispatch");
+  const canSettle = tourAccess.can("Settle");
+  const canCloseTour = tourAccess.can("Close");
 
   const filtered = tours.filter((t) => {
     const matchesQ = [t.id, t.employeeName, t.destination, t.purpose]
@@ -154,7 +155,7 @@ export function TourWorkspace({ audience = "admin" }) {
                 <div className="min-w-0"><div className="font-semibold">{tour.employeeName} · {tour.destination}</div><div className="mt-1 text-xs text-muted-foreground">{tour.id} · {tour.startDate} → {tour.endDate} · {tour.mode} · Estimate {inr(tour.estimatedCost)}</div><div className="mt-2 text-sm">{tour.purpose}</div><Badge variant="outline" className="mt-2">{paymentModeName(tour.paymentMethod)}</Badge>
                   {(tour.expenses ?? []).length > 0 && <div className="mt-3 rounded-lg border p-3"><div className="mb-2 flex items-center justify-between gap-2 text-xs"><span className="font-semibold">Attached bills ({tour.expenses.length})</span><span>Total {inr(tour.expenses.reduce((sum, expense) => sum + (Number(expense.amount) || 0), 0))}</span></div><div className="space-y-2">{tour.expenses.map((expense) => <div key={expense.id} className="flex flex-wrap items-center justify-between gap-2 text-xs"><span>{expense.head} · {expense.vendor} · {expense.date} · {inr(expense.amount)}</span>{expense.receipt && <AttachmentChips names={[expense.receipt]} context={`Tour ${tour.id} receipt`} size="sm" />}</div>)}</div></div>}
                 </div>
-                <div className="flex gap-2"><Button size="sm" className="bg-gradient-emerald text-white" onClick={() => { const result = decideTour(tour.id, me.id, "Approved"); toast[result.ok ? "success" : "error"](result.message); }}><CheckCircle2 className="h-4 w-4" />Approve &amp; send to Finance</Button><Button size="sm" variant="outline" className="text-destructive" onClick={() => { const reason = window.prompt("Reason for rejecting this tour request?")?.trim(); if (!reason) return; const result = decideTour(tour.id, me.id, "Rejected", reason); toast[result.ok ? "success" : "error"](result.message); }}>Reject</Button></div>
+                <div className="flex gap-2">{canApproveTour && <Button size="sm" className="bg-gradient-emerald text-white" onClick={() => { const result = decideTour(tour.id, me.id, "Approved"); toast[result.ok ? "success" : "error"](result.message); }}><CheckCircle2 className="h-4 w-4" />Approve &amp; send to Finance</Button>}{canRejectTour && <Button size="sm" variant="outline" className="text-destructive" onClick={() => { const reason = window.prompt("Reason for rejecting this tour request?")?.trim(); if (!reason) return; const result = decideTour(tour.id, me.id, "Rejected", reason); toast[result.ok ? "success" : "error"](result.message); }}>Reject</Button>}</div>
               </div>)}
             </div>}
           </CardContent>
@@ -170,7 +171,7 @@ export function TourWorkspace({ audience = "admin" }) {
             {employeeRequestsForFinance.length === 0 ? <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No employee requests are waiting for Finance.</div> : <div className="space-y-3">
               {employeeRequestsForFinance.map((tour) => <div key={tour.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border p-4">
                 <div className="min-w-0"><div className="font-semibold">{tour.employeeName} · {tour.destination}</div><div className="mt-1 text-xs text-muted-foreground">{tour.id} · {tour.startDate} → {tour.endDate} · {tour.mode}</div><div className="mt-2 text-sm">{tour.purpose}</div><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">Requested budget {inr(tour.estimatedCost)}</Badge><Badge variant="outline">{paymentModeName(tour.paymentMethod)}</Badge></div></div>
-                <div className="flex gap-2"><Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { const result = decideTour(tour.id, me.id, "Approved"); toast[result.ok ? "success" : "error"](result.message); }}><CheckCircle2 className="h-4 w-4" />Approve request</Button><Button size="sm" variant="outline" className="text-destructive" onClick={() => { const reason = window.prompt("Reason for rejecting this tour request?")?.trim(); if (!reason) return; const result = decideTour(tour.id, me.id, "Rejected", reason); toast[result.ok ? "success" : "error"](result.message); }}>Reject</Button></div>
+                <div className="flex gap-2">{canApproveTour && <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90" onClick={() => { const result = decideTour(tour.id, me.id, "Approved"); toast[result.ok ? "success" : "error"](result.message); }}><CheckCircle2 className="h-4 w-4" />Approve request</Button>}{canRejectTour && <Button size="sm" variant="outline" className="text-destructive" onClick={() => { const reason = window.prompt("Reason for rejecting this tour request?")?.trim(); if (!reason) return; const result = decideTour(tour.id, me.id, "Rejected", reason); toast[result.ok ? "success" : "error"](result.message); }}>Reject</Button>}</div>
               </div>)}
             </div>}
           </CardContent>
@@ -278,8 +279,8 @@ export function TourWorkspace({ audience = "admin" }) {
                   <Plus className="h-4 w-4" /> Create &amp; assign tour
                 </Button>
               )}
-              <TourAuditButtons tours={tours} />
-              <Button
+              {canExportTours && <TourAuditButtons tours={tours} />}
+              {canExportTours && <Button
                 variant="outline"
                 size="sm"
                 onClick={() =>
@@ -310,7 +311,7 @@ export function TourWorkspace({ audience = "admin" }) {
                 }
               >
                 <Download className="h-4 w-4" /> Tours PDF
-              </Button>
+              </Button>}
             </div>
           </div>
 
@@ -381,14 +382,14 @@ export function TourWorkspace({ audience = "admin" }) {
                     {t.dispatchedOn && <div className="mt-1 text-xs text-muted-foreground">Sent to employee by {t.dispatchedBy} on {t.dispatchedOn}</div>}
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2">
-                    {t.status === "Pending HR Dispatch" && canCreateTour && (
+                    {t.status === "Pending HR Dispatch" && canDispatchTour && (
                       <Button size="sm" className="bg-gradient-emerald text-white" onClick={() => { const result = dispatchTourToEmployee(t.id, me); toast[result.ok ? "success" : "error"](result.message); }}>
                         <ArrowRight className="h-4 w-4" /> Send to employee
                       </Button>
                     )}
-                    {canDecideTour(t, me) && (
+                    {canDecideTour(t, me) && (canApproveTour || canRejectTour) && (
                       <>
-                        <Button
+                        {canApproveTour && <Button
                           size="sm"
                           className="bg-gradient-emerald text-white"
                           onClick={() => {
@@ -397,8 +398,8 @@ export function TourWorkspace({ audience = "admin" }) {
                           }}
                         >
                           <CheckCircle2 className="h-4 w-4" /> Approve
-                        </Button>
-                        <Button
+                        </Button>}
+                        {canRejectTour && <Button
                           size="sm"
                           variant="outline"
                           className="text-destructive"
@@ -415,10 +416,10 @@ export function TourWorkspace({ audience = "admin" }) {
                           }}
                         >
                           <XCircle className="h-4 w-4" /> Reject
-                        </Button>
+                        </Button>}
                       </>
                     )}
-                    {t.status === "Completed" && canManage && isReadyToClose(t) && (
+                    {t.status === "Completed" && canCloseTour && isReadyToClose(t) && (
                       <Button
                         size="sm"
                         variant="outline"
@@ -445,16 +446,16 @@ export function TourWorkspace({ audience = "admin" }) {
                   <TourOutcomesCard
                     tour={t}
                     canEdit={false}
-                    canApprove={canManage && t.employeeId !== me.id}
+                    canApprove={canApproveTour && t.employeeId !== me.id}
                     hideExpenseTable
                   />
                 )}
                 {t.status !== "Rejected" && t.status !== "Pending Approval" && t.status !== "Pending HR Dispatch" && (
                   <TourExpensePanel
                     tour={t}
-                    canApprove={canManage && t.employeeId !== me.id}
-                    canSettle={canManage && canSettle}
-                    canManageAdvance={canManage && canSettle}
+                    canApprove={canApproveTour && t.employeeId !== me.id}
+                    canSettle={canSettle}
+                    canManageAdvance={canSettle}
                   />
                 )}
                 {t.outcome && (

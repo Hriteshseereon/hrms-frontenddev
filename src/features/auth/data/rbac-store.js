@@ -110,6 +110,8 @@ export const SCREEN_ROUTES = {
   "shift-master": "/org/attendance",
   roster: "/org/attendance",
   "leave-requests": "/org/leave",
+  "leave-balances": "/org/leave",
+  "comp-off-approvals": "/org/leave",
   "leave-approvals": "/org/leave",
   "leave-balance": "/org/leave",
   "leave-types": "/org/leave",

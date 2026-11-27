@@ -123,6 +123,11 @@ import { NotificationCentre } from "@/features/communications/components/Notific
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
 import { useSessionStore } from "@/features/auth/data/session-store";
 import { MASTER_DATA_TAB_BY_SCREEN } from "@/features/auth/data/rbac";
+import {
+  ScreenScope,
+  isAdminRole,
+  useVisibleTabs,
+} from "@/features/auth/data/module-access";
 
 import {
   DocMasterTab,
@@ -186,6 +191,7 @@ import {
 } from "@/features/organization/data/master-data";
 
 import { CrudSection } from "@/components/common/CrudSection";
+import { useScreenGate } from "@/components/common/useScreenGate";
 import {
   RecordDetailDialog,
   clickableRow,
@@ -297,7 +303,10 @@ function MasterTable({
   withRequired,
   addLabel,
   api = null,
+  // RBAC screen (key or full code) gating the buttons; defaults to the nearest <ScreenScope>.
+  screen,
 }) {
+  const gate = useScreenGate(screen);
   const [rows, setRows] = useSharedList(`master-${prefix}`, seed);
 
   const [open, setOpen] = useState(false);
@@ -657,20 +666,24 @@ function MasterTable({
       <CardContent className="p-6">
         <SectionHead icon={icon} title={title} desc={desc}>
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                exportCsv(slug, exportColumns, exportRows);
-                toast.success("CSV exported");
-              }}
-            >
-              <Download className="h-4 w-4" /> CSV
-            </Button>
+            {gate.can("Export") && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  exportCsv(slug, exportColumns, exportRows);
+                  toast.success("CSV exported");
+                }}
+              >
+                <Download className="h-4 w-4" /> CSV
+              </Button>
+            )}
 
-            <Button size="sm" variant="outline" onClick={downloadPdf}>
-              <FileText className="h-4 w-4" /> PDF
-            </Button>
+            {gate.canPrint() && (
+              <Button size="sm" variant="outline" onClick={downloadPdf}>
+                <FileText className="h-4 w-4" /> PDF
+              </Button>
+            )}
 
             <Dialog
               open={open}
@@ -679,15 +692,17 @@ function MasterTable({
                 if (!isOpen) resetForm();
               }}
             >
-              <DialogTrigger asChild>
-                <Button
-                  size="sm"
-                  className="bg-gradient-emerald text-white"
-                  onClick={resetForm}
-                >
-                  <Plus className="h-4 w-4" /> {addLabel}
-                </Button>
-              </DialogTrigger>
+              {gate.can("Create") && (
+                <DialogTrigger asChild>
+                  <Button
+                    size="sm"
+                    className="bg-gradient-emerald text-white"
+                    onClick={resetForm}
+                  >
+                    <Plus className="h-4 w-4" /> {addLabel}
+                  </Button>
+                </DialogTrigger>
+              )}
 
               <DialogContent className="sm:max-w-md">
                 <DialogHeader>
@@ -813,16 +828,18 @@ function MasterTable({
                 Close
               </Button>
 
-              <Button
-                className="bg-gradient-emerald text-white"
-                onClick={() => {
-                  const record = viewRow;
-                  setViewRow(null);
-                  if (record) startEdit(record);
-                }}
-              >
-                <Pencil className="h-4 w-4" /> Edit
-              </Button>
+              {gate.can("Edit") && (
+                <Button
+                  className="bg-gradient-emerald text-white"
+                  onClick={() => {
+                    const record = viewRow;
+                    setViewRow(null);
+                    if (record) startEdit(record);
+                  }}
+                >
+                  <Pencil className="h-4 w-4" /> Edit
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -930,25 +947,29 @@ function MasterTable({
                           <Eye className="h-4 w-4" />
                         </Button>
 
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8"
-                          title="Edit"
-                          onClick={() => startEdit(r)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                        {gate.can("Edit") && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            title="Edit"
+                            onClick={() => startEdit(r)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        )}
 
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="text-destructive hover:text-destructive h-8 w-8"
-                          title="Delete"
-                          onClick={() => setDeleteRow(r)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {gate.can("Delete") && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive h-8 w-8"
+                            title="Delete"
+                            onClick={() => setDeleteRow(r)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -964,7 +985,8 @@ function MasterTable({
 
 const KINDS = ["Earning", "Allowance", "Deduction", "Statutory"];
 
-function PayrollConfigTab() {
+function PayrollConfigTab({ screen = "salary-configuration" }) {
+  const gate = useScreenGate(screen);
   const [rows, setRows] = useSharedList("pay-components", PAY_COMPONENTS);
 
   const [open, setOpen] = useState(false);
@@ -1042,11 +1064,13 @@ function PayrollConfigTab() {
           desc="Allowances, deductions and statutory heads rendered dynamically in employee and payroll forms"
         >
           <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-gradient-emerald text-white">
-                <Plus className="h-4 w-4" /> Add Component
-              </Button>
-            </DialogTrigger>
+            {gate.can("Create") && (
+              <DialogTrigger asChild>
+                <Button size="sm" className="bg-gradient-emerald text-white">
+                  <Plus className="h-4 w-4" /> Add Component
+                </Button>
+              </DialogTrigger>
+            )}
 
             <DialogContent className="sm:max-w-lg">
               <DialogHeader>
@@ -1330,7 +1354,10 @@ function MatrixCheck({ checked, indeterminate, onClick, label }) {
   );
 }
 
-function WorkdayConfigTab() {
+function WorkdayConfigTab({ screen = "workday-configuration" }) {
+  const gate = useScreenGate(screen);
+  // Saving the matrix creates / updates the scope's configuration.
+  const canSave = gate.can("Edit");
   // Default working week (Monday–Friday). It is the starting point until a matrix is saved,
   // and is kept in step with the saved matrix for the rest of the app.
   const [saved, setSaved] = useSharedList("workday-config", [
@@ -1381,6 +1408,7 @@ function WorkdayConfigTab() {
   const cellOn = (day, i) => !!matrix[day]?.[i];
 
   function toggleCell(day, i) {
+    if (!canSave) return;
     setMatrix((p) => ({
       ...p,
       [day]: WORKDAY_OCCURRENCES.map((_, j) =>
@@ -1391,6 +1419,7 @@ function WorkdayConfigTab() {
 
   // "All" controls all five occurrences of that weekday.
   function toggleAll(day) {
+    if (!canSave) return;
     const allOn = WORKDAY_OCCURRENCES.every((_, i) => cellOn(day, i));
     setMatrix((p) => ({
       ...p,
@@ -1447,14 +1476,16 @@ function WorkdayConfigTab() {
           title="Workday Configuration"
           desc="Select the working days per week for attendance and payroll calculations"
         >
-          <Button
-            size="sm"
-            className="bg-gradient-emerald text-white"
-            disabled={!matrixDirty || savingMatrix || loadingMatrix}
-            onClick={saveMatrix}
-          >
-            {savingMatrix ? "Saving..." : "Save Configuration"}
-          </Button>
+          {canSave && (
+            <Button
+              size="sm"
+              className="bg-gradient-emerald text-white"
+              disabled={!matrixDirty || savingMatrix || loadingMatrix}
+              onClick={saveMatrix}
+            >
+              {savingMatrix ? "Saving..." : "Save Configuration"}
+            </Button>
+          )}
         </SectionHead>
 
         <div className="border-border overflow-x-auto rounded-lg border">
@@ -1527,7 +1558,7 @@ function WorkdayConfigTab() {
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        {canSave && <div className="mt-4 flex flex-wrap gap-2">
           <Button
             size="sm"
             variant="outline"
@@ -1549,7 +1580,7 @@ function WorkdayConfigTab() {
           >
             Reset
           </Button>
-        </div>
+        </div>}
       </CardContent>
     </Card>
   );
@@ -1968,10 +1999,19 @@ const GROUPS = [
 ];
 
 const ALL_ITEMS = GROUPS.flatMap((g) => g.items);
-const MASTER_DATA_SCREEN_KEYS_BY_TAB = Object.entries(MASTER_DATA_TAB_BY_SCREEN).reduce((tabs, [screenKey, tabKey]) => {
-  (tabs[tabKey] ??= []).push(screenKey);
-  return tabs;
-}, {});
+// One entry per (tab, screen): a tab is visible when the user may view any of its screens.
+const MASTER_DATA_TAB_SCREENS = Object.entries(MASTER_DATA_TAB_BY_SCREEN).map(
+  ([screen, value]) => ({ value, screen }),
+);
+// Screen that scopes a tab's buttons. A tab hosting several screens ("recmasters") has none here:
+// each of its sub-sections passes its own screen.
+const MASTER_DATA_SCREEN_BY_TAB = Object.entries(MASTER_DATA_TAB_BY_SCREEN).reduce(
+  (byTab, [screen, tab]) => {
+    byTab[tab] = tab in byTab ? null : screen;
+    return byTab;
+  },
+  {},
+);
 
 const readHash = () =>
   typeof window !== "undefined" ? window.location.hash.replace("#", "") : "";
@@ -1991,20 +2031,14 @@ function Masters() {
   const me = useCurrentUser();
   const sessionRole = useSessionStore((state) => state.role);
   const apiSession = useSessionStore((state) => state.isAuthenticated);
-  const assignedModules = useSessionStore((state) => state.assignedModules);
-  const isAdmin = ["SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN", "BRANCH_ADMIN"].includes(String(sessionRole ?? "").toUpperCase());
-  const restrictToAssignedScreens = apiSession && !isAdmin;
-  const grantedMasterDataScreens = new Set(
-    (assignedModules ?? [])
-      .filter((module) => module.key === "master-data")
-      .flatMap((module) => module.submodules ?? [])
-      .flatMap((submodule) => submodule.screens ?? [])
-      .filter((screen) => screen.view)
-      .map((screen) => screen.key ?? screen.screen_code?.split(".").pop()),
-  );
-  const grantedTabKeys = [...new Set(Object.entries(MASTER_DATA_SCREEN_KEYS_BY_TAB)
-    .filter(([, screenKeys]) => screenKeys.some((key) => grantedMasterDataScreens.has(key)))
-    .map(([tabKey]) => tabKey))];
+  // Branch Admin keeps seeing every tab, as before (the shared isAdminRole does not include it);
+  // its buttons still follow the screen grants like any other non-admin role.
+  const seesAllTabs =
+    isAdminRole(sessionRole) ||
+    String(sessionRole ?? "").toUpperCase() === "BRANCH_ADMIN";
+  const restrictToAssignedScreens = apiSession && !seesAllTabs;
+  const viewableTabs = useVisibleTabs(MASTER_DATA_TAB_SCREENS);
+  const grantedTabKeys = [...new Set(viewableTabs.values)];
 
   // const [tab, setTab] = useState("infrastructure");
   // const [tab, setTab] = useState("entities");
@@ -2060,8 +2094,7 @@ function Masters() {
   };
 
   const allowed = (i) => {
-    const screenKeys = MASTER_DATA_SCREEN_KEYS_BY_TAB[i.key];
-    const hasAssignedView = !restrictToAssignedScreens || (screenKeys ?? []).some((key) => grantedMasterDataScreens.has(key));
+    const hasAssignedView = !restrictToAssignedScreens || grantedTabKeys.includes(i.key);
     return (!i.superOnly || me.role === "SuperAdmin") &&
       hasAssignedView &&
       (restrictToAssignedScreens || !i.perm || can(me.role, i.perm));
@@ -2149,6 +2182,7 @@ function Masters() {
           </CardContent>
         </Card>
 
+        <ScreenScope screen={MASTER_DATA_SCREEN_BY_TAB[tab] ?? null}>
         <div className="min-w-0 space-y-4">
           <div className="text-muted-foreground text-xs">
             Master Data › {group?.group} ›{" "}
@@ -2179,6 +2213,7 @@ function Masters() {
               addLabel="Add Pay Grade"
               idPrefix="PG"
               seed={PAY_GRADE_ROWS}
+              screen="pay-grades-bands"
               api={{
                 codePrefix: "PYD", // <-- ADDED: shows PYD-01, PYD-02 in Code column
                 list: getPayGrades,
@@ -2316,6 +2351,7 @@ function Masters() {
               withRequired
               addLabel="Add Document"
               api={onboardingDocumentApi}
+              screen="onboarding-document-master"
             />
           )}
 
@@ -2346,6 +2382,7 @@ function Masters() {
                 },
               ]}
               api={policyCircularApi}
+              screen="policies-circulars"
             />
           )}
 
@@ -2358,10 +2395,11 @@ function Masters() {
               seed={AWARD_MASTER}
               addLabel="Add Award"
               api={awardMasterApi}
+              screen="award-master"
             />
           )}
 
-          {tab === "recmasters" && <RecruitmentMasters />}
+          {tab === "recmasters" && <RecruitmentMasters gateByScreen />}
 
           {tab === "rounds" && <RoundsWorkspace />}
 
@@ -2371,7 +2409,7 @@ function Masters() {
 
           {tab === "shifts" && <ShiftsTab />}
 
-          {tab === "workday" && <WorkdayConfigTab />}
+          {tab === "workday" && <WorkdayConfigTab screen="workday-configuration" />}
 
           {tab === "patterns" && <PatternsTab />}
 
@@ -2449,6 +2487,7 @@ function Masters() {
               seed={TERMINATION_TYPE_MASTER}
               addLabel="Add Termination Type"
               api={terminationTypeApi}
+              screen="termination-types"
             />
           )}
 
@@ -2461,6 +2500,7 @@ function Masters() {
               seed={WARNING_TYPE_MASTER}
               addLabel="Add Warning Type"
               api={warningTypeApi}
+              screen="warning-types"
             />
           )}
 
@@ -2489,6 +2529,7 @@ function Masters() {
 
           {tab === "geofence" && <GeofencingTab />} */}
         </div>
+        </ScreenScope>
       </div>
     </div>
   );

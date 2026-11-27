@@ -37,6 +37,7 @@ import {
   useScopedIds,
 } from "@/features/employees/components/CasePieces";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { useDirectory } from "@/features/employees/data/employee-directory";
 import { useScopedJobPosts, useApplicants } from "@/features/recruitment/data/recruitment-engine";
 import {
@@ -64,6 +65,10 @@ export function getRetentionStatus(r) {
 
 export function ReferralsTab() {
   const me = useCurrentUser();
+  const access = useScreenAccess("employee-referrals");
+  const canCreate = access.can("Create");
+  // Status changes and bonus payout update the referral record → Edit.
+  const canEdit = access.can("Edit");
   const scopedIds = useScopedIds();
   const mockRows = useReferrals().filter((c) => scopedIds.has(c.referrerId));
   const applicants = useApplicants();
@@ -206,13 +211,15 @@ export function ReferralsTab() {
               </SelectContent>
             </Select>
           </Toolbar>
-          <Button
-            size="sm"
-            className="bg-gradient-emerald shadow-premium ml-auto text-white"
-            onClick={() => setOpen(true)}
-          >
-            <Plus className="h-4 w-4" /> Log referral on behalf
-          </Button>
+          {canCreate && (
+            <Button
+              size="sm"
+              className="bg-gradient-emerald shadow-premium ml-auto text-white"
+              onClick={() => setOpen(true)}
+            >
+              <Plus className="h-4 w-4" /> Log referral on behalf
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -282,6 +289,7 @@ export function ReferralsTab() {
                     <td className="p-3">
                       <Select
                         value={r.status}
+                        disabled={!canEdit}
                         onValueChange={(newSts) => handleStatusChange(id, newSts)}
                       >
                         <SelectTrigger className="h-8 w-32 text-xs">
@@ -317,7 +325,7 @@ export function ReferralsTab() {
                         <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/30">
                           Disbursed
                         </Badge>
-                      ) : r.status === "Hired" && isBonusEligible ? (
+                      ) : canEdit && r.status === "Hired" && isBonusEligible ? (
                         retention.eligible ? (
                           <Button
                             size="sm"
@@ -414,6 +422,7 @@ export function ReferralsTab() {
                 <Label className="text-muted-foreground text-xs">Update status</Label>
                 <Select
                   value={live.status}
+                  disabled={!canEdit}
                   onValueChange={(v) => handleStatusChange(live.id || live.code, v)}
                 >
                   <SelectTrigger className="w-full sm:w-44 h-8 text-xs">
@@ -429,7 +438,7 @@ export function ReferralsTab() {
                     )}
                   </SelectContent>
                 </Select>
-                {live.status === "Hired" && (live.bonusEligible !== false) && (
+                {canEdit && live.status === "Hired" && (live.bonusEligible !== false) && (
                   <Button
                     size="sm"
                     className="bg-gradient-emerald text-white text-xs h-8"

@@ -37,6 +37,7 @@ import {
 import { toast } from "sonner";
 import { OFFICES, useDesignationNames } from "@/features/employees/data/hr-data";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
 import { useActiveOrgId, getOrg, useOrgs } from "@/features/organization/data/group-data";
 import { useDepartments } from "@/features/organization/data/dept-data";
@@ -79,7 +80,6 @@ import {
 } from "@/features/platform/data/group-transfer-data";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
 
-const APPROVER_ROLES = ["HR", "CHRO", "Admin", "SuperAdmin", "CEO", "COO"];
 const STEPS = ["Requested", "HR approval", "Approved · letter issued", "Effective"];
 const stepIndex = (c) =>
   c.status === "Pending approval"
@@ -118,7 +118,9 @@ function EnterpriseTransfers() {
   const [status, setStatus] = useState("all");
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
-  const canApprove = APPROVER_ROLES.includes(me.role);
+  const access = useScreenAccess("employee-transfers");
+  const canCreate = access.can("Create");
+  const canApprove = access.can("Approve");
   const list = rows.filter(
     (c) =>
       (type === "all" || c.type === type) &&
@@ -186,13 +188,15 @@ function EnterpriseTransfers() {
               </SelectContent>
             </Select>
           </Toolbar>
-          <Button
-            size="sm"
-            className="bg-gradient-emerald shadow-premium ml-auto text-white"
-            onClick={() => setOpen(true)}
-          >
-            <Plus className="h-4 w-4" /> New transfer
-          </Button>
+          {canCreate && (
+            <Button
+              size="sm"
+              className="bg-gradient-emerald shadow-premium ml-auto text-white"
+              onClick={() => setOpen(true)}
+            >
+              <Plus className="h-4 w-4" /> New transfer
+            </Button>
+          )}
         </CardContent>
       </Card>
       <Card className="shadow-card overflow-hidden">
@@ -704,7 +708,9 @@ function GroupCompanyTransfers() {
       : all.filter((r) => r.fromOrgId === orgId || r.toOrgId === orgId);
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
-  const canConfirm = me.role === "SuperAdmin";
+  const access = useScreenAccess("employee-transfers");
+  const canCreate = access.can("Create");
+  const canConfirm = access.can("Approve");
   const decide = (r, ok) => {
     if (ok) {
       confirmGroupTransfer(r.id, me.name, "");
@@ -733,11 +739,13 @@ function GroupCompanyTransfers() {
             since it spans two companies.
           </div>
           <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-gradient-emerald shadow-premium ml-auto text-white">
-                <Plus className="h-4 w-4" /> New Group Transfer
-              </Button>
-            </DialogTrigger>
+            {canCreate && (
+              <DialogTrigger asChild>
+                <Button size="sm" className="bg-gradient-emerald shadow-premium ml-auto text-white">
+                  <Plus className="h-4 w-4" /> New Group Transfer
+                </Button>
+              </DialogTrigger>
+            )}
             <NewGroupTransferDialog orgId={orgId} onDone={() => setOpen(false)} />
           </Dialog>
         </CardContent>

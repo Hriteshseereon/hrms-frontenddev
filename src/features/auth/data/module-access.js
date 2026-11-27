@@ -1,11 +1,11 @@
 // Sidebar module gating: a menu item is shown only when its module key is in `permitted_modules` (list of key strings
 // from login / GET /me). Routes that belong to no module (dashboard, profile, settings, …) are always shown.
-import { useEffect } from "react";
+import { createContext, createElement, useContext, useEffect } from "react";
 import { getMe } from "@/api/meApi";
 import { registerNavExtension } from "./auth-session";
 import { useSessionStore } from "./session-store";
 import { SCREEN_ROUTES } from "./rbac-store";
-import { MASTER_DATA_TAB_BY_SCREEN, RBAC_MODULES, actionSlug } from "./rbac";
+import { MASTER_DATA_TAB_BY_SCREEN, RBAC_MODULES, actionSlug, actionsForScreen, findScreen, resolveScreenCode } from "./rbac";
 import MODULE_ROUTES from "./module-routes.json";
 
 const ROUTE_MODULE = new Map(
@@ -25,7 +25,7 @@ const isOwnDataRoute = (to) => OWN_DATA_ROUTES.has(String(to).split("?")[0]);
 const keysOf = (list) =>
   (Array.isArray(list) ? list : []).map((m) => (typeof m === "string" ? m : (m?.key ?? m?.module_key))).filter(Boolean);
 
-const isAdminRole = (role) =>
+export const isAdminRole = (role) =>
   ["SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN", "ADMIN"].includes(String(role ?? "").trim().toUpperCase());
 
 const isSuperRole = (role) => ["SUPER_ADMIN", "SUPERADMIN"].includes(String(role ?? "").toUpperCase());
@@ -69,23 +69,30 @@ export function useOrgMode() {
 export function canDo(permission, s = useSessionStore.getState()) {
   if (!s.isAuthenticated) return true; // mock / signed-out preview
   if (isAdminRole(s.role)) return true; // admins hold everything in their scope; the backend still enforces
-  // HR prepares monthly payroll runs; approval and processing remain separate permissions.
-  if (permission === "payroll.run") {
-    const roles = [s.role, ...(Array.isArray(s.roles) ? s.roles : [])].map((role) =>
-      String(typeof role === "string" ? role : role?.name ?? "").trim(),
-    );
-    if (roles.some((name) => /\bhr\b|human resource|\bchro\b|payroll admin/i.test(name))) return true;
-  }
   const list = Array.isArray(s.permissions) ? s.permissions : [];
-  return list.includes("*") || list.includes(permission);
+  if (list.includes("*") || list.includes(permission)) return true;
+
+  // Older controls use module.action names (for example employee.create). Resolve those
+  // through the same catalog as the role editor so the API's per-screen grants still
+  // drive them. New screen actions are picked up automatically from RBAC_MODULES.
+  const parts = String(permission ?? "").split(".");
+  if (parts.length !== 2) return false;
+  const [moduleKey, action] = parts;
+  const matchingScreens = RBAC_MODULES
+    .filter((module) => module.key === moduleKey)
+    .flatMap((module) => module.submodules.flatMap((submodule) =>
+      submodule.screens.map((screen) => ({ ...screen, screenCode: `${module.key}.${submodule.key}.${screen.key}` })),
+    ))
+    .filter((screen) => actionsForScreen(screen).some((candidate) => actionSlug(candidate) === actionSlug(action)));
+  return matchingScreens.some((screen) =>
+    hasScreenAction(screen.screenCode, action, s),
+  );
 }
 
 /** Hook form of `canDo`: `const can = useCan(); {can("employee.edit") && <EditButton />}`. */
 export function useCan() {
-  const permissions = useSessionStore((s) => s.permissions);
-  const role = useSessionStore((s) => s.role);
-  const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
-  return (permission) => canDo(permission, { permissions, role, isAuthenticated });
+  const session = useSessionStore();
+  return (permission) => canDo(permission, session);
 }
 
 /**
@@ -104,26 +111,52 @@ export function useCanScreen() {
   return (screenCode, action) => hasScreenAction(screenCode, action, session);
 }
 
-const screenFor = (screenCode, assignedModules) =>
-  (Array.isArray(assignedModules) ? assignedModules : [])
-    .flatMap((module) => module.submodules ?? [])
-    .flatMap((submodule) => submodule.screens ?? [])
-    .find((screen) => String(screen.screen_code ?? "").toLowerCase() === String(screenCode ?? "").toLowerCase());
+const screenFor = (screenCode, assignedModules) => {
+  const code = String(screenCode ?? "").toLowerCase();
+  return (Array.isArray(assignedModules) ? assignedModules : [])
+    .flatMap((module) =>
+      (module.submodules ?? []).flatMap((submodule) =>
+        (submodule.screens ?? []).map((screen) => ({ module, submodule, screen })),
+      ),
+    )
+    .find(({ module, submodule, screen }) =>
+      String(screen.screen_code ?? `${module.key}.${submodule.key}.${screen.key}`).toLowerCase() === code,
+    )?.screen;
+};
 
-/** Screen permissions are authoritative for screen actions; module-level grants must not imply Create/Edit/etc. */
-function hasScreenAction(screenCode, action, s) {
-  if (!screenCode || !action) return false;
+// Development guard: a button asking for a screen / action that is not on the role permission screen can never be
+// granted to a non-admin role. Warn once so the missing entry gets added to RBAC_MODULES instead of silently hiding.
+const warnedCatalogGaps = new Set();
+function warnIfNotInCatalog(screen, action) {
+  if (!import.meta.env?.DEV) return;
+  const entry = findScreen(screen);
+  const gap = !entry
+    ? `screen "${screen}" is not in RBAC_MODULES`
+    : !entry.actions.some((candidate) => actionSlug(candidate) === actionSlug(action))
+      ? `action "${action}" is not listed for screen "${entry.code}" in RBAC_MODULES`
+      : null;
+  if (!gap || warnedCatalogGaps.has(gap)) return;
+  warnedCatalogGaps.add(gap);
+  console.warn(`[permissions] ${gap}; it cannot be granted from the role permission screen.`);
+}
+
+/**
+ * The single permission check every page uses. `screen` is a full screen_code or a bare screen key from RBAC_MODULES;
+ * `action` is any action label that screen lists ("Create", "Bulk Upload", "Approve", or one added later).
+ * Grants come only from the login / GET /me payload; module-level grants never imply screen actions.
+ */
+function hasScreenAction(screenRef, action, s) {
+  if (!screenRef || !action) return false;
+  warnIfNotInCatalog(screenRef, action);
   if (!s.isAuthenticated) return true; // demo / signed-out preview
   if (isAdminRole(s.role)) return true;
 
+  const screenCode = resolveScreenCode(screenRef);
   const slug = actionSlug(action);
   const screen = screenFor(screenCode, s.assignedModules);
   const booleanFlag = slug === "bulk_upload" ? screen?.bulk_upload : screen?.[slug];
-  if (typeof booleanFlag === "boolean") return booleanFlag;
-  // `actions` is the API's explicit list of granted actions. An empty list means no actions.
-  if (Array.isArray(screen?.actions)) {
-    return screen.actions.some((granted) => actionSlug(granted) === slug);
-  }
+  if (booleanFlag === true) return true;
+  if (Array.isArray(screen?.actions) && screen.actions.some((granted) => actionSlug(granted) === slug)) return true;
 
   // Older APIs may send action flags on the screen or a screen-keyed permissions object.
   const screenPermissions = !Array.isArray(s.permissions) ? s.permissions?.[screenCode] : null;
@@ -309,9 +342,10 @@ export function assignedScreens(s = useSessionStore.getState()) {
   });
 }
 
-/** Action grants on a specific screen from the session's effective assigned_modules / permissions. */
-export function useScreenActions(screenCode) {
+/** Action grants on a specific screen (full screen_code or bare key) from the session's assigned_modules / permissions. */
+export function useScreenActions(screenRef) {
   const session = useSessionStore();
+  const screenCode = resolveScreenCode(screenRef);
   const screen = screenFor(screenCode, session.assignedModules);
   const screenPermissions = !Array.isArray(session.permissions) ? session.permissions?.[screenCode] : null;
   const actions = Array.isArray(screen?.actions)
@@ -320,8 +354,54 @@ export function useScreenActions(screenCode) {
         .filter(([, enabled]) => enabled === true)
         .map(([name]) => name);
   const can = (action) => hasScreenAction(screenCode, action, session);
-  return { actions, can };
+  return { screenCode, actions, can, canView: can("View") };
 }
+
+/**
+ * Preferred name for page code:
+ *   const access = useScreenAccess("payslips");
+ *   {access.can("Export") && <ExportButton />}
+ */
+export const useScreenAccess = useScreenActions;
+
+/**
+ * Tabs a page may show. Each tab names the screen that controls it; a tab with no `screen` is always shown.
+ *   const tabs = useVisibleTabs([{ value: "log", screen: "attendance-log" }, { value: "report", screen: "attendance-report" }]);
+ *   tabs.has("log"), tabs.first, tabs.list, tabs.pick(currentValue)
+ * Adding a tab = add its screen to RBAC_MODULES and one entry here.
+ */
+export function useVisibleTabs(tabs) {
+  const session = useSessionStore();
+  const list = (Array.isArray(tabs) ? tabs : []).filter(
+    (tab) => tab && (!tab.screen || hasScreenAction(tab.screen, tab.action ?? "View", session)),
+  );
+  const values = list.map((tab) => tab.value);
+  return {
+    list,
+    values,
+    has: (value) => values.includes(value),
+    first: values[0] ?? null,
+    /** The given tab when visible, otherwise the first visible one. */
+    pick: (value) => (values.includes(value) ? value : (values[0] ?? null)),
+  };
+}
+
+/* Screen scope: shared components (tables, CRUD sections) read the screen of the page they are rendered in. */
+const ScreenScopeContext = createContext(null);
+
+/** `<ScreenScope screen="department">…</ScreenScope>` — descendants call `useScopedScreenAccess()` or `<Can action>`. */
+export function ScreenScope({ screen, children }) {
+  return createElement(ScreenScopeContext.Provider, { value: screen ?? null }, children);
+}
+
+/** Access for the explicit screen, or for the nearest `<ScreenScope>` when none is given. */
+export function useScopedScreenAccess(screen) {
+  const scoped = useContext(ScreenScopeContext);
+  return useScreenActions(screen ?? scoped);
+}
+
+/** Scope screen (or null) — lets a shared component skip gating when it is used outside any permission scope. */
+export const useScreenScope = () => useContext(ScreenScopeContext);
 
 /** Hook form of `assignedScreens`; `loaded` is false when the backend did not send `assigned_modules`. */
 export function useAssignedScreens() {

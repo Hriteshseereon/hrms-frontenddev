@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useMemo, useState, useEffect } from "react";
 import { useCurrentUser, can } from "@/features/auth/data/auth-session";
+import { useSessionStore } from "@/features/auth/data/session-store";
+import { useCanScreen, useScreenScope } from "@/features/auth/data/module-access";
 import { rbacApi } from "@/api/rbacApi";
 
 export const PermissionContext = createContext({
@@ -57,13 +59,19 @@ export function PermissionProvider({ children }) {
 
 /**
  * Hook to verify if the active user holds permission for a screen & action.
- * @param {string} screenCode e.g. "employee.movements.promotions"
- * @param {"View" | "Edit" | "Delete"} [action="View"]
+ * @param {string} screenCode The screen_code supplied by RBAC, e.g. "employee.employee-management.all-employees".
+ * @param {string} [action="View"] Any action configured for the screen (Create, Export, Approve, or a future action).
  * @returns {boolean}
  */
 export function usePermission(screenCode, action = "View") {
   const me = useCurrentUser();
   const { isSuperAdmin, permissions } = useContext(PermissionContext);
+  const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
+  const canOnScreen = useCanScreen();
+
+  // Backend login/GET /me is the effective grant source. Never fall back to the mock role matrix
+  // for an authenticated API session: that made buttons disagree with the permissions selected in RBAC.
+  if (isAuthenticated) return canOnScreen(screenCode, action);
 
   if (isSuperAdmin) return true;
 
@@ -87,10 +95,11 @@ export function usePermission(screenCode, action = "View") {
 }
 
 /**
- * Declarative component to conditionally render UI based on RBAC permissions.
+ * Declarative UI gate. Use the same screen_code and action label as RBAC_MODULES; action names are not hard-coded here.
  */
 export function Can({ screen, action = "View", children, fallback = null }) {
-  const allowed = usePermission(screen, action);
+  const scoped = useScreenScope();
+  const allowed = usePermission(screen ?? scoped, action);
   return allowed ? <>{children}</> : <>{fallback}</>;
 }
 

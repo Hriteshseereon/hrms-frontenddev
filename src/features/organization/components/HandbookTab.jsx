@@ -25,8 +25,11 @@ import { publishHandbook, useHandbook } from "@/features/organization/data/handb
 import { exportReportPdf } from "@/lib/export-utils";
 import { DonutChart, ChartCard } from "@/features/dashboard/components/Charts";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
+import { useScreenGate } from "@/components/common/useScreenGate";
 
-export function HandbookTab() {
+export function HandbookTab({ screen } = {}) {
+  // Master Data scopes this to "employee-handbook": publishing = Create, the register PDF = Export.
+  const gate = useScreenGate(screen);
   const me = useCurrentUser();
   const orgId = useActiveOrgId();
   useDirectory();
@@ -103,6 +106,7 @@ export function HandbookTab() {
                 </div>
               </div>
             )}
+            {gate.can("Create") && (<>
             <div className="text-muted-foreground pt-1 text-xs font-semibold tracking-wider uppercase">
               Publish a new version
             </div>
@@ -222,6 +226,7 @@ export function HandbookTab() {
                 Publish v{version}
               </Button>
             </div>
+            </>)}
           </CardContent>
         </Card>
         <ChartCard
@@ -243,7 +248,7 @@ export function HandbookTab() {
         <CardContent className="p-0">
           <div className="flex items-center justify-between p-3">
             <div className="text-sm font-semibold">Acknowledgement register</div>
-            <Button
+            {gate.canPrint() && <Button
               size="sm"
               variant="outline"
               onClick={() =>
@@ -269,7 +274,7 @@ export function HandbookTab() {
               }
             >
               <Download className="h-4 w-4" /> Report
-            </Button>
+            </Button>}
           </div>
           <table className="w-full text-sm">
             <thead className="bg-muted/40 text-muted-foreground text-xs tracking-wider uppercase">

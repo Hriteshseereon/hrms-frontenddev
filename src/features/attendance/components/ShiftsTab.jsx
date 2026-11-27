@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { useScreenGate } from "@/components/common/useScreenGate";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import {
   createShiftApi,
@@ -35,6 +36,7 @@ import {
 const NO_OFFICE = "__none__";
 
 export function ShiftsTab() {
+  const gate = useScreenGate("master-data.attendance-time.shift-management");
   const orgId = useActiveOrgId();
   const api = useMemo(() => createShiftApi(orgId), [orgId]);
 
@@ -183,7 +185,7 @@ export function ShiftsTab() {
             {rows.filter((s) => s.breakEnabled).length} with scheduled breaks
           </div>
 
-          <Dialog open={open} onOpenChange={setOpen}>
+          {gate.can("Create") && <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button
                 size="sm"
@@ -198,7 +200,7 @@ export function ShiftsTab() {
               offices={offices}
               onSubmit={handleCreate}
             />
-          </Dialog>
+          </Dialog>}
         </CardContent>
       </Card>
 
@@ -256,7 +258,7 @@ export function ShiftsTab() {
       <Eye className="h-4 w-4" />
     </Button>
 
-    <Button
+    {gate.can("Edit") && <Button
       type="button"
       variant="ghost"
       size="icon"
@@ -265,9 +267,9 @@ export function ShiftsTab() {
       onClick={() => handleEdit(s)}
     >
       <Pencil className="h-4 w-4" />
-    </Button>
+    </Button>}
 
-    <Button
+    {gate.can("Delete") && <Button
       type="button"
       variant="ghost"
       size="icon"
@@ -278,7 +280,7 @@ export function ShiftsTab() {
       onClick={() => handleDelete(s)}
     >
       <Trash2 className="h-4 w-4" />
-    </Button>
+    </Button>}
   </div>
 </CardContent>
 

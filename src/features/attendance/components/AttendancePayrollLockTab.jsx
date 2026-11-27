@@ -3,8 +3,8 @@ import { LockKeyhole } from "lucide-react";
 import { getEmployees } from "@/api/employeeApi";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { useCurrentUser, can } from "@/features/auth/data/auth-session";
-import { useSessionStore } from "@/features/auth/data/session-store";
+import { useScreenActions } from "@/features/auth/data/module-access";
+import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import { PayrollAttendanceLockPanel } from "@/features/payroll/components/PayrollAttendanceLockPanel";
 
@@ -26,25 +26,12 @@ const currentPeriod = () => {
 
 export function AttendancePayrollLockTab() {
   const user = useCurrentUser();
+  const lockAccess = useScreenActions("attendance.daily.attendance-payroll-lock");
   const orgId = useActiveOrgId();
   const [period, setPeriod] = useState(currentPeriod);
   const [employees, setEmployees] = useState([]);
   const [employeeError, setEmployeeError] = useState("");
-  const apiLock = useSessionStore(
-    (s) => s.isAuthenticated && (s.permissions ?? []).includes("attendance.lock"),
-  );
-  const assignedLockEdit = useSessionStore((s) =>
-    (s.assignedModules ?? []).some((module) =>
-      (module.submodules ?? []).some((submodule) =>
-        (submodule.screens ?? []).some(
-          (screen) =>
-            (screen.key ?? screen.screen_code?.split(".").pop()) === "attendance-payroll-lock" &&
-            screen.edit,
-        ),
-      ),
-    ),
-  );
-  const canLock = can(user.role, "attendance.lock") || apiLock || assignedLockEdit;
+  const canLock = lockAccess.can("Lock");
 
   useEffect(() => {
     let cancelled = false;

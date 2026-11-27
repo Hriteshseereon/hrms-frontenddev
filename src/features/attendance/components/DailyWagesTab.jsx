@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import { useShifts } from "@/features/attendance/data/attendance-data";
 import { isAttendanceLocked } from "@/features/attendance/data/attendance-pattern";
@@ -53,6 +54,10 @@ const monthLabel = (m) =>
   new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
 export function DailyWagesTab() {
+  const access = useScreenAccess("attendance.daily.daily-wages");
+  const canCreate = access.can("Create");
+  const canEdit = access.can("Edit");
+  const canExport = access.can("Export");
   const orgId = useActiveOrgId();
   const inScope = useScopeMatch();
   const workers = useWageWorkers().filter((w) => inScope(w.orgId, null, w.branch));
@@ -231,30 +236,38 @@ export function DailyWagesTab() {
             </SelectContent>
           </Select>
           <div className="ml-auto flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => setAdd(true)}>
-              <Plus className="h-4 w-4" /> Add worker
-            </Button>
-            <Button
-              size="sm"
-              className="bg-gradient-emerald text-white"
-              onClick={() => setMark(true)}
-            >
-              <CalendarCheck2 className="h-4 w-4" /> Mark attendance
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!rows.length}
-              onClick={() => {
-                exportCsv(`wage-attendance-${period}`, cols, exportRows);
-                toast.success("Exported CSV");
-              }}
-            >
-              <Download className="h-4 w-4" /> CSV
-            </Button>
-            <Button size="sm" variant="outline" disabled={!rows.length} onClick={pdf}>
-              <Download className="h-4 w-4" /> Register PDF
-            </Button>
+            {canCreate && (
+              <Button size="sm" variant="outline" onClick={() => setAdd(true)}>
+                <Plus className="h-4 w-4" /> Add worker
+              </Button>
+            )}
+            {canEdit && (
+              <Button
+                size="sm"
+                className="bg-gradient-emerald text-white"
+                onClick={() => setMark(true)}
+              >
+                <CalendarCheck2 className="h-4 w-4" /> Mark attendance
+              </Button>
+            )}
+            {canExport && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!rows.length}
+                onClick={() => {
+                  exportCsv(`wage-attendance-${period}`, cols, exportRows);
+                  toast.success("Exported CSV");
+                }}
+              >
+                <Download className="h-4 w-4" /> CSV
+              </Button>
+            )}
+            {canExport && (
+              <Button size="sm" variant="outline" disabled={!rows.length} onClick={pdf}>
+                <Download className="h-4 w-4" /> Register PDF
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -387,6 +400,8 @@ export function DailyWagesTab() {
               w={workers.find((x) => x.id === view.id) ?? view}
               period={period}
               shifts={shifts}
+              canEdit={canEdit}
+              canExport={canExport}
               onClose={() => setView(null)}
             />
           )}
@@ -726,7 +741,7 @@ function AddWorkerDialog({ open, onClose, orgId, workOrders, shifts }) {
   );
 }
 
-function WorkerDetail({ w, period, shifts, onClose }) {
+function WorkerDetail({ w, period, shifts, canEdit, canExport, onClose }) {
   const attendance = useWageAttendance()
     .filter((a) => a.workerId === w.id && a.date.startsWith(period))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -797,6 +812,7 @@ function WorkerDetail({ w, period, shifts, onClose }) {
         </table>
       </div>
       <DialogFooter className="gap-2">
+        {canEdit && (
         <Button
           variant="outline"
           onClick={() => {
@@ -806,6 +822,8 @@ function WorkerDetail({ w, period, shifts, onClose }) {
         >
           {w.status === "Active" ? "Mark inactive" : "Mark active"}
         </Button>
+        )}
+        {canExport && (
         <Button
           variant="outline"
           onClick={() =>
@@ -834,6 +852,7 @@ function WorkerDetail({ w, period, shifts, onClose }) {
         >
           <Download className="h-4 w-4" /> Worker attendance PDF
         </Button>
+        )}
         <Button onClick={onClose}>Close</Button>
       </DialogFooter>
     </div>

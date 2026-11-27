@@ -14,58 +14,41 @@ import {
 } from "@/features/attendance/components/AttendanceReportApiTabs";
 import { EmployeeAttendanceTab } from "@/features/attendance/components/EmployeeAttendanceTab";
 import { useSessionStore } from "@/features/auth/data/session-store";
-import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess, useVisibleTabs } from "@/features/auth/data/module-access";
 
-const hasScreenView = (assignedModules, permissions, screenKey) => {
-  const screen = (assignedModules ?? [])
-    .flatMap((module) => module.submodules ?? [])
-    .flatMap((submodule) => submodule.screens ?? [])
-    .find((item) => (item.key ?? item.screen_code?.split(".").pop()) === screenKey);
-  const permissionSuffix = `.${screenKey}.view`;
-  return (
-    Boolean(screen?.view) ||
-    (permissions ?? []).some((permission) =>
-      String(permission).toLowerCase().endsWith(permissionSuffix),
-    )
-  );
-};
+// Every tab is one screen of the "attendance" module in RBAC_MODULES; it is shown when the login grants View on it
+// (admin roles and the signed-out demo are handled by the permission layer).
+const ATTENDANCE_TABS = [
+  { value: "log", label: "Attendance", screen: "attendance.daily.attendance-log" },
+  { value: "report", label: "Attendance Report", screen: "attendance.daily.attendance-report" },
+  { value: "hours", label: "Work Hours & Overtime", screen: "attendance.daily.work-hours-overtime" },
+  { value: "wages", label: "Daily Wages", screen: "attendance.daily.daily-wages" },
+  { value: "payroll-lock", label: "Payroll Attendance Lock", screen: "attendance.daily.attendance-payroll-lock" },
+  { value: "workorders", label: "Work Orders", screen: "attendance.daily.attendance-work-orders" },
+];
 
 function AttendancePage() {
-  // Shift and penalty configuration is platform administration — Managers only
-  // ever see the attendance register for their own reporting line.
-  const user = useCurrentUser();
-  // Work orders carry billing / PO data — only entity administrators, operations and HR maintain them
-  // (HOD, CTO and CFO used to get the full work-order console because the check only excluded Managers).
-  const canConfigure = ["SuperAdmin", "Admin", "CEO", "COO", "CHRO", "HR"].includes(user.role);
   // A real login always reads attendance from the API (a role without access gets the server's 403 message, not
   // sample data); the local team register is only for the signed-out preview.
   const apiSession = useSessionStore((s) => s.isAuthenticated);
-  const assignedModules = useSessionStore((s) => s.assignedModules);
-  const permissions = useSessionStore((s) => s.permissions);
-  const isAdminLogin = apiSession;
-  const canView = (screenKey) =>
-    !apiSession || canConfigure || hasScreenView(assignedModules, permissions, screenKey);
-  const canViewLog = canView("attendance-log");
-  const canViewReport = canView("attendance-report");
-  const canViewHours = canView("work-hours-overtime");
-  const canViewWages = canView("daily-wages");
-  const canViewPayrollLock = canView("attendance-payroll-lock");
-  const canViewWorkOrders =
-    !apiSession || canConfigure || hasScreenView(assignedModules, permissions, "attendance-work-orders");
-  const allowedTabs = [
-    canViewLog && "log",
-    canViewReport && "report",
-    canViewHours && "hours",
-    canViewWages && "wages",
-    canViewPayrollLock && "payroll-lock",
-    canViewWorkOrders && "workorders",
-  ].filter(Boolean);
-  const firstAllowedTab = allowedTabs[0];
-  const [activeTab, setActiveTab] = useState(firstAllowedTab ?? "log");
-  const activeTabAllowed = allowedTabs.includes(activeTab);
+  const tabs = useVisibleTabs(ATTENDANCE_TABS);
+  // Punch corrections on the register are an Edit grant on the Attendance screen.
+  const canCorrectPunches = useScreenAccess("attendance.daily.attendance-log").can("Edit");
+  const [selectedTab, setActiveTab] = useState(tabs.first ?? "log");
+  const activeTab = tabs.pick(selectedTab) ?? "log";
   useEffect(() => {
-    if (!activeTabAllowed) setActiveTab(firstAllowedTab ?? "log");
-  }, [activeTabAllowed, firstAllowedTab]);
+    if (tabs.first && selectedTab !== activeTab) setActiveTab(activeTab);
+  }, [selectedTab, activeTab, tabs.first]);
+
+  const content = {
+    log: apiSession ? <EmployeeAttendanceTab canManage={canCorrectPunches} /> : <AttendanceLogTab />,
+    report: apiSession ? <AttendanceReportApiTab /> : <AttendanceReportTab />,
+    hours: apiSession ? <WorkHoursApiTab /> : <WorkHoursTab />,
+    wages: <DailyWagesTab />,
+    "payroll-lock": <AttendancePayrollLockTab />,
+    workorders: <WorkOrdersTab />,
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -73,51 +56,27 @@ function AttendancePage() {
           <Clock className="text-primary h-6 w-6" /> Attendance
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          {canConfigure
-            ? "Day, week and month-wise P/A/L register with shift configuration."
-            : "Day, week and month-wise P/A/L register for your reporting line."}
+          Day, week and month-wise P/A/L register for the employees in your scope.
         </p>
       </div>
 
+      {tabs.list.length === 0 ? (
+        <div className="text-muted-foreground rounded-lg border p-10 text-center text-sm">
+          You do not have access to any Attendance screen. Ask your administrator for permission.
+        </div>
+      ) : (
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <ScrollTabsList>
-          {canViewLog && <TabsTrigger value="log">Attendance</TabsTrigger>}
-          {canViewReport && <TabsTrigger value="report">Attendance Report</TabsTrigger>}
-          {canViewHours && <TabsTrigger value="hours">Work Hours & Overtime</TabsTrigger>}
-          {canViewWages && <TabsTrigger value="wages">Daily Wages</TabsTrigger>}
-          {canViewPayrollLock && (
-            <TabsTrigger value="payroll-lock">Payroll Attendance Lock</TabsTrigger>
-          )}
-          {canViewWorkOrders && <TabsTrigger value="workorders">Work Orders</TabsTrigger>}
+          {tabs.list.map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value}>
+              {tab.label}
+            </TabsTrigger>
+          ))}
         </ScrollTabsList>
-        {canViewLog && (
-          <TabsContent value="log" className="pt-4">
-            {isAdminLogin ? <EmployeeAttendanceTab canManage={canConfigure} /> : <AttendanceLogTab />}
-          </TabsContent>
-        )}
-        {canViewReport && (
-          <TabsContent value="report" className="pt-4">
-            {apiSession ? <AttendanceReportApiTab /> : <AttendanceReportTab />}
-          </TabsContent>
-        )}
-        {canViewHours && (
-          <TabsContent value="hours" className="pt-4">
-            {apiSession ? <WorkHoursApiTab /> : <WorkHoursTab />}
-          </TabsContent>
-        )}
-        {canViewWages && (
-          <TabsContent value="wages" className="pt-4">
-            <DailyWagesTab />
-          </TabsContent>
-        )}
-        {canViewPayrollLock && (
-          <TabsContent value="payroll-lock" className="pt-4">
-            <AttendancePayrollLockTab />
-          </TabsContent>
-        )}
-        {canViewWorkOrders && (
-          <TabsContent value="workorders" className="pt-4">
-            <WorkOrdersTab />
+        {/* Only the active, permitted tab is mounted, so hidden tabs never fetch or render. */}
+        {tabs.has(activeTab) && (
+          <TabsContent value={activeTab} className="pt-4">
+            {content[activeTab]}
           </TabsContent>
         )}
         {/* {canOpenMasters && (
@@ -133,6 +92,7 @@ function AttendancePage() {
           </div>
         )} */}
       </Tabs>
+      )}
     </div>
   );
 }

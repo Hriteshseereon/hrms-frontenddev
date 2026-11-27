@@ -80,6 +80,19 @@ const sidebarScreen = (moduleKey, moduleName, screenKey, screenName, section, su
   ],
 });
 
+/*
+ * RBAC_MODULES is the single catalog behind the role permission screen. Grants for the signed-in user come from the
+ * login / GET /me payload (assigned_modules + permissions); pages never hard-code roles for these actions.
+ *
+ * Adding something new:
+ *  - New action on an existing tab: add the label to the screen's `actions` (e.g. "Archive"), then in the page
+ *      const access = useScreenAccess("my-screen");   {access.can("Archive") && <Button …/>}
+ *  - New tab: add a screen `{ key, name, actions }` to the module, then list it in the page's tabs:
+ *      const tabs = useVisibleTabs([{ value: "mytab", screen: "my-screen" }, …]);
+ *  - New module: add a module block here (plus its routes in module-routes.json / SCREEN_ROUTES in rbac-store.js).
+ * The role screen, the API payload and the checks pick the new entries up automatically. In development, a check for a
+ * screen or action that is missing here logs a "[permissions]" warning so it cannot be forgotten.
+ */
 export const RBAC_MODULES = [
   sidebarScreen("dashboard", "Dashboard", "org-dashboard", "Dashboard", "Dashboard", "home", ["View"]),
   {
@@ -97,7 +110,7 @@ export const RBAC_MODULES = [
       ] },
       { key: "documents", name: "Documents", screens: [
         { key: "doc-master", name: "Doc Master", actions: ["Create", "View", "Edit", "Delete"] },
-        { key: "employee-handbook", name: "Employee Handbook", actions: ["Create", "View", "Edit", "Delete"] },
+        { key: "employee-handbook", name: "Employee Handbook", actions: ["Create", "View", "Edit", "Delete", "Export"] },
         { key: "onboarding-document-master", name: "Onboarding Document Master", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
         { key: "policies-circulars", name: "Policies & Circulars", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
         { key: "award-master", name: "Award Master", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
@@ -107,14 +120,14 @@ export const RBAC_MODULES = [
         { key: "job-sources", name: "Candidate Sources", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
         { key: "interview-types", name: "Interview Types", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
         { key: "onboarding-checklists", name: "Onboarding Checklists", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
-        { key: "offer-letter-template", name: "Offer Letter Template", actions: ["Create", "View"] },
+        { key: "offer-letter-template", name: "Offer Letter Template", actions: ["Create", "View", "Edit"] },
         { key: "interview-rounds-stages", name: "Interview Rounds & Stages", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
         { key: "job-locations", name: "Job Locations", actions: ["Create", "View", "Edit", "Delete","Export","Print"] },
-        { key: "assessment-evaluation-parameters", name: "Assessment & Evaluation Parameters", actions: ["Create", "View"] },
+        { key: "assessment-evaluation-parameters", name: "Assessment & Evaluation Parameters", actions: ["Create", "View", "Edit", "Delete"] },
       ] },
       { key: "attendance-time", name: "Attendance & Time", screens: [
         { key: "shift-management", name: "Shift Management", actions: ["Create", "View", "Edit", "Delete"] },
-        { key: "workday-configuration", name: "Workday Configuration", actions: ["Create","View"] },
+        { key: "workday-configuration", name: "Workday Configuration", actions: ["Create", "View", "Edit"] },
         { key: "attendance-patterns-overrides", name: "Attendance Patterns & Overrides", actions: ["Create", "View", "Edit", "Delete"] },
         { key: "penalty-overtime-rules", name: "Penalty & Overtime Rules", actions: ["Create", "View", "Edit", "Delete"] },
         { key: "timesheet-formats", name: "Timesheet Formats", actions: ["Create", "View", "Edit", "Delete"] },
@@ -126,7 +139,7 @@ export const RBAC_MODULES = [
       { key: "payroll-statutory", name: "Payroll & Statutory", screens: [
         { key: "pay-grades-bands", name: "Pay Grades & Bands", actions: ["Create", "View", "Edit", "Delete", "Export", "Bulk Upload"] },
         { key: "salary-configuration", name: "Salary Configuration & Payroll", actions: ["Create","View", "Edit"] },
-        { key: "statutory-configuration", name: "Statutory Configuration — PF, ESI", actions: ["Create","View"] },
+        { key: "statutory-configuration", name: "Statutory Configuration — PF, ESI", actions: ["Create", "View", "Edit"] },
         { key: "state-policies", name: "State Policies — PT, LWF, Minimum Wages", actions: ["View", "Edit"] },
       ] },
       { key: "assets", name: "Assets", screens: [
@@ -151,7 +164,7 @@ export const RBAC_MODULES = [
         { key: "all-employees", name: "All Employees", actions: ["Create", "View", "Edit",  "Export", "Bulk Upload","Download"] },
         { key: "employee-promotions", name: "Promotions", actions: ["Create", "View", "Edit", "Approve"] },
         { key: "employee-transfers", name: "Transfers", actions: ["Create", "View", "Edit", "Approve"] },
-        { key: "employee-resignations", name: "Resignations", actions: ["View", "Edit", "Approve"] },
+        { key: "employee-resignations", name: "Resignations", actions: ["Create", "View", "Edit", "Approve"] },
         { key: "employee-terminations", name: "Terminations", actions: ["Create", "View", "Edit", "Approve"] },
         { key: "employee-warnings", name: "Warnings", actions: ["Create", "View", "Edit", "Delete"] },
         { key: "employee-complaints", name: "Complaints", actions: ["Create", "View", "Edit", "Delete", "Approve"] },
@@ -172,18 +185,35 @@ export const RBAC_MODULES = [
         key: "daily",
         name: "Attendance & Shifts",
         screens: [
-          { key: "attendance-log", name: "Attendance", actions: [ "View"] },
+          { key: "attendance-log", name: "Attendance", actions: [ "View", "Edit", "Export"] },
           { key: "attendance-report", name: "Attendance Report", actions: ["View", "Export"] },
           { key: "work-hours-overtime", name: "Work Hours & Overtime", actions: ["View", "Edit", "Approve", "Export"] },
           { key: "daily-wages", name: "Daily Wages", actions: ["View", "Create", "Edit", "Approve", "Export"] },
           { key: "attendance-payroll-lock", name: "Payroll Attendance Lock", actions: ["View", "Lock"] },
-          { key: "attendance-work-orders", name: "Work Orders", actions: ["Create", "View", "Edit", "Delete"] },
+          { key: "attendance-work-orders", name: "Work Orders", actions: ["Create", "View", "Edit", "Delete", "Export"] },
         ],
       },
     ],
   },
-  sidebarScreen("leave", "Leave & Comp-off", "leave-requests", "Leave & Comp-off", "Time & Leave", "leave", [ "View", "Approve","Reject","Export","Print"]),
-  sidebarScreen("tours", "Tours & Travel", "all-tours", "Tours & Travel", "Time & Leave", "tours", ["Create", "View", "Edit", "Approve", "Export"]),
+  {
+    key: "leave",
+    name: "Leave & Comp-off",
+    sidebarLabel: "Leave & Comp-off",
+    section: "Time & Leave",
+    submodules: [
+      {
+        key: "leave",
+        name: "Leave & Comp-off",
+        screens: [
+          // `leave-requests` keeps its original key so roles saved before the per-tab split keep their grants.
+          { key: "leave-requests", name: "Leave Applications", actions: ["View", "Approve", "Reject", "Export", "Print"] },
+          { key: "leave-balances", name: "Balance Leave", actions: ["View", "Export"] },
+          { key: "comp-off-approvals", name: "Comp-off", actions: ["View", "Approve", "Reject"] },
+        ],
+      },
+    ],
+  },
+  sidebarScreen("tours", "Tours & Travel", "all-tours", "Tours & Travel", "Time & Leave", "tours", ["Create", "View", "Edit", "Approve", "Reject", "Dispatch", "Settle", "Close", "Export"]),
 {
   key: "payroll",
   name: "Payroll, Payslips & Loans",
@@ -194,17 +224,17 @@ export const RBAC_MODULES = [
       key: "finance",
       name: "Payroll, Payslips & Loans",
       screens: [
-        { key: "payroll-run", name: "Payroll", actions: ["Create", "View", "Edit", "Approve","Reject", "Export"] },
-        { key: "payslips", name: "Payslips", actions: ["View", "Export"] },
-        { key: "loan-requests", name: "Employee Loans", actions: ["Create", "View", "Edit", "Approve"] },
+        { key: "payroll-run", name: "Payroll", actions: ["Create", "View", "Edit", "Approve", "Reject", "Process", "Publish", "Export", "Bulk Upload"] },
+        { key: "payslips", name: "Payslips", actions: ["View", "Edit", "Export"] },
+        { key: "loan-requests", name: "Employee Loans", actions: ["Create", "View", "Edit", "Approve", "Reject", "Process", "Export"] },
         { key: "wage-statutory-policy", name: "Wage & Statutory Policy", actions: ["View", "Edit"] },
       ],
     },
   ],
 },
-  sidebarScreen("payroll", "Claims & Insurance", "reimbursements", "Claims & Insurance", "Payroll & Finance", "claims", ["Create", "View", "Edit", "Approve", "Export"]),
-  sidebarScreen("workplace", "Projects & Assignments", "projects", "Projects & Assignments", "Projects & Tasks", "projects", ["Create", "View", "Edit", "Delete"]),
-  sidebarScreen("workplace", "Tasks", "tasks", "Tasks", "Projects & Tasks", "work", ["Create", "View", "Edit", "Delete", "Approve"]),
+  sidebarScreen("payroll", "Claims & Insurance", "reimbursements", "Claims & Insurance", "Payroll & Finance", "claims", ["Create", "View", "Edit", "Approve", "Reject", "Export"]),
+  sidebarScreen("workplace", "Projects & Assignments", "projects", "Projects & Assignments", "Projects & Tasks", "projects", ["Create", "View", "Edit", "Delete", "Export"]),
+  sidebarScreen("workplace", "Tasks", "tasks", "Tasks", "Projects & Tasks", "work", ["Create", "View", "Edit", "Delete", "Approve", "Reject", "Export"]),
 ];
 
 /**
@@ -236,6 +266,37 @@ export const actionSlug = (action) =>
  */
 
 export const screenId = (m, s, sc) => `${m}.${s}.${sc}`;
+
+/**
+ * Flat index of every screen in RBAC_MODULES, keyed by full screen_code ("module.submodule.screen") and, when the
+ * screen key is unique, by the bare screen key too. Pages ask for access with either form, so a new module / tab /
+ * action only has to be added to RBAC_MODULES — no permission code needs changing.
+ */
+export const SCREEN_INDEX = (() => {
+  const byCode = new Map();
+  const byKey = new Map();
+  for (const module of RBAC_MODULES) {
+    for (const submodule of module.submodules) {
+      for (const screen of submodule.screens) {
+        const code = screenId(module.key, submodule.key, screen.key);
+        const entry = { ...screen, code, moduleKey: module.key, submoduleKey: submodule.key, actions: actionsForScreen(screen) };
+        byCode.set(code.toLowerCase(), entry);
+        byKey.set(screen.key, byKey.has(screen.key) ? null : entry); // null = ambiguous key, use the full code
+      }
+    }
+  }
+  return { byCode, byKey };
+})();
+
+/** "payslips" or "payroll.finance.payslips" -> catalog entry (or null when the screen is not on the permission screen). */
+export const findScreen = (screen) => {
+  const value = String(screen ?? "").trim();
+  if (!value) return null;
+  return SCREEN_INDEX.byCode.get(value.toLowerCase()) ?? SCREEN_INDEX.byKey.get(value) ?? null;
+};
+
+/** Full screen_code for a bare key or full code; unknown values are returned unchanged. */
+export const resolveScreenCode = (screen) => findScreen(screen)?.code ?? String(screen ?? "");
 
 /**
  * @typedef {Object} RoleRecord

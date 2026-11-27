@@ -33,10 +33,16 @@ import {
   stageBadge,
 } from "@/features/finance/components/ClaimDetail";
 import { useScopedIds } from "@/features/employees/components/CasePieces";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 function OrgClaims() {
   const allRows = reimbursementStore.use();
   const me = useCurrentUser();
+  const claimAccess = useScreenActions("payroll.claims.reimbursements");
+  const insuranceAccess = useScreenActions("employee.employee-management.employee-insurance");
+  const canApproveClaim = claimAccess.can("Approve");
+  const canRejectClaim = claimAccess.can("Reject");
+  const canExportClaims = claimAccess.can("Export");
   // Tenant scope — claims raised by employees of the active entity (or the whole group for a Super Admin in group view).
   const scopedIds = useScopedIds();
   const rows = useMemo(() => allRows.filter((r) => scopedIds.has(r.empId)), [allRows, scopedIds]);
@@ -186,15 +192,15 @@ function OrgClaims() {
 
       <Tabs defaultValue="claims">
         <ScrollTabsList>
-          <TabsTrigger value="claims">
+          {claimAccess.can("View") && <TabsTrigger value="claims">
             <Receipt className="h-4 w-4" /> Reimbursement Claims
-          </TabsTrigger>
-          <TabsTrigger value="insurance">
+          </TabsTrigger>}
+          {insuranceAccess.can("View") && <TabsTrigger value="insurance">
             <ShieldPlus className="h-4 w-4" /> Employee Insurance
-          </TabsTrigger>
+          </TabsTrigger>}
         </ScrollTabsList>
 
-        <TabsContent value="claims" className="space-y-4 pt-4">
+        {claimAccess.can("View") && <TabsContent value="claims" className="space-y-4 pt-4">
           <div className="flex flex-wrap items-end gap-3">
             <div className="w-full min-w-0 space-y-1.5 sm:w-auto">
               <Label className="text-muted-foreground text-xs">Search</Label>
@@ -238,7 +244,7 @@ function OrgClaims() {
               </Select>
             </div>
             <div className="ml-auto flex flex-wrap gap-2">
-              <Button
+              {canExportClaims && <Button
                 size="sm"
                 variant="outline"
                 onClick={() => {
@@ -247,10 +253,10 @@ function OrgClaims() {
                 }}
               >
                 <Download className="h-4 w-4" /> CSV
-              </Button>
-              <Button size="sm" variant="outline" onClick={downloadClaimsPdf}>
+              </Button>}
+              {canExportClaims && <Button size="sm" variant="outline" onClick={downloadClaimsPdf}>
                 <FileText className="h-4 w-4" /> Export PDF
-              </Button>
+              </Button>}
             </div>
           </div>
 
@@ -335,15 +341,15 @@ function OrgClaims() {
                           <Button size="sm" variant="ghost" onClick={() => setOpenId(r.id)}>
                             <Eye className="h-4 w-4" /> View
                           </Button>
-                          {canActionClaim(me, r) ? (
+                          {canActionClaim(me, r) && (canApproveClaim || canRejectClaim) ? (
                             <>
-                              <Button size="sm" variant="ghost" onClick={() => approve(r, "")}>
+                              {canApproveClaim && <Button size="sm" variant="ghost" onClick={() => approve(r, "")}>
                                 <Check className="text-primary h-4 w-4" />{" "}
                                 {r.currentStage === "Accounts" ? "Process Payment" : "Approve"}
-                              </Button>
-                              <Button size="sm" variant="ghost" onClick={() => setOpenId(r.id)}>
+                              </Button>}
+                              {canRejectClaim && <Button size="sm" variant="ghost" onClick={() => setOpenId(r.id)}>
                                 <X className="text-destructive h-4 w-4" /> Reject
-                              </Button>
+                              </Button>}
                             </>
                           ) : (
                             <span className="text-muted-foreground self-center pl-1 text-xs">
@@ -373,20 +379,22 @@ function OrgClaims() {
               </table>
             </div>
           </Card>
-        </TabsContent>
+        </TabsContent>}
 
-        <TabsContent value="insurance" className="pt-4">
+        {insuranceAccess.can("View") && <TabsContent value="insurance" className="pt-4">
           <InsuranceTab />
-        </TabsContent>
+        </TabsContent>}
       </Tabs>
 
       {open && (
         <ClaimDetailDialog
           claim={open}
           onClose={() => setOpenId(null)}
-          canAction={canActionClaim(me, open)}
-          onApprove={(rem) => approve(open, rem)}
-          onReject={(reason) => reject(open, reason)}
+          canAction={canActionClaim(me, open) && (canApproveClaim || canRejectClaim)}
+          canApprove={canApproveClaim}
+          canReject={canRejectClaim}
+          onApprove={canApproveClaim ? (rem) => approve(open, rem) : undefined}
+          onReject={canRejectClaim ? (reason) => reject(open, reason) : undefined}
         />
       )}
     </div>

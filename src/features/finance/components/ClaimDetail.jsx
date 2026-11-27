@@ -71,7 +71,7 @@ export function ClaimStepper({ claim }) {
   );
 }
 
-export function ClaimDetailDialog({ claim, onClose, canAction, onApprove, onReject }) {
+export function ClaimDetailDialog({ claim, onClose, canAction, canApprove = true, canReject = true, onApprove, onReject }) {
   const [remarks, setRemarks] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const items = claim.items ?? [];
@@ -262,7 +262,7 @@ export function ClaimDetailDialog({ claim, onClose, canAction, onApprove, onReje
           </ul>
         </div>
 
-        {actionable && onApprove && onReject && (
+        {actionable && ((canApprove && onApprove) || (canReject && onReject)) && (
           <div className="border-primary/30 bg-primary/5 space-y-3 rounded-xl border p-4">
             <div className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
               Your action · {claim.currentStage} stage
@@ -280,32 +280,32 @@ export function ClaimDetailDialog({ claim, onClose, canAction, onApprove, onReje
             <div className="flex flex-wrap justify-end gap-2">
               {!rejecting ? (
                 <>
-                  <Button
+                  {canReject && onReject && <Button
                     variant="outline"
                     className="border-destructive/40 text-destructive"
                     onClick={() => setRejecting(true)}
                   >
                     <X className="h-4 w-4" /> Reject
-                  </Button>
-                  <Button
+                  </Button>}
+                  {canApprove && onApprove && <Button
                     className="bg-gradient-emerald text-white"
                     onClick={() => onApprove(remarks.trim())}
                   >
                     <Check className="h-4 w-4" /> {isAccounts ? "Process payment" : "Approve"}
-                  </Button>
+                  </Button>}
                 </>
               ) : (
                 <>
                   <Button variant="outline" onClick={() => setRejecting(false)}>
                     Back
                   </Button>
-                  <Button
+                  {canReject && onReject && <Button
                     variant="destructive"
                     disabled={!remarks.trim()}
                     onClick={() => onReject(remarks.trim())}
                   >
                     <X className="h-4 w-4" /> Confirm rejection
-                  </Button>
+                  </Button>}
                 </>
               )}
             </div>

@@ -3,22 +3,8 @@ import { ProjectsWorkspace } from "@/features/projects/components/ProjectsWorksp
 import { useCurrentUser } from "@/features/auth/data/auth-session";
 import { useManagerMap } from "@/features/organization/data/manager-data";
 
-const MANAGE_ROLES = new Set([
-  "SuperAdmin",
-  "Admin",
-  "CEO",
-  "COO",
-  "CFO",
-  "CTO",
-  "CHRO",
-  "HR",
-  "HOD",
-  "Manager",
-]);
-
 function ProjectsPage() {
   const me = useCurrentUser();
-  const canManage = MANAGE_ROLES.has(me.role);
   const managers = useManagerMap();
   // A line manager sees the projects they run / belong to and their reporting line's tasks — not every project in the org.
   const isLineManager = me.role === "Manager";
@@ -38,7 +24,6 @@ function ProjectsPage() {
         </p>
       </div>
       <ProjectsWorkspace
-        canManage={canManage}
         scopeManagerId={isLineManager ? me.id : undefined}
         team={team}
       />

@@ -38,6 +38,7 @@ import { Tabs, TabsContent, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollTabsList } from "@/components/common/ScrollTabs";
 import { cn, safeUrl } from "@/lib/utils";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenActions } from "@/features/auth/data/module-access";
 import { useDirectory, findEmployee } from "@/features/employees/data/employee-directory";
 import { useDepartments } from "@/features/organization/data/dept-data";
 import { ALL_MANAGED_BRANCHES } from "@/features/organization/data/branch-session";
@@ -1117,7 +1118,9 @@ export function EditProjectForm({ project, onDone }) {
 }
 
 /* ---------------- Detail ---------------- */
-export function ProjectDetail({ project, canManage, onOpenTask, onEdit, onDelete, onAddTask }) {
+export function ProjectDetail({ project, canManage, canAddTask = false, onOpenTask, onEdit, onDelete, onAddTask }) {
+  const projectAccess = useScreenActions("workplace.projects.projects");
+  const canExportProject = projectAccess.can("Export");
   const tasks = useTasks().filter((t) => t.projectId === project.id);
   const directory = useDirectory();
   const [memberId, setMemberId] = useState("");
@@ -1196,7 +1199,7 @@ export function ProjectDetail({ project, canManage, onOpenTask, onEdit, onDelete
             </Badge>
           ))}
           <div className="ml-auto flex flex-wrap gap-2">
-            {canManage && onAddTask && (
+            {canAddTask && onAddTask && (
               <Button size="sm" className="bg-gradient-emerald text-white" onClick={onAddTask}>
                 <Plus className="h-4 w-4" /> Add task
               </Button>
@@ -1206,9 +1209,9 @@ export function ProjectDetail({ project, canManage, onOpenTask, onEdit, onDelete
                 <Pencil className="h-4 w-4" /> Edit
               </Button>
             )}
-            <Button size="sm" variant="outline" onClick={pdf}>
+            {canExportProject && <Button size="sm" variant="outline" onClick={pdf}>
               <FileDown className="h-4 w-4" /> PDF
-            </Button>
+            </Button>}
           </div>
         </div>
         <p className="text-muted-foreground text-sm">{project.description}</p>

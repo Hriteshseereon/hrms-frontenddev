@@ -28,7 +28,8 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { inr } from "@/lib/store";
-import { can, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenActions } from "@/features/auth/data/module-access";
 import { getEmployeeProfile, useDirectory } from "@/features/employees/data/employee-directory";
 import { useScopedEmployees, useScopedIds } from "@/features/employees/components/CasePieces";
 import {
@@ -49,6 +50,12 @@ import { ChartCard, DonutChart } from "@/features/dashboard/components/Charts";
 
 export function LoansTab({ mode = "finance" }) {
   const me = useCurrentUser();
+  const loanAccess = useScreenActions("payroll.finance.loan-requests");
+  const canCreateLoan = loanAccess.can("Create");
+  const canApproveLoan = loanAccess.can("Approve");
+  const canRejectLoan = loanAccess.can("Reject");
+  const canProcessLoan = loanAccess.can("Process");
+  const canExportLoan = loanAccess.can("Export");
   useDirectory();
   const all = useLoans();
   // Finance view is tenant-scoped to the active entity's employees (loans carry no orgId of their own).
@@ -57,13 +64,6 @@ export function LoansTab({ mode = "finance" }) {
     mode === "employee"
       ? all.filter((l) => l.empId === me.id)
       : all.filter((l) => scopedIds.has(l.empId));
-  const canApprove =
-    mode === "finance" &&
-    (can(me.role, "payroll.approve") ||
-      me.role === "HR" ||
-      me.role === "CHRO" ||
-      me.role === "CFO" ||
-      me.role === "Admin");
   const [open, setOpen] = useState(false);
   // Keep only the id so the schedule dialog always shows the live record (status / recoveries update in place).
   const [viewId, setViewId] = useState(null);
@@ -110,13 +110,13 @@ export function LoansTab({ mode = "finance" }) {
               </Link>
             </Button>
           )}
-          <Button
+          {canCreateLoan && <Button
             className="bg-gradient-emerald shadow-premium text-white"
             onClick={() => setOpen(true)}
           >
             <Plus className="h-4 w-4" />{" "}
             {mode === "employee" ? "Apply for loan / advance" : "New application"}
-          </Button>
+          </Button>}
         </div>
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -205,17 +205,17 @@ export function LoansTab({ mode = "finance" }) {
                           Awaiting {loanStageOf(l).stage}
                         </span>
                       )}
-                      {mode === "finance" && canDecideLoan(l, me) && (
+                      {mode === "finance" && canDecideLoan(l, me) && (canApproveLoan || canRejectLoan) && (
                         <>
-                          <Button
+                          {canApproveLoan && <Button
                             size="sm"
                             variant="ghost"
                             className="text-primary h-7"
                             onClick={() => act(decideLoan(l.id, me, true))}
                           >
                             <CheckCircle2 className="h-3.5 w-3.5" /> Approve
-                          </Button>
-                          <Button
+                          </Button>}
+                          {canRejectLoan && <Button
                             size="sm"
                             variant="ghost"
                             className="text-destructive h-7"
@@ -225,10 +225,10 @@ export function LoansTab({ mode = "finance" }) {
                             }}
                           >
                             <XCircle className="h-3.5 w-3.5" /> Reject
-                          </Button>
+                          </Button>}
                         </>
                       )}
-                      {canApprove && l.status === "Approved" && (
+                      {mode === "finance" && canProcessLoan && l.status === "Approved" && (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -271,7 +271,7 @@ export function LoansTab({ mode = "finance" }) {
           {view && (
             <>
               <div className="flex gap-2">
-                <Button
+                {canExportLoan && <Button
                   size="sm"
                   variant="outline"
                   onClick={() => {
@@ -306,9 +306,9 @@ export function LoansTab({ mode = "finance" }) {
                   }}
                 >
                   <Download className="h-4 w-4" /> Loan form / sanction letter (Doc Master)
-                </Button>
+                </Button>}
               </div>
-              {canApprove && view.status === "Disbursed" && (
+              {canProcessLoan && view.status === "Disbursed" && (
                 <div className="flex items-center gap-2 text-xs">
                   <span className="text-muted-foreground">Manual recovery received via</span>
                   <Select value={recVia} onValueChange={setRecVia}>
@@ -358,7 +358,7 @@ export function LoansTab({ mode = "finance" }) {
                         )}
                       </td>
                       <td className="p-2">
-                        {canApprove && view.status === "Disbursed" && !s.paid && (
+                        {canProcessLoan && view.status === "Disbursed" && !s.paid && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -393,6 +393,7 @@ export function LoansTab({ mode = "finance" }) {
 
 function ApplyDialog({ open, onClose, mode }) {
   const me = useCurrentUser();
+  const loanAccess = useScreenActions("payroll.finance.loan-requests");
   // Only the active entity's people (the full directory listed every entity's employees).
   const emps = useScopedEmployees();
   const [empId, setEmpId] = useState(mode === "employee" ? me.id : "");
@@ -535,7 +536,7 @@ function ApplyDialog({ open, onClose, mode }) {
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button
+          {loanAccess.can("Create") && <Button
             className="bg-gradient-emerald text-white"
             disabled={!id || !purpose.trim()}
             onClick={() => {
@@ -557,7 +558,7 @@ function ApplyDialog({ open, onClose, mode }) {
             }}
           >
             Submit application
-          </Button>
+          </Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -39,6 +39,7 @@ import {
   useScopedIds,
 } from "@/features/employees/components/CasePieces";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { useDirectory, getEmployeeProfile } from "@/features/employees/data/employee-directory";
 import { useSharedList } from "@/lib/shared-list";
 import { TERMINATION_TYPE_MASTER } from "@/features/organization/data/master-data";
@@ -54,7 +55,6 @@ import {
   updateTerminationChecklist,
 } from "@/features/employees/data/people-cases";
 
-const APPROVER_ROLES = ["HR", "CHRO", "Admin", "SuperAdmin", "CEO", "COO"];
 const STEPS = ["Case opened", "HR Head", "Unit Head", "Legal", "Approved", "Letter issued"];
 const stepIndex = (c) =>
   c.status === "Pending approval"
@@ -80,7 +80,9 @@ export function TerminationsTab() {
   const [status, setStatus] = useState("all");
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState(null);
-  const canApprove = APPROVER_ROLES.includes(me.role);
+  const access = useScreenAccess("employee-terminations");
+  const canCreate = access.can("Create");
+  const canApprove = access.can("Approve");
   const list = rows.filter(
     (c) =>
       (status === "all" || c.status === status) &&
@@ -115,9 +117,11 @@ export function TerminationsTab() {
               </SelectContent>
             </Select>
           </Toolbar>
-          <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setOpen(true)}>
-            <Plus className="h-4 w-4" /> Open termination case
-          </Button>
+          {canCreate && (
+            <Button size="sm" variant="destructive" className="ml-auto" onClick={() => setOpen(true)}>
+              <Plus className="h-4 w-4" /> Open termination case
+            </Button>
+          )}
         </CardContent>
       </Card>
       <Card className="shadow-card overflow-hidden">

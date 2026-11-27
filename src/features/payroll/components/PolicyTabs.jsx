@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useScreenGate } from "@/components/common/useScreenGate";
 import {
   CalendarClock,
   MapPin,
@@ -522,11 +523,13 @@ function Tog({ label, hint, checked, onChange, disabled }) {
   );
 }
 
-export function StatutoryConfigTab() {
+export function StatutoryConfigTab({ screen } = {}) {
+  // Master Data scopes this to "statutory-configuration"; elsewhere the legacy role check still applies.
+  const gate = useScreenGate(screen);
   const me = useCurrentUser();
   const saved = useStatutoryConfig();
   const [d, setD] = useState(saved);
-  const editable = can(me.role, "statutory.configure");
+  const editable = gate.gated ? gate.can("Edit") : can(me.role, "statutory.configure");
   const set = (k, v) => setD((p) => ({ ...p, [k]: { ...p[k], ...v } }));
   const dirty = JSON.stringify(d) !== JSON.stringify(saved);
   // Guard rails — an empty approval chain left runs stuck in "Pending Approval"; negative / >100 % rates and
@@ -584,10 +587,10 @@ export function StatutoryConfigTab() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" disabled={!dirty} onClick={() => setD(saved)}>
+            {gate.can("Edit") && <Button variant="outline" size="sm" disabled={!dirty} onClick={() => setD(saved)}>
               Discard
-            </Button>
-            <Button
+            </Button>}
+            {gate.can("Edit") && <Button
               size="sm"
               className="bg-gradient-emerald text-white"
               disabled={!dirty || !editable}
@@ -600,7 +603,7 @@ export function StatutoryConfigTab() {
               }}
             >
               <Save className="h-4 w-4" /> Save policy
-            </Button>
+            </Button>}
           </div>
         </CardContent>
       </Card>

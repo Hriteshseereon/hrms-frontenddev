@@ -14,6 +14,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { useDirectory } from "@/features/employees/data/employee-directory";
 import { ROUTING, useGrievances, isOverdue } from "@/features/exit/data/grievance-data";
 import {
@@ -26,11 +27,20 @@ import { useScopeMatch } from "@/features/organization/data/tenancy";
 import { grievanceApi } from "@/api/grievanceApi";
 import { cn } from "@/lib/utils";
 
-/** Grievance Redressal workspace. `embedded` hides the page heading (used by People → Complaints). */
-export function GrievanceWorkspace({ embedded = false }) {
+/**
+ * Grievance Redressal workspace. `embedded` hides the page heading (used by People → Complaints).
+ * `screen` (e.g. "employee-complaints") gates the action buttons by that screen's login permissions;
+ * without it the legacy role check is kept for the standalone page.
+ */
+export function GrievanceWorkspace({ embedded = false, screen }) {
   const me = useCurrentUser();
   const mockAll = useGrievances();
+  // Role decides which grievances are visible (data scope), not which buttons show.
   const isHr = ["HR", "CHRO", "Admin", "SuperAdmin", "CEO"].includes(me.role);
+  const access = useScreenAccess(screen ?? "employee-complaints");
+  const canCreate = screen ? access.can("Create") : isHr;
+  const canEdit = screen ? access.can("Edit") : true;
+  const canApprove = screen ? access.can("Approve") : true;
   const dir = useDirectory();
   const scopeMatch = useScopeMatch();
 
@@ -194,7 +204,7 @@ export function GrievanceWorkspace({ embedded = false }) {
           </div>
         )}
         <div className="flex flex-wrap gap-2">
-          {isHr && (
+          {canCreate && (
             <Button
               className="bg-gradient-emerald shadow-premium text-white font-medium text-xs h-9"
               onClick={() => setRaise(true)}
@@ -377,6 +387,8 @@ export function GrievanceWorkspace({ embedded = false }) {
                 <GrievanceDetail
                   g={openItem}
                   mode="hr"
+                  canEdit={canEdit}
+                  canApprove={canApprove}
                   onRefresh={loadAdminData}
                 />
               </div>

@@ -28,6 +28,7 @@ import {
   useTeamScope,
 } from "@/features/attendance/data/attendance-live";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 
 const BANDS = [
   ["all", "All bands"],
@@ -40,6 +41,7 @@ const monthLabel = (m) =>
   new Date(m + "-01T00:00:00").toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
 export function AttendanceReportTab() {
+  const canExport = useScreenAccess("attendance.daily.attendance-report").can("Export");
   // Current month by default (was frozen on the seeded month); any month can still be picked below.
   const [month, setMonth] = useState(currentMonth);
   const liveRows = useLiveAttendance(month);
@@ -292,6 +294,7 @@ export function AttendanceReportTab() {
             <span className="text-muted-foreground text-xs">
               {data.length} employees · {workingDaysOf(month)} working days in {monthLabel(month)}
             </span>
+            {canExport && (
             <div className="ml-auto flex flex-wrap gap-2">
               <Button
                 size="sm"
@@ -313,6 +316,7 @@ export function AttendanceReportTab() {
                 <Download className="h-4 w-4" /> Attendance report PDF
               </Button>
             </div>
+            )}
           </div>
         </CardContent>
       </Card>

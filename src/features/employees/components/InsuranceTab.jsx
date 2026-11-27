@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { can, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { AttachmentChips } from "@/components/common/AttachmentViewer";
 import { captureFiles } from "@/lib/attachments";
 import { Plus, ShieldPlus, FileDown } from "lucide-react";
@@ -55,6 +56,7 @@ function F({ label, required, children, full }) {
 }
 
 export function InsuranceTab() {
+  const access = useScreenAccess("employee-insurance");
   // Entity-scoped: the register and the picker showed every entity's (seeded) staff and missed new hires.
   const people = useScopedEmployees();
   const scopedIds = useScopedIds();
@@ -225,9 +227,11 @@ export function InsuranceTab() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={exportPolicies}>
-                <FileDown className="h-4 w-4" /> Export PDF
-              </Button>
+              {access.can("Export") && (
+                <Button size="sm" variant="outline" onClick={exportPolicies}>
+                  <FileDown className="h-4 w-4" /> Export PDF
+                </Button>
+              )}
               <Dialog
                 open={open}
                 onOpenChange={(o) => {
@@ -235,11 +239,13 @@ export function InsuranceTab() {
                   if (!o) reset();
                 }}
               >
-                <DialogTrigger asChild>
-                  <Button size="sm" className="bg-gradient-emerald text-white">
-                    <Plus className="h-4 w-4" /> Assign Insurance
-                  </Button>
-                </DialogTrigger>
+                {access.can("Create") && (
+                  <DialogTrigger asChild>
+                    <Button size="sm" className="bg-gradient-emerald text-white">
+                      <Plus className="h-4 w-4" /> Assign Insurance
+                    </Button>
+                  </DialogTrigger>
+                )}
                 <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl">
                   <DialogHeader>
                     <DialogTitle>Assign insurance</DialogTitle>
@@ -664,8 +670,11 @@ export function InsuranceTab() {
 function InsuranceClaimsCard({ scopedIds }) {
   const me = useCurrentUser();
   const claims = useInsuranceClaims().filter((c) => scopedIds.has(c.empId));
-  const canAct =
-    ["CFO", "Admin", "CHRO", "SuperAdmin"].includes(me.role) || can(me.role, "finance.manage");
+  const access = useScreenAccess("employee-insurance");
+  // Taking a claim up for review edits it; approve / reject / settle are decisions → Approve.
+  const canReview = access.can("Edit");
+  const canDecide = access.can("Approve");
+  const canAct = canReview || canDecide;
   const act = (r) => toast[r.ok ? "success" : "error"](r.message);
   const tone = (st) =>
     st === "Settled" || st === "Approved"
@@ -753,7 +762,7 @@ function InsuranceClaimsCard({ scopedIds }) {
                       </span>
                     ) : (
                       <div className="flex flex-col items-start gap-1">
-                        {c.status === "Pending" && (
+                        {canReview && c.status === "Pending" && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -765,7 +774,7 @@ function InsuranceClaimsCard({ scopedIds }) {
                             Take up for review
                           </Button>
                         )}
-                        {(c.status === "Pending" || c.status === "Under Review") && (
+                        {canDecide && (c.status === "Pending" || c.status === "Under Review") && (
                           <div className="flex gap-1">
                             <Button
                               size="sm"
@@ -803,7 +812,7 @@ function InsuranceClaimsCard({ scopedIds }) {
                             </Button>
                           </div>
                         )}
-                        {c.status === "Approved" && (
+                        {canDecide && c.status === "Approved" && (
                           <Button
                             size="sm"
                             variant="ghost"

@@ -29,6 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useActiveOrgId, useOrgs, updateOrg } from "@/features/organization/data/group-data";
 import { useCurrentUser } from "@/features/auth/data/auth-session";
+import { useScreenGate } from "@/components/common/useScreenGate";
 import { createPersistentStore } from "@/lib/persist";
 import { OFFICES } from "@/features/employees/data/hr-data";
 import {
@@ -99,11 +100,13 @@ function Row({ label, hint, children, stack = false }) {
   );
 }
 
-export function OrgSettings() {
+export function OrgSettings({ screen } = {}) {
+  // Master Data scopes this to "workspace-settings" (View / Edit); elsewhere the legacy role check still applies.
+  const gate = useScreenGate(screen);
   const me = useCurrentUser();
   // Company-wide configuration (profile, security, channels) is an administrator decision — HR / CHRO can open Settings
   // and used to change the legal name, MFA, IP allow-list and SSO for the whole company.
-  const canEdit = me.role === "SuperAdmin" || me.role === "Admin";
+  const canEdit = gate.gated ? gate.can("Edit") : me.role === "SuperAdmin" || me.role === "Admin";
   const activeOrgId = useActiveOrgId();
   const orgs = useOrgs();
   const org = orgs.find((o) => o.id === activeOrgId);
@@ -262,7 +265,7 @@ export function OrgSettings() {
 
         {/* Keyed by entity so the colour draft never carries one company's palette into another. */}
         <TabsContent value="brand" className="pt-4">
-          <BrandingTab key={activeOrgId} orgId={activeOrgId} />
+          <BrandingTab key={activeOrgId} orgId={activeOrgId} screen={gate.screen ?? undefined} />
         </TabsContent>
 
         {/* <TabsContent value="security" className="pt-4">
@@ -370,7 +373,8 @@ export function OrgSettings() {
 }
 
 /** Colours & logo — changes here re-theme the entire system live (buttons, sidebar, badges, reports). */
-function BrandingTab({ orgId }) {
+function BrandingTab({ orgId, screen }) {
+  const gate = useScreenGate(screen);
   const me = useCurrentUser();
   const theme = useOrgTheme(orgId);
   const brand = useResolvedBrand(orgId);
@@ -384,7 +388,7 @@ function BrandingTab({ orgId }) {
   }
   const [live, setLive] = useState(true);
   const fileRef = useRef(null);
-  const canEdit = me.role === "SuperAdmin" || me.role === "Admin";
+  const canEdit = gate.gated ? gate.can("Edit") : me.role === "SuperAdmin" || me.role === "Admin";
   const update = (patch) => {
     const next = { ...draft, ...patch };
     setDraft(next);
@@ -535,12 +539,12 @@ function BrandingTab({ orgId }) {
               </div>
             </div>
             <div className="flex flex-wrap justify-end gap-2">
-              <Button variant="outline" onClick={reset} disabled={!canEdit}>
+              {gate.can("Edit") && <Button variant="outline" onClick={reset} disabled={!canEdit}>
                 <RotateCcw className="h-4 w-4" /> Reset to Seereon default
-              </Button>
-              <Button className="bg-gradient-emerald text-white" onClick={save} disabled={!canEdit}>
+              </Button>}
+              {gate.can("Edit") && <Button className="bg-gradient-emerald text-white" onClick={save} disabled={!canEdit}>
                 Apply to the whole system
-              </Button>
+              </Button>}
             </div>
             {!canEdit && (
               <div className="text-muted-foreground text-xs">
@@ -587,14 +591,14 @@ function BrandingTab({ orgId }) {
                     }
                   }}
                 />
-                <Button
+                {gate.can("Edit") && <Button
                   variant="outline"
                   size="sm"
                   disabled={!canEdit}
                   onClick={() => fileRef.current?.click()}
                 >
                   <Upload className="h-4 w-4" /> Upload
-                </Button>
+                </Button>}
               </div>
             </Row>
             <Row stack label="Tagline" hint="Printed under the company name on documents.">

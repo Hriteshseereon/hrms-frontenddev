@@ -10,11 +10,13 @@ import { EmployeeLeaveSheet } from "@/features/leave/components/LeavePieces";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 import { exportReportPdf } from "@/lib/export-utils";
+import { useScreenActions } from "@/features/auth/data/module-access";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
 
 const TYPES = ["Casual Leave", "Sick Leave", "Earned Leave"];
 
 export function LeaveBalanceTab() {
+  const leaveAccess = useScreenActions("leave.leave.leave-balances");
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState(null);
 
@@ -62,7 +64,7 @@ export function LeaveBalanceTab() {
               <Wallet className="h-3.5 w-3.5" /> Balances credited to date for the leave year ·
               click an employee for the leave record
             </span>
-            <Button
+            {leaveAccess.can("Export") && <Button
               size="sm"
               variant="outline"
               onClick={() =>
@@ -90,7 +92,7 @@ export function LeaveBalanceTab() {
               }
             >
               <Download className="h-4 w-4" /> Balance report
-            </Button>
+            </Button>}
           </div>
         </CardContent>
       </Card>

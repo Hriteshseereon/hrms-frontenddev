@@ -39,8 +39,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { payrollRunApi, detailText } from "@/api/payrollRunApi";
-import { useCan } from "@/features/auth/data/module-access";
-import { useSessionStore } from "@/features/auth/data/session-store";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 const STATUS_TONE = {
   Draft: "bg-muted text-muted-foreground border-border",
@@ -430,9 +429,7 @@ function Stepper({ run, showDecisionMessages = false }) {
 }
 
 function RunDetail({ runId, onBack, onChanged }) {
-  const can = useCan();
-  const roles = useSessionStore((s) => s.roles);
-  const currentRole = useSessionStore((s) => s.role);
+  const payrollAccess = useScreenActions("payroll.finance.payroll-run");
   const [run, setRun] = useState(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -475,7 +472,7 @@ function RunDetail({ runId, onBack, onChanged }) {
     run?.payslips_published_at || run?.payslips_published || publishedRunId === run?.id,
   );
   const slipsAvailable = run?.status === "Paid" || slipsPublished;
-  const canUploadPayments = can("payroll.process") || can("finance.manage");
+  const canUploadPayments = payrollAccess.can("Bulk Upload");
   const registerLines = run?.lines ?? [];
   const totalPages = Math.max(1, Math.ceil(registerLines.length / limit));
   const pageLines = registerLines.slice((page - 1) * limit, page * limit);
@@ -596,18 +593,11 @@ function RunDetail({ runId, onBack, onChanged }) {
   if (!run) return <Skeleton className="h-64 w-full" />;
 
   const s = run.status;
-  const canRun = can("payroll.run");
-  const canApproveP = can("payroll.approve");
-  const canProcess = can("payroll.process");
-  const isHrManager = roles.some((role) =>
-    String(typeof role === "string" ? role : role?.name ?? "").trim().toLowerCase() === "hr manager",
-  );
-  const isHrViewer = [currentRole, ...roles].some((role) =>
-    /\bhr\b|human resource|chro/i.test(
-      String(typeof role === "string" ? role : role?.name ?? "").trim(),
-    ),
-  );
-  const canPublishPayslips = isHrManager && can("payroll.view");
+  const canEditPayroll = payrollAccess.can("Edit");
+  const canApproveP = payrollAccess.can("Approve");
+  const canRejectPayroll = payrollAccess.can("Reject");
+  const canProcess = payrollAccess.can("Process");
+  const canPublishPayslips = payrollAccess.can("Publish");
   const next = run.next_action ?? {};
   const openWarnings = (run.checks ?? []).filter((c) => c.severity === "warning" && c.status === "open").length;
   const t = run.totals ?? {};
@@ -640,12 +630,12 @@ function RunDetail({ runId, onBack, onChanged }) {
       )}
 
       <div className="flex flex-wrap gap-2">
-        {canRun && EDITABLE.includes(s) && (
+        {canEditPayroll && EDITABLE.includes(s) && (
           <Button size="sm" disabled={busy} onClick={() => quiet(() => payrollRunApi.runChecks(run.id), "Checks completed")}>
             <ShieldAlert className="h-4 w-4" /> {s === "Draft" ? "Run checks" : "Re-run checks"}
           </Button>
         )}
-        {canRun && s === "Checks Passed" && (
+        {canEditPayroll && s === "Checks Passed" && (
           <>
             {openWarnings > 0 && (
               <Button size="sm" variant="outline" disabled={busy} onClick={() => quiet(() => payrollRunApi.acknowledgeWarnings(run.id), "Warnings acknowledged")}>
@@ -657,14 +647,14 @@ function RunDetail({ runId, onBack, onChanged }) {
             </Button>
           </>
         )}
-        {canRun && EDITABLE.includes(s) && (
+        {canEditPayroll && EDITABLE.includes(s) && (
           <Button size="sm" variant="outline" onClick={() => setAdjOpen(true)}>
             <Plus className="h-4 w-4" /> Adjustments
           </Button>
         )}
-        {s === "Pending Approval" && canApproveP && next.can_act && (
+        {s === "Pending Approval" && next.can_act && (
           <>
-            <Button
+            {canApproveP && <Button
               size="sm"
               disabled={busy}
               onClick={() =>
@@ -678,8 +668,8 @@ function RunDetail({ runId, onBack, onChanged }) {
               }
             >
               <Check className="h-4 w-4" /> Approve
-            </Button>
-            <Button
+            </Button>}
+            {canRejectPayroll && <Button
               size="sm"
               variant="destructive"
               disabled={busy}
@@ -694,7 +684,7 @@ function RunDetail({ runId, onBack, onChanged }) {
               }
             >
               <X className="h-4 w-4" /> Reject
-            </Button>
+            </Button>}
             {canApproveP && (
               <Button
                 size="sm"
@@ -737,7 +727,7 @@ function RunDetail({ runId, onBack, onChanged }) {
             <Check className="h-4 w-4" /> Mark paid
           </Button>
         )}
-        {canRun && ["Rejected", "Checks Failed", "Checks Passed"].includes(s) && (
+        {canEditPayroll && ["Rejected", "Checks Failed", "Checks Passed"].includes(s) && (
           <Button size="sm" variant="outline" disabled={busy} onClick={() => quiet(() => payrollRunApi.reopen(run.id), "Run reopened as draft")}>
             <RotateCcw className="h-4 w-4" /> Reopen
           </Button>
@@ -791,7 +781,7 @@ function RunDetail({ runId, onBack, onChanged }) {
               {slipsPublished ? "Salary slips generated" : "Generate salary slips"}
             </Button>
           )}
-          {isHrViewer && <Stepper run={run} showDecisionMessages />}
+          <Stepper run={run} showDecisionMessages />
           {["Processed", "Paid"].includes(s) && (
             <Button
               size="sm"
@@ -1032,7 +1022,7 @@ function RunDetail({ runId, onBack, onChanged }) {
                     Set the daily rate
                   </Link>
                 )}
-                {canRun && EDITABLE.includes(s) && ["open", "escalated"].includes(c.status) && (
+                {canEditPayroll && EDITABLE.includes(s) && ["open", "escalated"].includes(c.status) && (
                   <div className="flex gap-2">
                     <Button size="sm" variant="outline" disabled={busy} onClick={() => quiet(() => payrollRunApi.resolveCheck(run.id, c.id, { action: "fix", note: "" }), "Marked as fixed")}>
                       Fixed
@@ -1118,14 +1108,9 @@ function RunDetail({ runId, onBack, onChanged }) {
 }
 
 export function PayrollRunsTab() {
-  const can = useCan();
-  const currentRole = useSessionStore((s) => s.role);
-  const roles = useSessionStore((s) => s.roles);
-  const isHrViewer = [currentRole, ...roles].some((role) =>
-    /\bhr\b|human resource|\bchro\b/i.test(
-      String(typeof role === "string" ? role : role?.name ?? "").trim(),
-    ),
-  );
+  const payrollAccess = useScreenActions("payroll.finance.payroll-run");
+  const canCreatePayroll = payrollAccess.can("Create");
+  const canEditPayroll = payrollAccess.can("Edit");
   const [status, setStatus] = useState("");
   const [period, setPeriod] = useState("");
   const [defaultPeriodLoaded, setDefaultPeriodLoaded] = useState(false);
@@ -1205,7 +1190,7 @@ export function PayrollRunsTab() {
 
   return (
     <div className="space-y-5">
-      {can("payroll.run") && (
+      {canCreatePayroll && (
         <Card className="shadow-card">
           <CardContent className="flex flex-wrap items-end gap-3 p-4">
             <label className="text-xs">
@@ -1261,22 +1246,22 @@ export function PayrollRunsTab() {
                 <th className="p-3 text-right">Gross</th>
                 <th className="p-3 text-right">Net</th>
                 <th className="p-3 text-left">Prepared by</th>
-                {isHrViewer && <th className="p-3 text-right">Action</th>}
+                {canEditPayroll && <th className="p-3 text-right">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-border divide-y">
               {loading &&
                 Array.from({ length: 4 }, (_, i) => (
                   <tr key={i}>
-                    <td colSpan={isHrViewer ? 8 : 7} className="p-3">
+                    <td colSpan={canEditPayroll ? 8 : 7} className="p-3">
                       <Skeleton className="h-6 w-full" />
                     </td>
                   </tr>
                 ))}
               {!loading && !(data?.items ?? []).length && (
                 <tr>
-                  <td colSpan={isHrViewer ? 8 : 7} className="text-muted-foreground p-8 text-center">
-                    No payroll runs yet.{can("payroll.run") ? " Lock the month's attendance, then create one above." : ""}
+                  <td colSpan={canEditPayroll ? 8 : 7} className="text-muted-foreground p-8 text-center">
+                    No payroll runs yet.{canCreatePayroll ? " Lock the month's attendance, then create one above." : ""}
                   </td>
                 </tr>
               )}
@@ -1292,9 +1277,9 @@ export function PayrollRunsTab() {
                     <td className="p-3 text-right tabular-nums">{money(r.gross)}</td>
                     <td className="p-3 text-right font-semibold tabular-nums">{money(r.net)}</td>
                     <td className="text-muted-foreground p-3">{r.prepared_by?.name ?? "—"}</td>
-                    {isHrViewer && (
+                    {canEditPayroll && (
                       <td className="p-3 text-right" onClick={(event) => event.stopPropagation()}>
-                        {can("payroll.run") && (EDITABLE.includes(r.status) || r.status === "Rejected") && (
+                        {(EDITABLE.includes(r.status) || r.status === "Rejected") && (
                           <Button size="sm" variant="outline" onClick={() => setSelected(r.id)}>
                             <Pencil className="h-3.5 w-3.5" /> Edit
                           </Button>

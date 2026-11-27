@@ -28,6 +28,7 @@ import {
 import { clickableRow } from "@/components/common/RecordDetail";
 import { Field, KV } from "@/features/employees/components/CasePieces";
 import { exportReportPdf } from "@/lib/export-utils";
+import { useScreenGate } from "@/components/common/useScreenGate";
 import { ASSET_KINDS, useAssets } from "@/features/assets/data/asset-data";
 import { useActiveOrgId } from "@/features/organization/data/group-data";
 import {
@@ -51,7 +52,9 @@ const blank = () => ({
   active: true,
 });
 
-export function AssetMasterTab() {
+export function AssetMasterTab({ screen } = {}) {
+  // Master Data scopes this to "asset-master"; elsewhere (no scope) every button is shown.
+  const gate = useScreenGate(screen);
   const orgId = useActiveOrgId();
   const api = useMemo(() => createAssetTypeApi(orgId), [orgId]);
   const [rows, setRows] = useState([]);
@@ -159,7 +162,7 @@ export function AssetMasterTab() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button
+            {gate.canPrint() && <Button
               variant="outline"
               size="sm"
               onClick={() =>
@@ -194,14 +197,14 @@ export function AssetMasterTab() {
               }
             >
               <Download className="h-4 w-4" /> PDF
-            </Button>
-            <Button
+            </Button>}
+            {gate.can("Create") && <Button
               size="sm"
               className="bg-gradient-emerald shadow-premium text-white"
               onClick={() => setEdit("new")}
             >
               <Plus className="h-4 w-4" /> Add asset type
-            </Button>
+            </Button>}
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -253,19 +256,19 @@ export function AssetMasterTab() {
                   <td className="py-2.5 pr-3 text-xs">{r.accessories.join(", ") || "—"}</td>
                   <td className="py-2.5 pr-3">{countOf(r)}</td>
                   <td className="py-2.5 pr-3" onClick={(e) => e.stopPropagation()}>
-                    <Switch checked={r.active} onCheckedChange={(v) => handleToggle(r, v)} />
+                    <Switch checked={r.active} disabled={!gate.can("Edit")} onCheckedChange={(v) => handleToggle(r, v)} />
                   </td>
                   <td className="py-2.5 pr-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex flex-wrap gap-1">
-                      <Button
+                      {gate.can("Edit") && <Button
                         size="icon"
                         variant="ghost"
                         className="h-8 w-8"
                         onClick={() => setEdit(r)}
                       >
                         <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
+                      </Button>}
+                      {gate.can("Delete") && <Button
                         size="icon"
                         variant="ghost"
                         className="text-destructive h-8 w-8"
@@ -278,7 +281,7 @@ export function AssetMasterTab() {
                         onClick={() => handleDelete(r)}
                       >
                         <Trash2 className="h-4 w-4" />
-                      </Button>
+                      </Button>}
                     </div>
                   </td>
                 </tr>
@@ -356,7 +359,7 @@ export function AssetMasterTab() {
                 </div>
               </div>
               <DialogFooter>
-                <Button
+                {gate.can("Edit") && <Button
                   variant="outline"
                   onClick={() => {
                     setEdit(view);
@@ -364,7 +367,7 @@ export function AssetMasterTab() {
                   }}
                 >
                   <Pencil className="h-4 w-4" /> Edit
-                </Button>
+                </Button>}
               </DialogFooter>
             </>
           )}

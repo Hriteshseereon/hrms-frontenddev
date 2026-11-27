@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, ShieldAlert, Gift, SplitSquareHorizontal } from "lucide-react";
 import { toast } from "sonner";
+import { useScreenGate } from "@/components/common/useScreenGate";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,6 +43,7 @@ const DEDUCTIONS = ["Fixed Amount", "% of Daily Wage", "Leave Deduction"];
 const REWARDS = ["Multiplier of Hourly Rate", "Fixed Amount / hr", "Comp Off"];
 
 export function PenaltyConfigTab() {
+  const gate = useScreenGate("master-data.attendance-time.penalty-overtime-rules");
   // Persisted rule sets (they were in-memory lists, and "Save Policy" only showed a toast without saving anything).
   const penalties = penaltyRuleStore.use();
   const setPenalties = penaltyRuleStore.set;
@@ -214,6 +216,7 @@ export function PenaltyConfigTab() {
           <div className="mt-4 flex justify-end">
             <Button
               className="bg-gradient-emerald text-white"
+              disabled={!gate.can("Edit")}
               onClick={() => {
                 if (
                   !(policy.minHoursHalfDay > 0) ||
@@ -250,7 +253,7 @@ export function PenaltyConfigTab() {
                 </div>
               </div>
             </div>
-            <Dialog open={openP} onOpenChange={setOpenP}>
+            {gate.can("Create") && <Dialog open={openP} onOpenChange={setOpenP}>
               <DialogTrigger asChild>
                 <Button size="sm" className="bg-gradient-emerald text-white">
                   <Plus className="h-4 w-4" /> New Penalty Rule
@@ -370,7 +373,7 @@ export function PenaltyConfigTab() {
                   </Button>
                 </DialogFooter>
               </DialogContent>
-            </Dialog>
+            </Dialog>}
           </div>
 
           <div className="border-border overflow-x-auto rounded-lg border">
@@ -405,6 +408,7 @@ export function PenaltyConfigTab() {
                     <td className="text-muted-foreground p-3">{r.appliesTo}</td>
                     <td className="p-3" onClick={(e) => e.stopPropagation()}>
                       <Switch
+                        disabled={!gate.can("Edit")}
                         checked={r.active}
                         onCheckedChange={(v) =>
                           setPenalties((p) =>
@@ -436,7 +440,7 @@ export function PenaltyConfigTab() {
                 </div>
               </div>
             </div>
-            <Dialog open={openO} onOpenChange={setOpenO}>
+            {gate.can("Create") && <Dialog open={openO} onOpenChange={setOpenO}>
               <DialogTrigger asChild>
                 <Button size="sm" className="bg-gradient-emerald text-white">
                   <Plus className="h-4 w-4" /> New Overtime Rule
@@ -534,7 +538,7 @@ export function PenaltyConfigTab() {
                   </Button>
                 </DialogFooter>
               </DialogContent>
-            </Dialog>
+            </Dialog>}
           </div>
 
           <div className="border-border overflow-x-auto rounded-lg border">
@@ -565,6 +569,7 @@ export function PenaltyConfigTab() {
                     <td className="p-3">{r.monthlyCap}</td>
                     <td className="p-3" onClick={(e) => e.stopPropagation()}>
                       <Switch
+                        disabled={!gate.can("Edit")}
                         checked={r.active}
                         onCheckedChange={(v) =>
                           setOvertime((p) =>

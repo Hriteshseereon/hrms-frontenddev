@@ -22,6 +22,7 @@ import { resolveShiftForEmployee, shiftTimingFlag } from "@/features/attendance/
 import { getEmployeeProfile } from "@/features/employees/data/employee-directory";
 import { cn } from "@/lib/utils";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 
 const OT_THRESHOLD = OT_AFTER_HOURS;
 const SHORT_THRESHOLD = 7.5;
@@ -62,6 +63,7 @@ export function WorkHoursTab() {
   const [office, setOffice] = useState("all");
   const [filter, setFilter] = useState("all");
   const [detail, setDetail] = useState(null);
+  const canExport = useScreenAccess("attendance.daily.work-hours-overtime").can("Export");
 
   const scopedIds = useScopedIds();
   const scopedEmployees = useScopedEmployees();
@@ -202,6 +204,7 @@ export function WorkHoursTab() {
           </Select>
           <div className="text-muted-foreground ml-auto flex flex-wrap items-center gap-2 text-xs">
             {rows.length} records
+            {canExport && (
             <Button
               size="sm"
               variant="outline"
@@ -256,6 +259,8 @@ export function WorkHoursTab() {
             >
               <Download className="h-4 w-4" /> CSV
             </Button>
+            )}
+            {canExport && (
             <Button
               size="sm"
               variant="outline"
@@ -315,6 +320,7 @@ export function WorkHoursTab() {
             >
               <Download className="h-4 w-4" /> Report PDF
             </Button>
+            )}
           </div>
         </CardContent>
       </Card>

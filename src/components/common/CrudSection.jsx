@@ -30,6 +30,7 @@ import {
   archiveRecord,
   registerArchiveRestorer,
 } from "@/features/administration/data/archive-data";
+import { useScreenGate } from "@/components/common/useScreenGate";
 
 /**
  * API support is optional.
@@ -170,7 +171,11 @@ export function CrudSection({
   seed,
   emptyText,
   api,
+  // RBAC screen (key or full code) whose actions gate the buttons; defaults to the nearest <ScreenScope>.
+  // With neither, every button is shown (non-RBAC uses).
+  screen,
 }) {
+  const gate = useScreenGate(screen);
   const storeKey = `${idPrefix}.${slugOf(title)}`;
   const store = sectionStore(storeKey, seed);
   const storedRows = store.use();
@@ -511,20 +516,24 @@ export function CrudSection({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                exportCsv(slugOf(title), exportColumns, exportRows);
-                toast.success("CSV exported");
-              }}
-            >
-              <Download className="h-4 w-4" /> CSV
-            </Button>
+            {gate.can("Export") && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  exportCsv(slugOf(title), exportColumns, exportRows);
+                  toast.success("CSV exported");
+                }}
+              >
+                <Download className="h-4 w-4" /> CSV
+              </Button>
+            )}
 
-            <Button size="sm" variant="outline" onClick={downloadPdf}>
-              <FileText className="h-4 w-4" /> PDF
-            </Button>
+            {gate.canPrint() && (
+              <Button size="sm" variant="outline" onClick={downloadPdf}>
+                <FileText className="h-4 w-4" /> PDF
+              </Button>
+            )}
 
             <Dialog
               open={open}
@@ -537,15 +546,17 @@ export function CrudSection({
                 }
               }}
             >
-              <DialogTrigger asChild>
-                <Button
-                  size="sm"
-                  className="bg-gradient-emerald text-white"
-                  onClick={startAdd}
-                >
-                  <Plus className="h-4 w-4" /> {addLabel}
-                </Button>
-              </DialogTrigger>
+              {gate.can("Create") && (
+                <DialogTrigger asChild>
+                  <Button
+                    size="sm"
+                    className="bg-gradient-emerald text-white"
+                    onClick={startAdd}
+                  >
+                    <Plus className="h-4 w-4" /> {addLabel}
+                  </Button>
+                </DialogTrigger>
+              )}
 
               <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
                 <DialogHeader>
@@ -727,17 +738,19 @@ export function CrudSection({
                 Close
               </Button>
 
-              <Button
-                className="bg-gradient-emerald text-white"
-                onClick={() => {
-                  const row = viewRow;
-                  setViewRow(null);
+              {gate.can("Edit") && (
+                <Button
+                  className="bg-gradient-emerald text-white"
+                  onClick={() => {
+                    const row = viewRow;
+                    setViewRow(null);
 
-                  if (row) startEdit(row);
-                }}
-              >
-                <Pencil className="h-4 w-4" /> Edit
-              </Button>
+                    if (row) startEdit(row);
+                  }}
+                >
+                  <Pencil className="h-4 w-4" /> Edit
+                </Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -838,25 +851,29 @@ export function CrudSection({
                         <Eye className="h-4 w-4" />
                       </Button>
 
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8"
-                        title="Edit"
-                        onClick={() => startEdit(row)}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
+                      {gate.can("Edit") && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          title="Edit"
+                          onClick={() => startEdit(row)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                      )}
 
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="text-destructive hover:text-destructive h-8 w-8"
-                        title="Delete"
-                        onClick={() => setDeleteRow(row)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      {gate.can("Delete") && (
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive h-8 w-8"
+                          title="Delete"
+                          onClick={() => setDeleteRow(row)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

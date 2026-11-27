@@ -2,5 +2,5 @@ import { GrievanceWorkspace } from "@/features/exit/components/GrievanceWorkspac
 
 /** People → Complaints: the same Grievance Redressal workspace (single source of truth), embedded. */
 export function ComplaintsTab() {
-  return <GrievanceWorkspace embedded />;
+  return <GrievanceWorkspace embedded screen="employee-complaints" />;
 }

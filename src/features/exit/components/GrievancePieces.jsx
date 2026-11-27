@@ -210,7 +210,7 @@ export function RaiseGrievanceForm({ onDone, onBehalf }) {
   );
 }
 
-export function GrievanceDetail({ g, mode, onRefresh }) {
+export function GrievanceDetail({ g, mode, onRefresh, canEdit = true, canApprove = true }) {
   const me = useCurrentUser();
   const [note, setNote] = useState("");
   const [vis, setVis] = useState(true);
@@ -397,9 +397,9 @@ export function GrievanceDetail({ g, mode, onRefresh }) {
         </div>
       )}
 
-      {mode === "hr" && !isComplainant && !["Closed", "Withdrawn"].includes(g.status) && (
+      {mode === "hr" && !isComplainant && (canEdit || canApprove) && !["Closed", "Withdrawn"].includes(g.status) && (
         <div className="border-border space-y-3 rounded-xl border p-3">
-          {g.status === "Submitted" && (
+          {canEdit && g.status === "Submitted" && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <Button
@@ -450,7 +450,7 @@ export function GrievanceDetail({ g, mode, onRefresh }) {
           )}
           {["Acknowledged", "Under investigation", "Appealed"].includes(g.status) && (
             <>
-              <div className="space-y-2 p-3 rounded-lg border border-border bg-muted/10">
+              {canEdit && <div className="space-y-2 p-3 rounded-lg border border-border bg-muted/10">
                 <Label className="text-xs font-semibold">Add Investigation Note</Label>
                 <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Record findings, interviews conducted, or progress updates…" />
                 <div className="flex items-center justify-between pt-1">
@@ -467,9 +467,9 @@ export function GrievanceDetail({ g, mode, onRefresh }) {
                     Add note
                   </Button>
                 </div>
-              </div>
+              </div>}
 
-              <div className="space-y-2 p-3 rounded-lg border border-border bg-muted/10">
+              {canApprove && <div className="space-y-2 p-3 rounded-lg border border-border bg-muted/10">
                 <div className="font-semibold text-xs text-foreground">Record Final Resolution</div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <div className="space-y-1">
@@ -499,10 +499,10 @@ export function GrievanceDetail({ g, mode, onRefresh }) {
                 >
                   <Gavel className="h-4 w-4 mr-1.5" /> Mark Resolved &amp; Start 7-Day Confirmation Window
                 </Button>
-              </div>
+              </div>}
             </>
           )}
-          {g.status === "Resolved" && (
+          {canEdit && g.status === "Resolved" && (
             <div className="p-3 rounded-lg border border-border bg-muted/10 space-y-2 text-xs">
               <div className="font-semibold text-foreground">Close Grievance</div>
               <p className="text-muted-foreground">

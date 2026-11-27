@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { payrollRunApi, detailText } from "@/api/payrollRunApi";
-import { useSessionStore } from "@/features/auth/data/session-store";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 const inr = (n) => `₹${Number(n ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const str = (v) => (v === null || v === undefined ? "" : String(v));
@@ -163,8 +163,8 @@ function SectionCard({ title, subtitle, action, children }) {
 const TH = "p-3 text-left";
 
 export function PayrollPolicyTab() {
-  const role = useSessionStore((s) => String(s.role ?? "").toUpperCase());
-  const isAdmin = ["SUPER_ADMIN", "COMPANY_ADMIN"].includes(role);
+  const policyAccess = useScreenActions("payroll.finance.wage-statutory-policy");
+  const canEditPolicy = policyAccess.can("Edit");
   const [policy, setPolicy] = useState(null);
   const [error, setError] = useState("");
   const [dialog, setDialog] = useState(null); // { kind: "wage" | "statutory" | "pt", ... }
@@ -216,7 +216,7 @@ export function PayrollPolicyTab() {
   const st = policy.statutory ?? {};
   const byState = Object.entries(st.pt_slabs_by_state ?? {});
   const editBtn = (kind, label = "Edit") =>
-    isAdmin && (
+    canEditPolicy && (
       <Button size="sm" variant="outline" className="gap-1" onClick={() => setDialog({ kind })}>
         <Pencil className="h-3.5 w-3.5" /> {label}
       </Button>
@@ -224,8 +224,8 @@ export function PayrollPolicyTab() {
 
   return (
     <div className="space-y-5">
-      {!isAdmin && (
-        <div className="text-muted-foreground rounded-md border p-3 text-xs">You can view the policy. Only an admin can change it.</div>
+      {!canEditPolicy && (
+        <div className="text-muted-foreground rounded-md border p-3 text-xs">You can view the policy. Your role does not have edit permission.</div>
       )}
 
       <SectionCard
@@ -327,7 +327,7 @@ export function PayrollPolicyTab() {
         title="Professional tax"
         subtitle="An employee's PT state picks the slabs. No state, or a state not listed here, uses the default slabs."
         action={
-          isAdmin && (
+          canEditPolicy && (
             <Button size="sm" className="gap-1" onClick={() => setDialog({ kind: "pt", mode: "add" })}>
               <Plus className="h-3.5 w-3.5" /> Add state
             </Button>
@@ -339,7 +339,7 @@ export function PayrollPolicyTab() {
             <tr>
               <th className={TH}>State</th>
               <th className={TH}>Slabs (monthly gross → tax)</th>
-              <th className="p-3 text-right">{isAdmin ? "Actions" : ""}</th>
+              <th className="p-3 text-right">{canEditPolicy ? "Actions" : ""}</th>
             </tr>
           </thead>
           <tbody className="divide-border divide-y">
@@ -352,7 +352,7 @@ export function PayrollPolicyTab() {
                 <SlabSummary slabs={st.pt_slabs} />
               </td>
               <td className="p-3 text-right align-top">
-                {isAdmin && (
+                {canEditPolicy && (
                   <Button size="sm" variant="ghost" className="gap-1" onClick={() => setDialog({ kind: "pt", mode: "default" })}>
                     <Pencil className="h-3.5 w-3.5" /> Edit
                   </Button>
@@ -373,7 +373,7 @@ export function PayrollPolicyTab() {
                   <SlabSummary slabs={slabs} />
                 </td>
                 <td className="p-3 text-right align-top">
-                  {isAdmin && (
+                  {canEditPolicy && (
                     <div className="flex justify-end gap-1">
                       <Button size="sm" variant="ghost" className="gap-1" onClick={() => setDialog({ kind: "pt", mode: "edit", state })}>
                         <Pencil className="h-3.5 w-3.5" /> Edit

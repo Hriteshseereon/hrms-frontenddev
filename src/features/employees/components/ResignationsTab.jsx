@@ -25,7 +25,8 @@ import {
 import { toast } from "sonner";
 import { ResignationFormDialog } from "@/features/employees/components/ResignationFormDialog";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
-import { can, useCurrentUser, userById } from "@/features/auth/data/auth-session";
+import { useCurrentUser, userById } from "@/features/auth/data/auth-session";
+import { isAdminRole, useScreenAccess } from "@/features/auth/data/module-access";
 import { useScopedIds } from "@/features/employees/components/CasePieces";
 import { findEmployee } from "@/features/employees/data/employee-directory";
 import { managerStore } from "@/features/organization/data/manager-data";
@@ -57,16 +58,19 @@ export function ResignationsTab() {
   const scopedIds = useScopedIds();
   const rows = useExitRequests().filter((r) => scopedIds.has(r.empId));
   const me = useCurrentUser();
-  // Manager-stage decisions need exit.manager.decide, HR-stage decisions exit.hr.approve; nobody decides their own exit.
+  const access = useScreenAccess("employee-resignations");
+  const canCreate = access.can("Create");
+  const canApprove = access.can("Approve");
+  // Decisions need the screen's Approve permission; nobody decides their own exit.
   const canDecide = (r) =>
+    canApprove &&
     r.empId !== me.id &&
     (r.stage === "Manager Review"
-      ? // The recorded reporting manager decides; SuperAdmin / Admin / CHRO may act on their behalf.
-        can(me.role, "exit.manager.decide") &&
-        (r.managerId === me.id || ["SuperAdmin", "Admin", "CHRO"].includes(me.role))
+      ? // The recorded reporting manager decides; an admin may act on their behalf.
+        r.managerId === me.id || isAdminRole(me.role)
       : r.stage === "HR Review"
         ? // Maker-checker: the HR acceptance comes from someone other than the manager-stage decider.
-          can(me.role, "exit.hr.approve") && r.managerDecision?.by !== me.name
+          r.managerDecision?.by !== me.name
         : false);
   const [q, setQ] = useState("");
   const [decision, setDecision] = useState(null);
@@ -141,11 +145,13 @@ export function ResignationsTab() {
             {pending} pending approval
           </div>
           <Dialog open={openNew} onOpenChange={setOpenNew}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-gradient-emerald shadow-premium ml-auto text-white">
-                <Plus className="h-4 w-4" /> New Resignation
-              </Button>
-            </DialogTrigger>
+            {canCreate && (
+              <DialogTrigger asChild>
+                <Button size="sm" className="bg-gradient-emerald shadow-premium ml-auto text-white">
+                  <Plus className="h-4 w-4" /> New Resignation
+                </Button>
+              </DialogTrigger>
+            )}
             <ResignationFormDialog
               onSubmit={(r) => {
                 if (rows.some((x) => x.empId === r.empId && ACTIVE_STAGES.includes(x.stage))) {

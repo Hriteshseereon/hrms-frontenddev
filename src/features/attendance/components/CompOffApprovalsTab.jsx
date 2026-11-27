@@ -24,6 +24,7 @@ import {
 } from "@/features/travel/data/compoff-data";
 import { RecordDetailDialog, clickableRow } from "@/components/common/RecordDetail";
 import { useScopeMatch } from "@/features/organization/data/tenancy";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 const tone = {
   "Pending Approval": "border-gold/40 bg-gold/10 text-gold",
@@ -34,6 +35,9 @@ const tone = {
 
 export function CompOffApprovalsTab() {
   const me = useCurrentUser();
+  const leaveAccess = useScreenActions("leave.leave.comp-off-approvals");
+  const canApproveCompOff = leaveAccess.can("Approve");
+  const canRejectCompOff = leaveAccess.can("Reject");
   // All users of the entity (seeded roster + new hires / invited users), not just the seed list.
   const inScope = useScopeMatch();
   const orgUsers = allUsers().filter((u) => inScope(u.orgId, null, u.branch));
@@ -177,9 +181,9 @@ export function CompOffApprovalsTab() {
                     </div>
                     {r.status === "Pending Approval" &&
                       r.employeeId !== me.id &&
-                      canActOn(r.chain, me.id, me.role, r.employeeId) && (
+                      canActOn(r.chain, me.id, me.role, r.employeeId) && (canApproveCompOff || canRejectCompOff) && (
                         <div className="flex shrink-0 flex-wrap gap-2">
-                          <Button
+                          {canApproveCompOff && <Button
                             size="sm"
                             className="bg-gradient-emerald text-white"
                             onClick={() => {
@@ -192,8 +196,8 @@ export function CompOffApprovalsTab() {
                             }}
                           >
                             <CheckCircle2 className="h-4 w-4" /> Approve
-                          </Button>
-                          <Button
+                          </Button>}
+                          {canRejectCompOff && <Button
                             size="sm"
                             variant="outline"
                             className="text-destructive"
@@ -214,7 +218,7 @@ export function CompOffApprovalsTab() {
                             }}
                           >
                             <XCircle className="h-4 w-4" /> Reject
-                          </Button>
+                          </Button>}
                         </div>
                       )}
                   </div>
