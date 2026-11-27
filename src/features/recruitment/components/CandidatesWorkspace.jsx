@@ -15,6 +15,8 @@ import {
   Pencil,
   XCircle,
   Info,
+  ArrowLeft,
+  Briefcase,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -58,16 +60,22 @@ import { exportLetterPdf } from "@/lib/export-utils";
 
 const act = (r) => toast[r.ok ? "success" : "error"](r.message);
 
-export function CandidatesWorkspace() {
+/**
+ * `lockedJobId` (from /org/recruitment/candidates/:jobId, the "View applicants" button of a job post) shows only that
+ * job's applicants: job header + back link, no job picker, no "Job post" column, new applicants go to that job.
+ */
+export function CandidatesWorkspace({ lockedJobId } = {}) {
   const me = useCurrentUser();
   // Scoped to the entity in view (applicants of every entity were listed and could be shortlisted by any entity).
   const jobs = useScopedJobPosts();
   const all = useScopedApplicants();
-  const [jobId, setJobId] = useState(jobs[0]?.id ?? "all");
+  const [pickedJobId, setJobId] = useState(jobs[0]?.id ?? "all");
+  const jobId = lockedJobId ?? pickedJobId;
   // A job id from another entity (after switching entity) would leave the list empty with no matching option.
-  if (jobId !== "all" && jobs.length && !jobs.some((j) => j.id === jobId)) setJobId("all");
+  if (!lockedJobId && jobId !== "all" && jobs.length && !jobs.some((j) => j.id === jobId))
+    setJobId("all");
   const [q, setQ] = useState("");
-  const [stage, setStage] = useState("Applied");
+  const [stage, setStage] = useState(lockedJobId ? "all" : "Applied");
   const [cv, setCv] = useState(null);
   const [edit, setEdit] = useState(null);
   const [schedule, setSchedule] = useState(null);
@@ -93,38 +101,59 @@ export function CandidatesWorkspace() {
   const counts = (s) =>
     all.filter((a) => (jobId === "all" || a.jobId === jobId) && (s === "all" || a.stage === s))
       .length;
+  if (lockedJobId && !job)
+    return (
+      <Card className="shadow-card">
+        <CardContent className="text-muted-foreground space-y-3 p-10 text-center text-sm">
+          <div>
+            Job post <b className="font-mono">{lockedJobId}</b> was not found for this company.
+          </div>
+          <Button asChild size="sm" variant="outline">
+            <Link href="/org/recruitment/postings">
+              <ArrowLeft className="h-4 w-4" /> Back to job posts
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+    );
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">Step 2 · Candidates applied</h2>
-          <p className="text-muted-foreground text-sm">
-            Applicants from the careers portal, LinkedIn, Naukri, referrals and agencies. Shortlist
-            manually or run the ATS engine; shortlisted candidates move to Step 3.
-          </p>
+      {lockedJobId ? (
+        <JobHeader job={job} total={counts("all")} onAdd={() => setAddOpen(true)} />
+      ) : (
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Step 2 · Candidates applied</h2>
+            <p className="text-muted-foreground text-sm">
+              Applicants from the careers portal, LinkedIn, Naukri, referrals and agencies.
+              Shortlist manually or run the ATS engine; shortlisted candidates move to Step 3.
+            </p>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4" /> Add applicant
+          </Button>
         </div>
-        <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
-          <Plus className="h-4 w-4" /> Add applicant
-        </Button>
-      </div>
+      )}
       <Card className="shadow-card">
         <CardContent className="flex flex-wrap items-end gap-3 p-4">
-          <div className="min-w-[260px] space-y-1">
-            <Label className="text-xs">Job post</Label>
-            <Select value={jobId} onValueChange={setJobId}>
-              <SelectTrigger className="h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All job posts</SelectItem>
-                {jobs.map((j) => (
-                  <SelectItem key={j.id} value={j.id}>
-                    {j.title} · {j.id}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {!lockedJobId && (
+            <div className="min-w-[260px] space-y-1">
+              <Label className="text-xs">Job post</Label>
+              <Select value={jobId} onValueChange={setJobId}>
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All job posts</SelectItem>
+                  {jobs.map((j) => (
+                    <SelectItem key={j.id} value={j.id}>
+                      {j.title} · {j.id}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="border-border bg-muted/40 flex h-9 min-w-[220px] flex-1 items-center gap-2 rounded-lg border px-3">
             <Search className="text-muted-foreground h-4 w-4" />
             <Input
@@ -193,7 +222,8 @@ export function CandidatesWorkspace() {
               <tr>
                 {[
                   "Candidate",
-                  "Job post",
+                  !lockedJobId && "Job post",
+                  "Applied on",
                   "Source",
                   "Exp / notice",
                   "Current → expected CTC",
@@ -201,18 +231,25 @@ export function CandidatesWorkspace() {
                   "ATS",
                   "Stage",
                   "",
-                ].map((h) => (
-                  <th key={h} className="p-3 text-left">
-                    {h}
-                  </th>
-                ))}
+                ]
+                  .filter((h) => h !== false)
+                  .map((h, i) => (
+                    <th key={i} className="p-3 text-left">
+                      {h}
+                    </th>
+                  ))}
               </tr>
             </thead>
             <tbody className="divide-border divide-y">
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="text-muted-foreground p-8 text-center">
-                    No candidates in this view.
+                  <td
+                    colSpan={lockedJobId ? 9 : 10}
+                    className="text-muted-foreground p-8 text-center"
+                  >
+                    {lockedJobId && counts("all") === 0
+                      ? "No one has applied for this job yet — add an applicant or share the career link."
+                      : "No candidates in this view."}
                   </td>
                 </tr>
               )}
@@ -227,12 +264,13 @@ export function CandidatesWorkspace() {
                       {a.email} · {a.phone}
                     </div>
                   </td>
-                  <td className="p-3 text-xs">
-                    {a.jobTitle}
-                    <div className="text-muted-foreground">
-                      {a.jobId} · applied <span className="whitespace-nowrap">{a.appliedOn}</span>
-                    </div>
-                  </td>
+                  {!lockedJobId && (
+                    <td className="p-3 text-xs">
+                      {a.jobTitle}
+                      <div className="text-muted-foreground">{a.jobId}</div>
+                    </td>
+                  )}
+                  <td className="p-3 text-xs whitespace-nowrap">{a.appliedOn}</td>
                   <td className="p-3">
                     <Badge variant="outline">{a.source}</Badge>
                   </td>
@@ -351,7 +389,73 @@ export function CandidatesWorkspace() {
       {schedule && (
         <ScheduleInterviewDialog applicant={schedule} onClose={() => setSchedule(null)} />
       )}
-      <AddApplicantDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      <AddApplicantDialog
+        key={lockedJobId ?? "any"}
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        lockedJobId={lockedJobId}
+      />
+    </div>
+  );
+}
+
+/** Header of the per-job applicants page: which job, its key facts, back to Step 1. */
+function JobHeader({ job, total, onAdd }) {
+  const st = job.status ?? "Open";
+  const facts = [
+    job.jobType,
+    job.location + (job.branch ? ` · ${job.branch}` : ""),
+    job.department,
+    job.positions && `${job.positions} position(s)`,
+    job.deadline && `Apply by ${job.deadline}`,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-3">
+      <Link
+        href="/org/recruitment/postings"
+        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm"
+      >
+        <ArrowLeft className="h-4 w-4" /> All job posts
+      </Link>
+      <Card className="shadow-card">
+        <CardContent className="flex flex-wrap items-center gap-4 p-4">
+          <div className="bg-gradient-emerald grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white">
+            <Briefcase className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold">{job.title}</h2>
+              <Badge variant="outline" className="font-mono text-[11px]">
+                {job.id}
+              </Badge>
+              <Badge
+                variant="outline"
+                className={
+                  st === "Open"
+                    ? "border-primary/30 bg-primary/10 text-primary"
+                    : "text-muted-foreground"
+                }
+              >
+                {st}
+              </Badge>
+            </div>
+            <div className="text-muted-foreground mt-0.5 text-xs">{facts.join(" · ")}</div>
+          </div>
+          <div className="text-right">
+            <div className="text-2xl font-bold">{total}</div>
+            <div className="text-muted-foreground text-xs">applicants</div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onAdd}
+            disabled={st !== "Open"}
+            title={st !== "Open" ? "Only open job posts accept new applicants" : ""}
+          >
+            <Plus className="h-4 w-4" /> Add applicant
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -635,13 +739,13 @@ function EditDialog({ a, onClose }) {
   );
 }
 
-function AddApplicantDialog({ open, onClose }) {
+function AddApplicantDialog({ open, onClose, lockedJobId }) {
   const sourceNames = useMasterNames("CS", "Candidate Sources", SOURCE_MASTER_SEED);
   const me = useCurrentUser();
   // Only open posts of the entity in view accept new applicants.
   const jobs = useScopedJobPosts().filter((j) => (j.status ?? "Open") === "Open");
   const blank = () => ({
-    jobId: jobs[0]?.id ?? "",
+    jobId: lockedJobId ?? jobs[0]?.id ?? "",
     name: "",
     email: "",
     phone: "",
@@ -671,7 +775,11 @@ function AddApplicantDialog({ open, onClose }) {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1 sm:col-span-2">
             <Label className="text-xs">Job post</Label>
-            <Select value={f.jobId} onValueChange={(v) => set("jobId", v)}>
+            <Select
+              value={f.jobId}
+              onValueChange={(v) => set("jobId", v)}
+              disabled={Boolean(lockedJobId)}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>

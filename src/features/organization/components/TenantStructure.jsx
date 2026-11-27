@@ -201,13 +201,14 @@ export function TenantStructure({
     }
   }, []);
 
-  // Branches belong to a company: organisation mode (no company open) has none to list.
+  // The group view lists every company with its branches, so branches load in organisation mode
+  // too (GET /super-admin/branches without X-Company-Id returns all of them). Re-load when the
+  // Super Admin switches between organisation mode and a company.
   const orgMode = useOrgMode();
   useEffect(() => {
     void loadRootOrg();
     void loadCompanies();
-    if (!orgMode) void loadBranches();
-    else setApiBranches([]);
+    void loadBranches();
   }, [loadRootOrg, loadCompanies, loadBranches, orgMode]);
 
   // Merge companies list with fallback

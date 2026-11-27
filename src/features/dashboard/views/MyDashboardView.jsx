@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getEmployeeProfile, initials } from "@/features/employees/data/employee-directory";
 import { useCurrentEmployee, useEmployeeAvatar } from "@/features/auth/data/emp-session";
+import { useDisplayRole } from "@/features/auth/data/session-store";
 import {
   useTasks,
   priorityClass,
@@ -69,6 +70,7 @@ function Kpi({ label, value, sub, icon: Icon, to }) {
 
 function EmpDashboard() {
   const me = useCurrentEmployee();
+  const roleLabel = useDisplayRole(me.role);
   const avatar = useEmployeeAvatar();
   const p = getEmployeeProfile(me.id);
   const tasks = useTasks().filter((t) => t.assignees.includes(me.id));
@@ -136,7 +138,7 @@ function EmpDashboard() {
               Welcome back, {me.name.split(" ")[0]}
             </h1>
             <p className="mt-0.5 text-sm text-white/70">
-              {[me.role, me.dept, me.branch].filter(Boolean).join(" · ")}
+              {[roleLabel, me.dept, me.branch].filter(Boolean).join(" · ")}
             </p>
           </div>
           <div className="ml-auto flex flex-wrap gap-2">
