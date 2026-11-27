@@ -77,6 +77,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CompanyAdminDialog } from "@/features/employees/components/CompanyAdminDialog";
+import { DeleteEmployeeDialog } from "@/features/employees/components/DeleteEmployeeDialog";
 import {
   canManageCompanyAdmins,
   companyIdFor,
@@ -177,6 +178,12 @@ function Employees() {
     (can(me.role, "employee.manage") || canCreateEmployee(session.role)) &&
     !isEmployeeRole &&
     canDo("employee.edit");
+  // Delete is for admin accounts only — never an employee, whatever their roles grant. The server enforces the
+  // same rule and also refuses your own record and other admin accounts.
+  const canDeletePeople = ["MASTER_ADMIN", "SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN", "COMPANYADMIN", "BRANCH_ADMIN", "BRANCHADMIN"].includes(
+    String(session.role || "").toUpperCase(),
+  );
+  const [deletingEmployee, setDeletingEmployee] = useState(null);
   const orgName = useOrgs().find((o) => o.id === orgId)?.name ?? "Organization";
   const directory = useDirectory();
   // Always show the live record — the dialog kept the row captured at click time, so a promotion / transfer made from
@@ -687,6 +694,17 @@ function Employees() {
                                 <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
                               </Button>
                             )}
+                            {canDeletePeople && !isOwnRow(e, session.userId) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-xs font-medium text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-950/40"
+                                onClick={() => setDeletingEmployee(e)}
+                                aria-label={`Delete ${e.name}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+                              </Button>
+                            )}
                             {canSetCompanyAdmin ? (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
@@ -828,6 +846,22 @@ function Employees() {
         action={adminAction}
         onClose={() => setAdminAction(null)}
         onDone={() => fetchBackendEmployees()}
+      />
+
+      <DeleteEmployeeDialog
+        employee={deletingEmployee}
+        onClose={() => setDeletingEmployee(null)}
+        onDone={(gone) => {
+          setChecked((p) => {
+            const n = new Set(p);
+            n.delete(gone.id);
+            return n;
+          });
+          if (picked?.id === gone.id) setPicked(null);
+          // Deleting the last row of a page would leave an empty page behind.
+          if (rows.length === 1 && page > 1) setPage(page - 1);
+          else fetchBackendEmployees();
+        }}
       />
 
       {/* Details Dialog */}
