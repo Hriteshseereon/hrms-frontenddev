@@ -301,7 +301,9 @@ export const PAGES = [
     shell: "org",
     title: "Workspace Dashboard",
     load: () =>
-      import("@/features/organization/views/OrgLevelScreens").then((m) => ({ default: m.DashboardRouter })),
+      import("@/features/organization/views/OrgLevelScreens").then((m) => ({
+        default: m.DashboardRouter,
+      })),
   },
   {
     path: "/org/company-modules",
@@ -449,6 +451,12 @@ export const PAGES = [
     load: () => import("@/features/recruitment/views/RecruitmentCandidatesView"),
   },
   {
+    path: "/org/recruitment/candidates/:jobId",
+    shell: "org",
+    title: "Job Applicants",
+    load: () => import("@/features/recruitment/views/RecruitmentJobApplicantsView"),
+  },
+  {
     path: "/org/recruitment/interviews",
     shell: "org",
     title: "Interviews",
@@ -471,7 +479,9 @@ export const PAGES = [
     shell: "org",
     title: "Reports",
     load: () =>
-      import("@/features/organization/views/OrgLevelScreens").then((m) => ({ default: m.ReportsRouter })),
+      import("@/features/organization/views/OrgLevelScreens").then((m) => ({
+        default: m.ReportsRouter,
+      })),
   },
   {
     path: "/org/roles",

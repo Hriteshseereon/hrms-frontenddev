@@ -12,8 +12,8 @@ import {
   onOfferDecision,
   sendOffer,
 } from "@/features/recruitment/data/onboarding-data";
-import {} from "@/features/organization/data/group-data";
-import { useScopeMatch } from "@/features/organization/data/tenancy";
+import { useActiveOrgId } from "@/features/organization/data/group-data";
+import { useScope, useScopeMatch } from "@/features/organization/data/tenancy";
 
 /**
  * @typedef {"Applied" | "Shortlisted" | "Interviewing" | "Finalised" | "Offered" | "Onboarding" | "Rejected"} ApplicantStage
@@ -112,9 +112,11 @@ export const jobPostStore = createPersistentStore(
   })),
 );
 export const useJobPosts = () => jobPostStore.use();
+/** Id the next job post will get — highest existing number + 1 (a count-based id could repeat a surviving post's id). */
+export const nextJobPostId = (list = jobPostStore.get()) =>
+  `JP-${list.reduce((m, j) => Math.max(m, Number(j.id.replace(/\D/g, "")) || 0), 1000) + 1}`;
 export function addJobPost(input, by) {
-  // Highest existing number + 1 — a count-based id could repeat a surviving post's id.
-  const id = `JP-${jobPostStore.get().reduce((m, j) => Math.max(m, Number(j.id.replace(/\D/g, "")) || 0), 1000) + 1}`;
+  const id = nextJobPostId();
   const row = {
     ...input,
     id,
@@ -715,6 +717,12 @@ if (typeof window !== "undefined") {
 /** Is this entity visible in the current scope (active entity, or every accessible entity in a Super Admin's group view)? */
 export function useOrgScopeFilter() {
   const match = useScopeMatch();
+  const scope = useScope();
+  const activeOrgId = useActiveOrgId();
+  // Signed in through the backend, the company id (organization_id) is not one of the demo entities in group-data,
+  // so the scope has no companies and every record was filtered out — a job just created never showed up. Records
+  // are stamped with the active org id when created, so match on that instead.
+  if (scope.companies.length === 0) return (entity) => entity === activeOrgId;
   return (entity) => match(entity ?? HQ_ORG);
 }
 /** Job posts of the entity in scope — recruitment data used to be shared by every entity of every group. */
