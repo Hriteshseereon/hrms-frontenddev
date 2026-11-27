@@ -170,6 +170,12 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
           if (!screens.length) return [];
           const icon = ASSIGNED_ICONS[moduleKey] ?? Building2;
           const moduleLabel = screens[0].moduleLabel ?? screens[0].label;
+          // Employees: one entry only. Its screens (Promotions, Resignations, Complaints, Insurance ...) are the tabs
+          // of the Employees page itself, so they are not repeated here.
+          if (moduleKey === "employee") {
+            const main = screens.find((sc) => sc.to.split(/[?#]/)[0] === "/org/employees") ?? screens[0];
+            return [{ key: moduleKey, to: main.to, label: moduleLabel, section: main.section, icon }];
+          }
           if (new Set(screens.map((sc) => sc.to.split(/[?#]/)[0])).size === 1)
             return [{ key: moduleKey, to: screens[0].to, label: moduleLabel, section: screens[0].section, icon }];
           // A module whose screens live on several pages (Employees: /org/employees, /org/exits, /org/grievances,
