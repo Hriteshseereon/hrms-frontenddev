@@ -18,7 +18,10 @@
  * @property {SubmoduleDef[]} submodules
  */
 
-export const PERMISSION_ACTIONS = ["Create", "View", "Edit", "Delete", "Export", "Bulk Upload", "Approve"];
+// Preferred display order of the common actions. It is NOT the list of allowed actions: a screen may offer any
+// action name in its `actions` array (e.g. "Reject", "Retain", "Re-hire") and it is picked up automatically —
+// see PERMISSION_ACTIONS below RBAC_MODULES. The backend stores whatever action names are sent.
+const COMMON_ACTIONS = ["Create", "View", "Edit", "Delete", "Export", "Import", "Bulk Upload", "Approve", "Reject"];
 export const DEFAULT_SCREEN_ACTIONS = ["View"];
 export const actionsForScreen = (screen) => screen.actions ?? DEFAULT_SCREEN_ACTIONS;
 /**
@@ -162,6 +165,26 @@ export const RBAC_MODULES = [
   sidebarScreen("workplace", "Projects & Assignments", "projects", "Projects & Assignments", "Projects & Tasks", "projects", ["Create", "View", "Edit", "Delete"]),
   sidebarScreen("workplace", "Tasks", "tasks", "Tasks", "Projects & Tasks", "work", ["Create", "View", "Edit", "Delete", "Approve"]),
 ];
+
+/**
+ * Every action some screen offers, derived from RBAC_MODULES: adding a new action name to any screen's `actions`
+ * is all it takes for the role wizard, the permission matrix and the API payload to carry it.
+ */
+const USED_ACTIONS = new Set(
+  RBAC_MODULES.flatMap((m) => m.submodules.flatMap((s) => s.screens.flatMap((sc) => actionsForScreen(sc)))),
+);
+export const PERMISSION_ACTIONS = [
+  ...COMMON_ACTIONS.filter((action) => USED_ACTIONS.has(action)),
+  ...[...USED_ACTIONS].filter((action) => !COMMON_ACTIONS.includes(action)),
+];
+
+/** "Bulk Upload" -> "bulk_upload": the action part of a permission string, same rule as the backend. */
+export const actionSlug = (action) =>
+  String(action ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
 /**
  * @typedef {Record<PermissionAction, boolean>} ScreenPermissions

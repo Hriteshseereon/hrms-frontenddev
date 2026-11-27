@@ -5,7 +5,7 @@ import { getMe } from "@/api/meApi";
 import { registerNavExtension } from "./auth-session";
 import { useSessionStore } from "./session-store";
 import { SCREEN_ROUTES } from "./rbac-store";
-import { RBAC_MODULES } from "./rbac";
+import { RBAC_MODULES, actionSlug } from "./rbac";
 import MODULE_ROUTES from "./module-routes.json";
 
 const ROUTE_MODULE = new Map(
@@ -80,6 +80,22 @@ export function useCan() {
   const role = useSessionStore((s) => s.role);
   const isAuthenticated = useSessionStore((s) => s.isAuthenticated);
   return (permission) => canDo(permission, { permissions, role, isAuthenticated });
+}
+
+/**
+ * May the user perform `action` on a screen of the role wizard? The action is any name the screen lists in
+ * RBAC_MODULES ("Create", "Bulk Upload", "Approve", "Re-hire" ...); nothing is hard-coded here.
+ *   canScreen("employee.employee-management.all-employees", "Bulk Upload")
+ * The backend sends one permission per granted action as "<screen_code>.<action slug>".
+ */
+export function canScreen(screenCode, action, s = useSessionStore.getState()) {
+  return canDo(`${screenCode}.${actionSlug(action)}`, s);
+}
+
+/** Hook form of `canScreen`: `const canOn = useCanScreen(); {canOn(SCREEN, "Export") && <ExportButton />}`. */
+export function useCanScreen() {
+  const can = useCan();
+  return (screenCode, action) => can(`${screenCode}.${actionSlug(action)}`);
 }
 
 /** Branch ids the user may pick, or null for every branch (`branch_scope` "ALL"). */
@@ -231,6 +247,8 @@ export function assignedScreens(s = useSessionStore.getState()) {
         view: Boolean(sc.view),
         edit: Boolean(sc.edit),
         delete: Boolean(sc.delete),
+        // every action granted on the screen, by label ("Create", "Bulk Upload", "Approve" ...)
+        actions: Array.isArray(sc.actions) ? sc.actions : [],
       });
     }
   }

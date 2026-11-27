@@ -534,26 +534,13 @@ function RoleWizard({ existing }) {
                       {screensWithPerms.map((item, idx) => (
                         <div key={idx} className="flex items-center justify-between text-xs">
                           <span>{item.screen}</span>
-                          <div className="flex gap-1">
-                            {item.p.Create && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-800 font-mono">C</span>}
-                            {item.p.View && (
-                              <span className="text-[9px] px-1 rounded bg-emerald-100 text-emerald-800 font-mono">
-                                V
+                          <div className="flex flex-wrap justify-end gap-1">
+                            {/* every granted action, whatever it is called */}
+                            {Object.keys(item.p).filter((action) => item.p[action]).map((action) => (
+                              <span key={action} className="rounded bg-emerald-100 px-1 text-[9px] text-emerald-800">
+                                {action}
                               </span>
-                            )}
-                            {item.p.Edit && (
-                              <span className="text-[9px] px-1 rounded bg-blue-100 text-blue-800 font-mono">
-                                E
-                              </span>
-                            )}
-                            {item.p.Delete && (
-                              <span className="text-[9px] px-1 rounded bg-rose-100 text-rose-800 font-mono">
-                                D
-                              </span>
-                            )}
-                            {item.p.Export && <span className="text-[9px] px-1 rounded bg-violet-100 text-violet-800 font-mono">EX</span>}
-                            {item.p["Bulk Upload"] && <span className="text-[9px] px-1 rounded bg-cyan-100 text-cyan-800 font-mono">BU</span>}
-                            {item.p.Approve && <span className="text-[9px] px-1 rounded bg-orange-100 text-orange-800 font-mono">AP</span>}
+                            ))}
                           </div>
                         </div>
                       ))}
