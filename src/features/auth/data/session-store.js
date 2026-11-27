@@ -255,6 +255,19 @@ export const useSessionStore = create()(
 );
 
 /**
+ * Role label for the top bar. `user.role` is only the login account type (EMPLOYEE / COMPANY_ADMIN …), so an employee
+ * given HR / Manager / Reporting Manager still read "Employee". The roles granted in Roles & Permissions come back as
+ * `roles` from login / refresh / GET /me — show those when there are any, otherwise the account type.
+ */
+export function useDisplayRole(fallback) {
+  const roles = useSessionStore((s) => s.roles);
+  const names = (Array.isArray(roles) ? roles : [])
+    .map((r) => (typeof r === "string" ? r : r?.name))
+    .filter(Boolean);
+  return names.length ? [...new Set(names)].join(", ") : fallback;
+}
+
+/**
  * Helper to check if a role is allowed to create employees.
  * An EMPLOYEE is strictly forbidden from creating other employees.
  */

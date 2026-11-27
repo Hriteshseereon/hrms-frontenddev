@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { initials } from "@/features/employees/data/employee-directory";
 import { useCurrentEmployee, useEmployeeAvatar } from "@/features/auth/data/emp-session";
 import { signOut, useCurrentUser } from "@/features/auth/data/auth-session";
-import { useSessionStore } from "@/features/auth/data/session-store";
+import { useDisplayRole, useSessionStore } from "@/features/auth/data/session-store";
 import { workspaceLoginPath } from "@/features/organization/data/tenancy";
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
@@ -104,6 +104,7 @@ export function EmpTopbar({ onMenu }) {
   const branchName = useSessionStore((s) => s.branchName);
   const avatar = useEmployeeAvatar();
   const router = useRouter();
+  const roleLabel = useDisplayRole(user.role);
 
   return (
     <header className="border-border bg-card/95 shadow-card glass-topbar pt-safe sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center gap-2 border-b px-3 backdrop-blur md:gap-3 md:px-6">
@@ -145,12 +146,12 @@ export function EmpTopbar({ onMenu }) {
           </Avatar>
           <div className="hidden max-w-[180px] min-w-0 text-left leading-tight xl:block">
             <div className="truncate text-sm font-semibold">{me.name}</div>
-            <div className="text-muted-foreground truncate text-[11px]">{me.role}</div>
+            <div className="text-muted-foreground truncate text-[11px]">{roleLabel}</div>
           </div>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuLabel>
-            {me.name} · {user.role}
+            {me.name} · {roleLabel}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem asChild>

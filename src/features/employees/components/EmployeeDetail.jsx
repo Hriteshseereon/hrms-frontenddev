@@ -185,10 +185,15 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
   }, [empId, apiData]);
 
   // Signed document URLs expire (~15 min), so a fresh one is fetched every time a preview opens.
-  const openDocPreview = async (type, label) => {
+  const openDocPreview = async (type, label, directUrl) => {
     try {
       const res = await getEmployeeDocuments(empId);
       const d = (res?.documents ?? []).find((x) => x.document_type === type);
+      // The photo and signatures are not in the documents list; their record carries a signed image link instead.
+      if (!d && directUrl) {
+        setPreview({ title: label, src: resolveApiUrl(directUrl), isPdf: false });
+        return;
+      }
       const src = resolveApiUrl(d?.view_url);
       if (!src) {
         toast.error("This document is not available to preview.");
@@ -816,7 +821,8 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                 { type: "appointment_letter", label: "Appointment Letter", url: merged.appointment_letter_url },
                 { type: "educational_certificate", label: "Educational Certificate", url: merged.educational_certificate_url },
                 { type: "address_proof", label: "Address Proof", url: merged.address_proof_url },
-                { type: "passport_photo", label: "Passport Photo", url: merged.passport_photo_url },
+                // The passport photo is saved as the employee photo (profile_photo_url, a signed image link).
+                { type: "photo", label: "Passport Photo", url: merged.profile_photo_url },
                 { type: "e_signature", label: "E-Signature", url: merged.e_signature_url },
                 { type: "employer_signature", label: "Signature of the Employer", url: merged.employer_signature_url },
                 { type: "passbook", label: "Cancelled Cheque / Passbook", url: merged.passbook_url },
@@ -837,7 +843,7 @@ export function EmployeeDetail({ employee, selfView = false, onEdit, onUpdated }
                       variant="outline"
                       size="sm"
                       className="h-8 text-xs"
-                      onClick={() => openDocPreview(type, label)}
+                      onClick={() => openDocPreview(type, label, url)}
                     >
                       <Eye className="mr-1.5 h-3.5 w-3.5" /> Preview
                     </Button>
