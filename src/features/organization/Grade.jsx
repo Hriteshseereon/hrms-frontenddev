@@ -3,6 +3,7 @@ import departmentGradeApi from "@/api/departmentGradeApi";
 import { SimpleMasterPage } from "@/features/organization/components/SimpleMasterPage";
 
 const config = {
+  screenCode: "master-data.company-configuration.department-grade",
   api: departmentGradeApi,
   fieldKey: "grade_code",
   icon: Layers,

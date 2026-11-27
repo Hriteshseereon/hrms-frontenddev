@@ -51,7 +51,7 @@ export const isOrgLevelUrl = (url) => {
  * employee / department / branch fields on other endpoints are real data and stay.
  */
 const MASTER_DATA_URL =
-  /^\/?(?:warning-types|complaint-types|leave-types|termination-types|performance-indicators|performance\/|attendance\/(?:shifts|patterns|holiday-calendars|workday-configurations)|attendance-and-time\/timesheet-formats|recruitment\/|assets\/asset-types|onboarding\/documents|documents\/policies-circulars)/;
+  /^\/?(?:masters\/|departments(?:\/|$)|department-grades(?:\/|$)|department-categories(?:\/|$)|department-sections(?:\/|$)|designations(?:\/|$)|warning-types|complaint-types|leave-types|termination-types|performance-indicators|performance\/|attendance\/(?:shifts|patterns|holiday-calendars|workday-configurations)|attendance-and-time\/timesheet-formats|recruitment\/|assets\/asset-types|onboarding\/documents|documents\/policies-circulars)/;
 
 export const isMasterDataUrl = (url) =>
   MASTER_DATA_URL.test(String(url ?? "").replace(/^https?:\/\/[^/]+(?:\/api\/v\d+)?/, ""));

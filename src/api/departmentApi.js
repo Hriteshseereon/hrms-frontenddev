@@ -2,6 +2,7 @@ import SuperAdmin_axios from "./SuperAdmin_axios";
 
 // Master Data → Organisation → Department
 // Company / branch scope is attached by the axios scope interceptor.
+// This is the endpoint exposed by the running HRMS backend.
 const BASE = "/departments";
 
 const departmentApi = {
@@ -21,7 +22,7 @@ const departmentApi = {
     return SuperAdmin_axios.post(BASE, data);
   },
 
-  // PUT /departments/{department_id}  (same body as create)
+  // PUT /departments/{department_id}
   updateDepartment(departmentId, data) {
     return SuperAdmin_axios.put(`${BASE}/${encodeURIComponent(departmentId)}`, data);
   },

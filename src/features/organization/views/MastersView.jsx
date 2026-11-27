@@ -121,6 +121,8 @@ import { NotificationCentre } from "@/features/communications/components/Notific
 // import { RolesHub } from "@/features/administration/components/RolesHubWorkspace";
 
 import { can, useCurrentUser } from "@/features/auth/data/auth-session";
+import { useSessionStore } from "@/features/auth/data/session-store";
+import { MASTER_DATA_TAB_BY_SCREEN } from "@/features/auth/data/rbac";
 
 import {
   DocMasterTab,
@@ -1966,6 +1968,10 @@ const GROUPS = [
 ];
 
 const ALL_ITEMS = GROUPS.flatMap((g) => g.items);
+const MASTER_DATA_SCREEN_KEYS_BY_TAB = Object.entries(MASTER_DATA_TAB_BY_SCREEN).reduce((tabs, [screenKey, tabKey]) => {
+  (tabs[tabKey] ??= []).push(screenKey);
+  return tabs;
+}, {});
 
 const readHash = () =>
   typeof window !== "undefined" ? window.location.hash.replace("#", "") : "";
@@ -1983,10 +1989,31 @@ const complaintTypeApi = createComplaintTypeApi();
 
 function Masters() {
   const me = useCurrentUser();
+  const sessionRole = useSessionStore((state) => state.role);
+  const apiSession = useSessionStore((state) => state.isAuthenticated);
+  const assignedModules = useSessionStore((state) => state.assignedModules);
+  const isAdmin = ["SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN", "BRANCH_ADMIN"].includes(String(sessionRole ?? "").toUpperCase());
+  const restrictToAssignedScreens = apiSession && !isAdmin;
+  const grantedMasterDataScreens = new Set(
+    (assignedModules ?? [])
+      .filter((module) => module.key === "master-data")
+      .flatMap((module) => module.submodules ?? [])
+      .flatMap((submodule) => submodule.screens ?? [])
+      .filter((screen) => screen.view)
+      .map((screen) => screen.key ?? screen.screen_code?.split(".").pop()),
+  );
+  const grantedTabKeys = [...new Set(Object.entries(MASTER_DATA_SCREEN_KEYS_BY_TAB)
+    .filter(([, screenKeys]) => screenKeys.some((key) => grantedMasterDataScreens.has(key)))
+    .map(([tabKey]) => tabKey))];
 
   // const [tab, setTab] = useState("infrastructure");
   // const [tab, setTab] = useState("entities");
-  const [tab, setTab] = useState("branding");
+  const [tab, setTab] = useState(() => {
+    const hash = readHash();
+    if (restrictToAssignedScreens)
+      return grantedTabKeys.includes(hash) ? hash : grantedTabKeys[0] ?? "infrastructure";
+    return hash || "branding";
+  });
 
   const [q, setQ] = useState("");
 
@@ -2008,7 +2035,13 @@ function Masters() {
     const on = () => {
       const h = readHash();
 
-      if (ALL_ITEMS.some((i) => i.key === h)) setTab(h);
+      if (!ALL_ITEMS.some((i) => i.key === h)) return;
+      if (!restrictToAssignedScreens || grantedTabKeys.includes(h)) setTab(h);
+      else {
+        const next = grantedTabKeys[0] ?? "branding";
+        setTab(next);
+        window.history.replaceState(null, "", `#${next}`);
+      }
     };
 
     on();
@@ -2016,7 +2049,7 @@ function Masters() {
     window.addEventListener("hashchange", on);
 
     return () => window.removeEventListener("hashchange", on);
-  }, []);
+  }, [restrictToAssignedScreens, grantedTabKeys.join("|")]);
 
   const go = (k) => {
     setTab(k);
@@ -2026,9 +2059,13 @@ function Masters() {
     }
   };
 
-  const allowed = (i) =>
-    (!i.superOnly || me.role === "SuperAdmin") &&
-    (!i.perm || can(me.role, i.perm));
+  const allowed = (i) => {
+    const screenKeys = MASTER_DATA_SCREEN_KEYS_BY_TAB[i.key];
+    const hasAssignedView = !restrictToAssignedScreens || (screenKeys ?? []).some((key) => grantedMasterDataScreens.has(key));
+    return (!i.superOnly || me.role === "SuperAdmin") &&
+      hasAssignedView &&
+      (restrictToAssignedScreens || !i.perm || can(me.role, i.perm));
+  };
 
   const visible = GROUPS.map((g) => ({
     ...g,
@@ -2043,9 +2080,12 @@ function Masters() {
   const activeItem = ALL_ITEMS.find((i) => i.key === tab);
   const firstAllowed = visible[0]?.items[0]?.key ?? "infrastructure";
 
-  if (activeItem && !allowed(activeItem) && tab !== firstAllowed) {
-    setTab(firstAllowed);
-  }
+  useEffect(() => {
+    if ((!activeItem || !allowed(activeItem)) && tab !== firstAllowed) {
+      setTab(firstAllowed);
+      if (typeof window !== "undefined") window.history.replaceState(null, "", `#${firstAllowed}`);
+    }
+  }, [tab, firstAllowed, restrictToAssignedScreens, grantedTabKeys.join("|")]);
 
   const active = activeItem;
 

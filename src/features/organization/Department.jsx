@@ -22,6 +22,7 @@ import departmentGradeApi from "@/api/departmentGradeApi";
 import departmentCategoryApi from "@/api/departmentCategoryApi";
 import departmentSectionApi from "@/api/departmentSectionApi";
 import { ConfirmDeleteDialog } from "@/components/ui/confirm-delete-dialog";
+import { useScreenActions } from "@/features/auth/data/module-access";
 
 function getErrorMessage(error) {
   const detail = error?.response?.data?.detail;
@@ -196,6 +197,7 @@ const toOptions = (rows, labelKey) =>
     .map((row) => ({ value: String(row.id), label: row[labelKey] }));
 
 export default function Department() {
+  const screenAccess = useScreenActions("master-data.company-configuration.department");
   const [departments, setDepartments] = useState([]);
   const [departmentName, setDepartmentName] = useState("");
   const [search, setSearch] = useState("");
@@ -252,6 +254,7 @@ export default function Department() {
       const base = scope.companyId ? { company_id: scope.companyId } : {};
       const all = [];
       let page = 1;
+      let previousPageIds = "";
 
       for (;;) {
         const response = await departmentApi.getDepartments({
@@ -262,10 +265,14 @@ export default function Department() {
           sort_order: "desc",
         });
         const items = extractDepartments(response.data);
+        const pageIds = items.map((item) => String(item.id ?? item.department_id ?? "")).join("|");
+        const total = Number(response.data?.total ?? response.data?.total_count ?? response.data?.count ?? response.data?.pagination?.total);
+        // Some deployments return an unpaged list or omit total metadata. Stop after that response;
+        // if the backend ignores `page`, the page fingerprint prevents repeating the same request set.
+        if (!items.length || (page > 1 && pageIds === previousPageIds)) break;
         all.push(...items);
-
-        const total = response.data?.total;
-        if (!items.length || typeof total !== "number" || all.length >= total || page >= 100) break;
+        previousPageIds = pageIds;
+        if (!Number.isFinite(total) || all.length >= total || page >= 100) break;
         page += 1;
       }
 
@@ -628,14 +635,14 @@ export default function Department() {
 
         <div className="flex flex-wrap items-center gap-3">
           <CompanyScopeSelect scope={scope} />
-          <button
+          {screenAccess.can("Create") && <button
             type="button"
             onClick={openAddForm}
             className={buttonClass}
           >
             <Plus size={17} />
             Add Department
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -710,7 +717,7 @@ export default function Department() {
             </div>
 
             {/* Export */}
-            <button
+            {screenAccess.can("Export") && <button
               type="button"
               onClick={exportCSV}
               disabled={!departments.length}
@@ -718,10 +725,10 @@ export default function Department() {
             >
               <Download size={16} />
               Export CSV
-            </button>
+            </button>}
 
             {/* Bulk upload (opens a card with template + upload) */}
-            <button
+            {screenAccess.can("Bulk Upload") && <button
               type="button"
               onClick={() => {
                 setBulkResult(null);
@@ -731,7 +738,7 @@ export default function Department() {
             >
               <Upload size={16} />
               Bulk Upload
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -798,7 +805,7 @@ export default function Department() {
                     <td className="px-5 py-4">
                       <div className="flex items-center gap-1">
                         {/* View */}
-                        <button
+                        {screenAccess.can("View") && <button
                           type="button"
                           onClick={() => handleView(department)}
                           title="View"
@@ -807,10 +814,10 @@ export default function Department() {
                           className={actionButtonClass}
                         >
                           <Eye size={16} />
-                        </button>
+                        </button>}
 
                         {/* Edit */}
-                        <button
+                        {screenAccess.can("Edit") && <button
                           type="button"
                           onClick={() => handleEdit(department)}
                           title="Edit"
@@ -818,10 +825,10 @@ export default function Department() {
                           className={actionButtonClass}
                         >
                           <Pencil size={16} />
-                        </button>
+                        </button>}
 
                         {/* Delete */}
-                        <button
+                        {screenAccess.can("Delete") && <button
                           type="button"
                           onClick={() => handleDelete(department)}
                           title="Delete"
@@ -837,7 +844,7 @@ export default function Department() {
                           ) : (
                             <Trash2 size={16} />
                           )}
-                        </button>
+                        </button>}
                       </div>
                     </td>
                   </tr>

@@ -69,21 +69,39 @@ if (import.meta.env.DEV) {
 
 /** Makes the open screen show the "module not available" / "no access" notice (see OrgShell, EmployeeShell). */
 function flagAccessError(reason, request, detailText) {
+  const requestKey = `${String(request?.method ?? "get").toUpperCase()} ${String(request?.url ?? "").split("?")[0]}`;
   const info = `${String(request?.method ?? "get").toUpperCase()} ${request?.url ?? ""} — ${detailText}`;
   import("@/features/auth/data/session-store").then((m) =>
-    m.useSessionStore.setState({ accessError: { reason, path: window.location.pathname, info } }),
+    m.useSessionStore.setState({ accessError: { reason, path: window.location.pathname, info, requestKey } }),
   );
 }
 
 /** Re-reads GET /me into the session store (roles, permissions, modules, branch scope). */
+let accessRefreshInFlight = null;
 function refreshAccess() {
-  Promise.all([import("@/api/meApi"), import("@/features/auth/data/session-store")])
+  if (accessRefreshInFlight) return accessRefreshInFlight;
+  accessRefreshInFlight = Promise.all([import("@/api/meApi"), import("@/features/auth/data/session-store")])
     .then(([api, store]) => api.getMe().then((me) => store.useSessionStore.getState().applyMe(me)))
-    .catch(() => {});
+    .catch(() => {})
+    .finally(() => { accessRefreshInFlight = null; });
+  return accessRefreshInFlight;
 }
 
 SuperAdmin_axios.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Clear a 403 only after that exact endpoint succeeds. An unrelated successful request must
+    // not uncover the denied screen and trigger its failed request again in a render loop.
+    if (typeof window !== "undefined") {
+      import("@/features/auth/data/session-store").then((m) => {
+        const config = response.config;
+        const requestKey = `${String(config?.method ?? "get").toUpperCase()} ${String(config?.url ?? "").split("?")[0]}`;
+        const accessError = m.useSessionStore.getState().accessError;
+        if (accessError?.path === window.location.pathname && accessError.requestKey === requestKey)
+          m.useSessionStore.setState({ accessError: null });
+      });
+    }
+    return response;
+  },
   async (error) => {
     const request = error.config;
     // Another device signed this session out: drop the tokens and go to login (no refresh attempt).

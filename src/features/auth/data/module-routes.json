@@ -1,4 +1,5 @@
 {
+  "master-data": ["/org/masters"],
   "employee": ["/org/employees", "/org/team", "/org/departments", "/org/designations", "/org/grades", "/org/categories", "/org/sections","/emp/movements"],
   "attendance": ["/org/attendance", "/emp/attendance", "/emp/holidays"],
   "leave": ["/org/leave", "/emp/leave"],
