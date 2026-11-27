@@ -151,7 +151,7 @@ export const ORG_NAV_GROUPS = [
     label: "People",
     items: [
       { to: "/org/employees", label: "Employees", icon: Users },
-      // { to: "/org/recruitment", label: "Recruitment", icon: KanbanSquare },
+      { to: "/org/recruitment", label: "Recruitment", icon: KanbanSquare },
       // { to: "/org/exits", label: "Exit, Retention & F&F", icon: DoorOpen },
       // { to: "/org/grievances", label: "Grievance Redressal", icon: Scale },
       // { to: "/org/training", label: "Training", icon: GraduationCap },

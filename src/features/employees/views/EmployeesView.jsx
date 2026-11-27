@@ -9,7 +9,12 @@ import {
   resolveApiUrl,
 } from "@/api/employeeApi";
 import { organizationApi } from "@/api/organizationApi";
-import { generateWorkEmail, isDuplicateWorkEmail } from "@/features/employees/data/workEmail";
+import {
+  generateWorkEmail,
+  isDuplicateWorkEmail,
+  normalizeWorkEmailPrefix,
+} from "@/features/employees/data/workEmail";
+import Company_api from "@/api/company";
 import { DocPreviewDialog } from "@/features/employees/components/DocPreviewDialog";
 import { useSearch } from "@/lib/navigation";
 import { captureFiles } from "@/lib/attachments";
@@ -904,6 +909,7 @@ const FORM_TO_API = {
   bloodGroup: "blood_group",
   personalEmail: "personal_email",
   workEmail: "work_email",
+  employeeCode: "employee_code",
   whatsapp: "whatsapp_number",
   emergencyName: "emergency_contact_name",
   emergencyPhone: "emergency_contact_phone",
@@ -1219,18 +1225,15 @@ function PrevEmploymentBlock({ index, onRemove, init, docFiles, onSelect, onRemo
 }
 
 
-/** Random temp password containing upper, lower, digit and symbol. */
-function makeTempPassword() {
-  const sets = ["ABCDEFGHJKLMNPQRSTUVWXYZ", "abcdefghijkmnpqrstuvwxyz", "23456789", "@#$!%*"];
-  const rnd = (n) => crypto.getRandomValues(new Uint32Array(1))[0] % n;
-  const all = sets.join("");
-  const chars = sets.map((s) => s[rnd(s.length)]);
-  while (chars.length < 12) chars.push(all[rnd(all.length)]);
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = rnd(i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
-  }
-  return chars.join("");
+/**
+ * First-login password: the first four letters of the first name (as typed) + date of birth as DDMMYY.
+ * Suryakant, born 2003-03-29 -> "Sury290303". A first name shorter than four letters is used whole.
+ * `dob` is the date input's value (YYYY-MM-DD); the form requires both, so they are always present on create.
+ */
+function makeTempPassword(firstName, dob) {
+  const letters = (firstName ?? "").replace(/[^\p{L}]/gu, "").slice(0, 4);
+  const [yyyy, mm, dd] = String(dob ?? "").split("-");
+  return `${letters}${dd ?? ""}${mm ?? ""}${(yyyy ?? "").slice(-2)}`;
 }
 
 /** Employee form: onboarding when `employee` is absent, the same form pre-filled with the record when present. */
@@ -1376,10 +1379,36 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       alive = false;
     };
   }, [isEdit]);
+  // Work email domain of the company the employee joins ("@testcase.co.in"). Super Admin: the picked company;
+  // everyone else: their own company. Empty when no company / no prefix → falls back to the Gmail format.
+  const workEmailCompanyId = isSuperAdmin ? selectedCompanyId : sessionCompanyId;
+  const [fetchedWorkEmailPrefix, setFetchedWorkEmailPrefix] = useState({ id: "", prefix: "" });
+  const listedCompany = backendCompanies.find((c) => String(c.id) === String(workEmailCompanyId));
+  useEffect(() => {
+    if (isEdit || !workEmailCompanyId || !isUuid(workEmailCompanyId) || listedCompany) return undefined;
+    let alive = true;
+    Company_api.getCompany(workEmailCompanyId)
+      .then((res) => {
+        const c = res?.data?.data ?? res?.data ?? {};
+        if (alive) setFetchedWorkEmailPrefix({ id: workEmailCompanyId, prefix: c?.work_email_prefix || "" });
+      })
+      .catch(() => alive && setFetchedWorkEmailPrefix({ id: workEmailCompanyId, prefix: "" }));
+    return () => {
+      alive = false;
+    };
+  }, [isEdit, workEmailCompanyId, listedCompany]);
+  const companyWorkEmailPrefix = normalizeWorkEmailPrefix(
+    listedCompany
+      ? listedCompany.work_email_prefix
+      : fetchedWorkEmailPrefix.id === workEmailCompanyId
+        ? fetchedWorkEmailPrefix.prefix
+        : "",
+  );
   const generatedWorkEmail = generateWorkEmail({
     first: firstNameVal,
     last: lastNameVal,
     org: apiOrgName || localOrgName,
+    domain: companyWorkEmailPrefix,
     attempt: emailAttempt,
   });
   const [payComponents, setPayComponents] = useState([]);
@@ -1578,6 +1607,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       ["personalEmail", "Personal email"],
       ["phone", "Mobile number"],
       ["doj", "Date of joining"],
+      ...(isEdit ? [] : [["employeeCode", "Employee ID"]]),
     ];
     const missing = required.filter(([k]) => !v[k]?.trim()).map(([, l]) => l);
     if (wageType !== "Monthly" && wageType !== "Daily") missing.push("Wage type");
@@ -1667,11 +1697,13 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
     const departmentIdParam = deptId;
     const selectedBranchName = backendBranches.find((b) => b.id === effectiveBranchId)?.name ?? "";
 
-    const tempPassword = isEdit ? "" : makeTempPassword();
+    const tempPassword = isEdit ? "" : makeTempPassword(v.firstName?.trim(), v.dob);
 
     const apiFields = {
       first_name: v.firstName.trim(),
       ...(isEdit ? {} : { password: tempPassword }),
+      // Employee ID typed by the admin (required on create, checked above). Not editable later.
+      ...(!isEdit && v.employeeCode?.trim() ? { employee_code: v.employeeCode.trim() } : {}),
       last_name: v.lastName?.trim() || "",
       work_email: workEmail,
       personal_email: v.personalEmail?.trim() || "",
@@ -1930,6 +1962,7 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
               first: v.firstName,
               last: v.lastName,
               org: apiOrgName || localOrgName,
+              domain: companyWorkEmailPrefix,
               attempt,
             });
             formData.set("work_email", workEmail);
@@ -2279,8 +2312,9 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                         placeholder="Generated from the employee name"
                       />
                       <p className="text-muted-foreground mt-1 text-[11px]">
-                        Auto-generated — create this Gmail account for the employee. If it is already
-                        taken, a similar address is chosen on save.
+                        {companyWorkEmailPrefix
+                          ? `Auto-generated from the employee name and the company's work email domain (${companyWorkEmailPrefix}). If it is already taken, a similar address is chosen on save.`
+                          : "Auto-generated — create this Gmail account for the employee. If it is already taken, a similar address is chosen on save."}
                       </p>
                     </>
                   )}
@@ -2932,8 +2966,15 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
               </div>
 
               <FieldRow>
-                <Field label="Employee ID">
-                  <Input placeholder="Auto-assigned on create" disabled />
+                <Field label="Employee ID" required={!isEdit}>
+                  {/* Required on create; fixed once the employee exists (the backend does not allow changing it). */}
+                  <Input
+                    name="employeeCode"
+                    defaultValue={employee?.employee_code ?? ""}
+                    placeholder={isEdit ? "—" : "e.g. 100243"}
+                    maxLength={50}
+                    disabled={isEdit}
+                  />
                 </Field>
                 <Field label="Date of Joining" required>
                   <Input name="doj" defaultValue={init.doj} type="date" />
