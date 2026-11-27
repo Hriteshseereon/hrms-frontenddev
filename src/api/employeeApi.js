@@ -176,6 +176,20 @@ export async function patchEmployeeForm(id, formData) {
   return response.data;
 }
 
+/**
+ * DELETE: Permanently delete an employee and their sign-in account
+ * Endpoint: /employees/{id}
+ * Admin accounts only (403 for an employee). 404 outside your scope, 400 for your own record, 409 for an admin account.
+ * Returns { message, id, employee_code }.
+ */
+export async function deleteEmployee(id) {
+  if (!id) throw new Error("Employee profile ID is required.");
+  const response = await SuperAdmin_axios.delete(
+    `/employees/${encodeURIComponent(id)}`,
+  );
+  return response.data;
+}
+
 /** GET /payroll/pay-components -> [{code, name, calculation_type}] — the codes pc_<CODE> accepts. */
 export async function getPayComponents() {
   const response = await SuperAdmin_axios.get("/payroll/pay-components");
