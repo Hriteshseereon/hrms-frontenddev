@@ -50,10 +50,11 @@ function Breadcrumbs() {
   );
 }
 
-import { useSessionStore } from "@/features/auth/data/session-store";
+import { useDisplayRole, useSessionStore } from "@/features/auth/data/session-store";
 export function OrgTopbar({ onMenu }) {
   const router = useRouter();
   const me = useCurrentUser();
+  const roleLabel = useDisplayRole(me.role);
   const companyName = useSessionStore((s) => s.companyName);
   const branchName = useSessionStore((s) => s.branchName);
   const avatar = useEmployeeAvatar();
@@ -98,13 +99,13 @@ export function OrgTopbar({ onMenu }) {
           <div className="hidden max-w-[180px] min-w-0 text-left leading-tight xl:block">
             <div className="truncate text-sm font-semibold">{me.name}</div>
             <div className="text-muted-foreground truncate text-[11px]">
-              {me.role} · {me.designation}
+              {roleLabel} · {me.designation}
             </div>
           </div>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-56">
           <DropdownMenuLabel>
-            {me.name} · {me.role}
+            {me.name} · {roleLabel}
             {companyName && (
               <div className="text-muted-foreground text-[11px] font-normal">
                 {companyName}
