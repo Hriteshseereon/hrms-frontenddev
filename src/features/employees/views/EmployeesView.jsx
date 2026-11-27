@@ -1650,7 +1650,9 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
       dob: v.dob,
       doj: v.doj,
       ctc: localCtc,
-      workEmail: v.workEmail,
+      // Edit never sends the work email (it is locked on PATCH), so it is not checked either: the duplicate check
+      // found the employee's own address and blocked every edit with "… is already issued to another employee".
+      workEmail: isEdit ? "" : v.workEmail,
     });
     if (validationError) {
       return fail(
