@@ -26,7 +26,7 @@ const keysOf = (list) =>
   (Array.isArray(list) ? list : []).map((m) => (typeof m === "string" ? m : (m?.key ?? m?.module_key))).filter(Boolean);
 
 const isAdminRole = (role) =>
-  ["SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN"].includes(String(role ?? "").toUpperCase());
+  ["SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN", "ADMIN"].includes(String(role ?? "").trim().toUpperCase());
 
 const isSuperRole = (role) => ["SUPER_ADMIN", "SUPERADMIN"].includes(String(role ?? "").toUpperCase());
 const hasAssignedView = (moduleKey, modules) =>
@@ -324,6 +324,7 @@ export function useRouteModuleOk(pathname) {
   if (orgMode) return isOrgModePath(pathname);
   if (isOwnDataRoute(pathname)) return true;
   if (!apiSession || !loaded) return true;
+  if (isAdminRole(role)) return true;
   const key = moduleOfRoute(pathname);
   if (key && !isAdminRole(role) && moduleGrantedByRole(key, assignedModules, permissions)) return true;
   return !key || keysOf(permitted).includes(key);
