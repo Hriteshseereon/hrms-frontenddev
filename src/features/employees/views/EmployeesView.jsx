@@ -947,7 +947,7 @@ const LEGAL_KEYS = new Set([
   "pan_number", "aadhaar_number", "uan_number", "esic_number", "pf_member_id", "driving_license_number", "passport_number",
   "nominee_name", "pension_scheme", "family_details", "service_book_number",
   "aadhaar_card", "pan_card", "driving_license", "passport", "resume", "offer_letter", "appointment_letter",
-  "educational_certificate", "address_proof", "passport_photo", "e_signature", "employer_signature",
+  "educational_certificate", "address_proof", "photo", "e_signature", "employer_signature",
 ]);
 const EDUCATION_KEYS = new Set(["qualification", "institution", "year_of_passing", "education_score"]);
 
@@ -1342,6 +1342,11 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
   const [apiOrgName, setApiOrgName] = useState("");
   const [firstNameVal, setFirstNameVal] = useState(init.firstName ?? "");
   const [lastNameVal, setLastNameVal] = useState(init.lastName ?? "");
+  // Account holder name follows First + Last name until the admin types their own (e.g. a different bank spelling).
+  // A saved name counts as typed, so editing an employee never overwrites it; clearing the box resumes auto-fill.
+  const [bankHolderVal, setBankHolderVal] = useState(init.bankHolder ?? "");
+  const [bankHolderTyped, setBankHolderTyped] = useState(!!init.bankHolder);
+  const bankHolderShown = bankHolderTyped ? bankHolderVal : `${firstNameVal} ${lastNameVal}`.trim();
   const [emailAttempt, setEmailAttempt] = useState(0);
   useEffect(() => {
     if (isEdit) return undefined;
@@ -1416,10 +1421,15 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
   }, [isEdit, employee?.id]);
 
   // Signed view URLs expire (~15 min), so a fresh one is fetched each time a preview opens.
-  const previewExistingDoc = async (type, label) => {
+  const previewExistingDoc = async (type, label, directUrl) => {
     try {
       const res = await getEmployeeDocuments(employee.id);
       const d = (res?.documents ?? []).find((x) => x.document_type === type);
+      // The photo is not in the documents list; the employee record carries a signed image link instead.
+      if (!d && directUrl) {
+        setDocPreview({ title: label, src: resolveApiUrl(directUrl), isPdf: false });
+        return;
+      }
       const src = resolveApiUrl(d?.view_url);
       if (!src) {
         toast.error("This document is not available to preview.");
@@ -2634,12 +2644,20 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
                 />
+                {/* Sent as "photo": the backend saves it as the employee photo, which Form XIII prints in its
+                    photograph box (it ignored the old "passport_photo" name, so no photo was ever saved). */}
                 <FileUpload
-                  name="passport_photo"
+                  name="photo"
                   label="Passport Photo"
-                  existing={existingDocs["passport_photo"]}
-                  onPreviewExisting={() => previewExistingDoc("passport_photo", "passport_photo")}
-                  file={docFiles["passport_photo"]}
+                  hint="JPG, PNG or WEBP · max 2 MB"
+                  existing={
+                    existingDocs["photo"] ??
+                    (employee?.profile_photo_url ? { file_name: "Passport photo" } : undefined)
+                  }
+                  onPreviewExisting={() =>
+                    previewExistingDoc("photo", "Passport Photo", employee?.profile_photo_url)
+                  }
+                  file={docFiles["photo"]}
                   onSelect={handleDocSelect}
                   onRemove={handleDocRemove}
                 />
@@ -2700,7 +2718,15 @@ function AddEmployeeDialog({ onClose, onCreated, employee }) {
 
               <FieldRow>
                 <Field label="Account Holder Name" required>
-                  <Input name="bankHolder" defaultValue={init.bankHolder} placeholder="As per bank records" />
+                  <Input
+                    name="bankHolder"
+                    value={bankHolderShown}
+                    onChange={(e) => {
+                      setBankHolderVal(e.target.value);
+                      setBankHolderTyped(e.target.value.trim() !== "");
+                    }}
+                    placeholder="Filled from First + Last name"
+                  />
                 </Field>
                 <Field label="Bank Name" required>
                   <Input name="bankName" defaultValue={init.bankName} placeholder="HDFC Bank" />

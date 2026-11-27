@@ -22,12 +22,26 @@ const isOwnDataRoute = (to) => OWN_DATA_ROUTES.has(String(to).split("?")[0]);
 
 /** Older sessions stored objects; accept both shapes. */
 const keysOf = (list) =>
-  (Array.isArray(list) ? list : []).map((m) => (typeof m === "string" ? m : (m?.key ?? m?.module_key))).filter(Boolean);
+  (Array.isArray(list) ? list : [])
+    .map((m) => (typeof m === "string" ? m : (m?.key ?? m?.module_key)))
+    .filter(Boolean);
 
 const isAdminRole = (role) =>
   ["SUPER_ADMIN", "SUPERADMIN", "COMPANY_ADMIN"].includes(String(role ?? "").toUpperCase());
 
-const isSuperRole = (role) => ["SUPER_ADMIN", "SUPERADMIN"].includes(String(role ?? "").toUpperCase());
+const isSuperRole = (role) =>
+  ["SUPER_ADMIN", "SUPERADMIN"].includes(String(role ?? "").toUpperCase());
+
+// Modules every admin portal gets even when the Super Admin has not enabled them for the company (absent from
+// `permitted_modules`). Recruitment screens still run on the browser store, so no backend module guard applies yet.
+// TODO: once the backend enables these by default for every company, drop this list.
+const DEFAULT_ADMIN_MODULES = ["recruitment"];
+
+/** `permitted_modules` keys plus the default admin modules for Company / Super Admin sessions. */
+const effectiveModules = (permitted, role) => {
+  const keys = keysOf(permitted);
+  return isAdminRole(role) ? [...new Set([...keys, ...DEFAULT_ADMIN_MODULES])] : keys;
+};
 
 /**
  * Super Admin with no company picked is in organisation mode: the server answers 400 "Select a company" for every
@@ -65,9 +79,10 @@ export function canDo(permission, s = useSessionStore.getState()) {
   // HR prepares monthly payroll runs; approval and processing remain separate permissions.
   if (permission === "payroll.run") {
     const roles = [s.role, ...(Array.isArray(s.roles) ? s.roles : [])].map((role) =>
-      String(typeof role === "string" ? role : role?.name ?? "").trim(),
+      String(typeof role === "string" ? role : (role?.name ?? "")).trim(),
     );
-    if (roles.some((name) => /\bhr\b|human resource|\bchro\b|payroll admin/i.test(name))) return true;
+    if (roles.some((name) => /\bhr\b|human resource|\bchro\b|payroll admin/i.test(name)))
+      return true;
   }
   const list = Array.isArray(s.permissions) ? s.permissions : [];
   return list.includes("*") || list.includes(permission);
@@ -171,7 +186,7 @@ registerNavExtension((_user, pathname) => {
   const adminPortal = s.redirectPortal === "org";
   if (adminPortal && pathname === "/org/dashboard") return true;
   const key = moduleOfRoute(pathname);
-  const permitted = keysOf(s.permittedModules);
+  const permitted = effectiveModules(s.permittedModules, s.role);
   // The organisation page of a screen ticked for one of the user's roles (also pages that belong to no module,
   // such as Timesheets or the Holiday Calendar). A page of a module the company switched off stays closed.
   if (
@@ -180,7 +195,7 @@ registerNavExtension((_user, pathname) => {
   )
     return true;
   if (!key || !permitted.includes(key)) return false;
-  return adminPortal || grantedModules(s).has(key);
+  return adminPortal || isAdminRole(s.role) || grantedModules(s).has(key);
 });
 
 /** Route guard: false when the path belongs to a module that is not in `permitted_modules`. */
@@ -188,11 +203,12 @@ export function useRouteModuleOk(pathname) {
   const permitted = useSessionStore((s) => s.permittedModules);
   const apiSession = useSessionStore((s) => s.isAuthenticated);
   const loaded = useSessionStore((s) => s.accessLoaded);
+  const role = useSessionStore((s) => s.role);
   const orgMode = useOrgMode();
   if (orgMode) return isOrgModePath(pathname);
   if (isOwnDataRoute(pathname)) return true;
   const key = moduleOfRoute(pathname);
-  return !apiSession || !loaded || !key || keysOf(permitted).includes(key);
+  return !apiSession || !loaded || !key || effectiveModules(permitted, role).includes(key);
 }
 
 /** Returns `(to) => boolean`: true when the route's module is enabled (or the route has no module). */
@@ -218,7 +234,7 @@ export function useModuleAccess() {
   }, [apiSession]);
   const role = useSessionStore((s) => s.role);
   const permissions = useSessionStore((s) => s.permissions);
-  const keys = new Set(keysOf(permitted));
+  const keys = new Set(effectiveModules(permitted, role));
   const orgMode = useOrgMode();
   return (to) => {
     if (!apiSession) return true; // mock / signed-out preview: no API session to gate by
