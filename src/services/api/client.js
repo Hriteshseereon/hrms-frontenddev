@@ -9,7 +9,7 @@
  *  - errors normalised to ApiError (RFC 7807, DRF and FastAPI bodies)
  */
 import { env } from "@/config/env";
-import { tokenStore } from "./token-store";
+import { refreshSession, tokenStore } from "./token-store";
 import { ApiError, toApiError } from "./errors";
 
 /**
@@ -25,8 +25,6 @@ import { ApiError, toApiError } from "./errors";
  * @property {"json"|"blob"|"text"} [responseType]
  */
 
-let refreshing = null;
-
 function buildUrl(path, query) {
   const url = new URL(env.apiBaseUrl + (path.startsWith("/") ? path : `/${path}`));
   if (query)
@@ -36,27 +34,6 @@ function buildUrl(path, query) {
       else url.searchParams.set(k, String(v));
     }
   return url.toString();
-}
-
-async function refreshAccessToken() {
-  if (!refreshing) {
-    refreshing = (async () => {
-      const refreshToken = tokenStore.getRefresh();
-      const res = await fetch(buildUrl("/auth/refresh"), {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(refreshToken ? { refresh_token: refreshToken } : {}),
-      });
-      if (!res.ok) {
-        tokenStore.clear();
-        return false;
-      }
-      tokenStore.set(await res.json());
-      return true;
-    })().finally(() => setTimeout(() => (refreshing = null), 0));
-  }
-  return refreshing;
 }
 
 /**
@@ -103,7 +80,8 @@ export async function request(method, path, body, options = {}, retried = false)
   clearTimeout(timer);
 
   if (res.status === 401 && !retried && !path.startsWith("/auth/")) {
-    if (await refreshAccessToken()) return request(method, path, body, options, true);
+    // Shared with the axios client: one refresh at a time, one copy of the tokens (see token-store.js).
+    if (await refreshSession(token)) return request(method, path, body, options, true);
   }
   if (res.status === 204) return null;
 

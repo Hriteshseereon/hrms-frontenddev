@@ -1,5 +1,6 @@
 import axios from "axios";
 import { applyScopeRules } from "@/services/api/scope";
+import { refreshSession } from "@/services/api/token-store";
 
 // NOTE: Do NOT set a default "Content-Type" here.
 // axios sets application/json automatically for plain objects, and the
@@ -164,38 +165,18 @@ SuperAdmin_axios.interceptors.response.use(
     }
 
     request._retry = true;
-    try {
-      const response = await axios.post(
-        `${import.meta.env.VITE_API_BASE_URL}/auth/refresh`,
-        { refresh_token: refreshToken },
-        { headers: { "Content-Type": "application/json" } },
-      );
-      const { access_token, refresh_token } = response.data;
-      if (!access_token) throw new Error("Refresh response has no access token.");
-
-      const superAdminSession = Boolean(
-        localStorage.getItem("super_admin_access_token") ||
-          localStorage.getItem("super_admin_refresh_token"),
-      );
-      const accessKey = superAdminSession
-        ? "super_admin_access_token"
-        : "access_token";
-      const refreshKey = superAdminSession
-        ? "super_admin_refresh_token"
-        : "refresh_token";
-      localStorage.setItem(accessKey, access_token);
-      if (refresh_token) localStorage.setItem(refreshKey, refresh_token);
-
+    // One refresh for the whole app (shared with the fetch client): the refresh token rotates, and sending an old
+    // one makes the backend sign every session out. Requests that got their 401 together wait for the same call.
+    const refreshed = await refreshSession(request.headers?.Authorization);
+    if (!refreshed?.access_token) return Promise.reject(error);
+    if (refreshed.fresh) {
       // The refresh response carries the current access fields; GET /me confirms them.
-      import("@/features/auth/data/session-store").then((m) => m.useSessionStore.getState().applyMe(response.data));
+      import("@/features/auth/data/session-store").then((m) => m.useSessionStore.getState().applyMe(refreshed));
       refreshAccess();
-
-      request.headers = request.headers || {};
-      request.headers.Authorization = `Bearer ${access_token}`;
-      return SuperAdmin_axios(request);
-    } catch (refreshError) {
-      return Promise.reject(refreshError);
     }
+    request.headers = request.headers || {};
+    request.headers.Authorization = `Bearer ${refreshed.access_token}`;
+    return SuperAdmin_axios(request);
   },
 );
 

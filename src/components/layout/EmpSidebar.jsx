@@ -172,13 +172,21 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
           const moduleLabel = screens[0].moduleLabel ?? screens[0].label;
           if (new Set(screens.map((sc) => sc.to.split(/[?#]/)[0])).size === 1)
             return [{ key: moduleKey, to: screens[0].to, label: moduleLabel, section: screens[0].section, icon }];
-          return [{
-            key: moduleKey,
-            label: moduleLabel,
-            section: screens[0].section,
-            icon,
-            children: screens.map((sc) => ({ key: sc.id, to: sc.to, label: sc.label, icon })),
-          }];
+          // A module whose screens live on several pages (Employees: /org/employees, /org/exits, /org/grievances,
+          // /org/claims): the module entry opens its first page and the other pages follow as indented links.
+          // Every entry must carry `to` — this list is rendered as plain links, and an entry without one became a
+          // link to "/", which redirects to /login.
+          return [
+            { key: moduleKey, to: screens[0].to, label: moduleLabel, section: screens[0].section, icon },
+            ...screens.slice(1).map((sc) => ({
+              key: sc.id,
+              to: sc.to,
+              label: sc.label,
+              section: screens[0].section,
+              icon,
+              sub: true,
+            })),
+          ];
         })
       : // older backend without `assigned_modules`: the org menu entries of the modules the roles grant
         ORG_NAV_GROUPS.flatMap((g) => g.items).filter((i) => {
@@ -338,7 +346,7 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
                             {c.section}
                           </div>
                         )}
-                        <Link href={c.to} className={linkClass(isActive(c.to), true)}>
+                        <Link href={c.to} className={cn(linkClass(isActive(c.to), true), c.sub && "pl-14")}>
                           <c.icon
                             className={cn("h-4 w-4 shrink-0", isActive(c.to) && "text-gold")}
                           />
