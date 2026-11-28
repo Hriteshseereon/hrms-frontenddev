@@ -172,6 +172,13 @@ function hasScreenAction(screenRef, action, s) {
   );
 }
 
+/** True when the user's roles grant this screen only as self-service (own records), not organisation-wide. */
+export function isSelfServiceGrant(screenRef, s = useSessionStore.getState()) {
+  if (!s.isAuthenticated || isAdminRole(s.role)) return false;
+  const screen = screenFor(resolveScreenCode(screenRef), s.assignedModules);
+  return screen?.self_service === true;
+}
+
 /** Branch ids the user may pick, or null for every branch (`branch_scope` "ALL"). */
 export function useBranchScope() {
   const scope = useSessionStore((s) => s.branchScope);
@@ -302,9 +309,12 @@ export function assignedScreens(s = useSessionStore.getState()) {
       const presentation =
         RBAC_SCREEN_PRESENTATION.get(`${mod.key}.${screenKey}`) ??
         RBAC_SCREEN_PRESENTATION_BY_KEY.get(screenKey);
-      const org = mod.key === "master-data" && MASTER_DATA_TAB_BY_SCREEN[screenKey]
-        ? "/org/masters"
-        : SCREEN_ROUTES[screenKey] ?? null;
+      // The page comes from the permission catalog (RBAC_MODULES `route`), so a new module/tab needs no mapping here.
+      const catalogEntry = findScreen(sc.screen_code) ?? findScreen(`${mod.key}.${screenKey}`) ?? findScreen(screenKey);
+      const org = catalogEntry?.route
+        ?? (mod.key === "master-data" && MASTER_DATA_TAB_BY_SCREEN[screenKey] ? "/org/masters" : null)
+        ?? SCREEN_ROUTES[screenKey]
+        ?? null;
       const own = sc.self_service ? (SELF_SCREEN_ROUTES[screenKey] ?? null) : null;
       const [to, alt] = manages || !own ? [org ?? own, own] : [own, org];
       if (!to) continue;
@@ -373,7 +383,13 @@ export const useScreenAccess = useScreenActions;
 export function useVisibleTabs(tabs) {
   const session = useSessionStore();
   const list = (Array.isArray(tabs) ? tabs : []).filter(
-    (tab) => tab && (!tab.screen || hasScreenAction(tab.screen, tab.action ?? "View", session)),
+    (tab) =>
+      tab &&
+      (!tab.screen ||
+        (hasScreenAction(tab.screen, tab.action ?? "View", session) &&
+          // A screen granted only as self-service ("own data") is served in the employee portal; the organisation
+          // tab would only get a 403 from the server. A tab built for own data sets `selfService: true`.
+          (tab.selfService || !isSelfServiceGrant(tab.screen, session)))),
   );
   const values = list.map((tab) => tab.value);
   return {
@@ -411,6 +427,21 @@ export function useAssignedScreens() {
 
 const matchesRoute = (pathname, route) => pathname === route || pathname.startsWith(`${route}/`);
 
+/** Pages that some screen on the role permission screen opens; access to these follows screen grants only. */
+const CATALOG_ROUTES = new Set(
+  RBAC_MODULES.flatMap((module) => [module.route, ...module.submodules.flatMap((submodule) =>
+    [submodule.route, ...submodule.screens.map((screen) => screen.route)])]).filter(Boolean),
+);
+const isCatalogRoute = (pathname) => [...CATALOG_ROUTES].some((route) => matchesRoute(String(pathname).split("?")[0], route));
+
+/** True when a screen the user's roles grant View on opens this page (from assigned_modules of login / GET /me). */
+export function routeGrantedByScreens(pathname, s = useSessionStore.getState()) {
+  const path = String(pathname).split(/[?#]/)[0];
+  return assignedScreens({ assignedModules: s.assignedModules }).some(
+    (screen) => [screen.to, screen.alt].some((to) => to && matchesRoute(path, String(to).split(/[?#]/)[0])),
+  );
+}
+
 // A role can give a plain employee login the org screens of its modules: with Admin portal access
 // (redirect_portal "org") the whole admin portal, otherwise just the module screens the role grants
 // (listed under "Assigned modules" in the employee portal). On top of the built-in role matrix.
@@ -420,6 +451,10 @@ registerNavExtension((_user, pathname) => {
   if (isOrgMode(s)) return isOrgModePath(pathname);
   const adminPortal = s.redirectPortal === "org";
   if (adminPortal && pathname === "/org/dashboard") return true;
+  // A page opened by a screen with View ticked for one of the user's roles is shown — whatever module it is filed under.
+  if (routeGrantedByScreens(pathname, s)) return true;
+  // Pages covered by the permission screen are shown ONLY through screen grants (above), never by module or portal alone.
+  if (!isAdminRole(s.role) && isCatalogRoute(pathname)) return false;
   const key = moduleOfRoute(pathname);
   const permitted = keysOf(s.permittedModules);
   // The organisation page of a screen ticked for one of the user's roles (also pages that belong to no module,
@@ -432,6 +467,13 @@ registerNavExtension((_user, pathname) => {
   if (!key || !permitted.includes(key)) return false;
   return adminPortal || grantedModules(s).has(key);
 });
+
+/** Hook form of `routeGrantedByScreens`. */
+export function useRouteGrantedByScreens(pathname) {
+  const assignedModules = useSessionStore((s) => s.assignedModules);
+  const apiSession = useSessionStore((s) => s.isAuthenticated);
+  return apiSession && routeGrantedByScreens(pathname, { assignedModules });
+}
 
 /** Route guard: false when the path belongs to a module that is not in `permitted_modules`. */
 export function useRouteModuleOk(pathname) {
@@ -446,6 +488,7 @@ export function useRouteModuleOk(pathname) {
   if (isOwnDataRoute(pathname)) return true;
   if (!apiSession || !loaded) return true;
   if (isAdminRole(role)) return true;
+  if (routeGrantedByScreens(pathname, { assignedModules })) return true;
   const key = moduleOfRoute(pathname);
   if (key && !isAdminRole(role) && moduleGrantedByRole(key, assignedModules, permissions)) return true;
   return !key || keysOf(permitted).includes(key);
@@ -483,6 +526,7 @@ export function useModuleAccess() {
     if (orgMode) return isOrgModePath(to);
     if (isOwnDataRoute(to)) return true;
     if (!accessLoaded) return true;
+    if (!isAdminRole(role) && routeGrantedByScreens(to, { assignedModules })) return true;
     const key = moduleOfRoute(to);
     if (key && !keys.has(key) && !isAdminRole(role) && !moduleGrantedByRole(key, assignedModules, permissions)) return false;
     // Organization payroll actions need a payroll.* permission. Employee routes such as

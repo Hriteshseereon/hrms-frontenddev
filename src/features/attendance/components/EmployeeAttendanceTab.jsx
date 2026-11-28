@@ -325,8 +325,6 @@ export function EmployeeAttendanceTab({ canManage = false }) {
     return () => clearTimeout(t);
   }, [load]);
 
-  if (blocked) return <ErrorState kind={blocked} />;
-
   const employees = list?.employees ?? [];
   // Count calendar dates, not employee-days: a date is included once when at
   // least one employee in the current result has that status.
@@ -370,6 +368,9 @@ export function EmployeeAttendanceTab({ canManage = false }) {
           ["Holiday days", monthlyStatusTotals.holiday],
           ["Attendance", pct(summary?.attendance_percentage)],
         ];
+
+  // After every hook: returning earlier changed the hook count on a 403 and crashed the whole page.
+  if (blocked) return <ErrorState kind={blocked} />;
 
   return (
     <div className="space-y-6">

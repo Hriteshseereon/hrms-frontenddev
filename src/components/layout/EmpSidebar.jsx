@@ -205,10 +205,12 @@ export function EmpSidebar({ collapsed: collapsedPref, onToggle, mobileOpen = fa
             permittedModules.includes(key)
           );
         });
-  const assignedModuleKeys = new Set(assigned.map((item) => item.key));
+  // Drop an own-data link only when "Assigned modules" opens that very page; "My Attendance", "My Leave" … stay even
+  // when the role also manages the module's organisation page.
+  const assignedPages = new Set(assigned.map((item) => String(item.to).split(/[?#]/)[0]));
   const employeeNav = EMP_NAV_ITEMS.map((item) => {
     if (!("children" in item)) return item;
-    const children = item.children.filter((child) => !assignedModuleKeys.has(moduleOfRoute(child.to)));
+    const children = item.children.filter((child) => !assignedPages.has(String(child.to).split(/[?#]/)[0]));
     return { ...item, children };
   });
   const navItems = assigned.length

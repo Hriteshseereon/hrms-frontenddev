@@ -67,10 +67,11 @@ export const MASTER_DATA_TAB_BY_SCREEN = {
  */
 
 // The role matrix currently grants access at the same level as the visible organization sidebar.
-const sidebarScreen = (moduleKey, moduleName, screenKey, screenName, section, submoduleKey, actions = ["View"]) => ({
+const sidebarScreen = (moduleKey, moduleName, screenKey, screenName, section, submoduleKey, actions = ["View"], route) => ({
   key: moduleKey,
   name: moduleName,
   ...(section ? { section } : {}),
+  ...(route ? { route } : {}),
   submodules: [
     {
       key: submoduleKey,
@@ -89,14 +90,16 @@ const sidebarScreen = (moduleKey, moduleName, screenKey, screenName, section, su
  *      const access = useScreenAccess("my-screen");   {access.can("Archive") && <Button …/>}
  *  - New tab: add a screen `{ key, name, actions }` to the module, then list it in the page's tabs:
  *      const tabs = useVisibleTabs([{ value: "mytab", screen: "my-screen" }, …]);
- *  - New module: add a module block here (plus its routes in module-routes.json / SCREEN_ROUTES in rbac-store.js).
+ *  - New module: add a module block here with `route: "/org/<page>"` (the page its sidebar entry opens; a screen may
+ *    override it with its own `route`). Also add the page to ORG_NAV_GROUPS in OrgSidebar.jsx. A role then sees the
+ *    sidebar entry (and "Assigned modules" in the employee portal) as soon as View is ticked on any of its screens.
  * The role screen, the API payload and the checks pick the new entries up automatically. In development, a check for a
  * screen or action that is missing here logs a "[permissions]" warning so it cannot be forgotten.
  */
 export const RBAC_MODULES = [
-  sidebarScreen("dashboard", "Dashboard", "org-dashboard", "Dashboard", "Dashboard", "home", ["View"]),
+  sidebarScreen("dashboard", "Dashboard", "org-dashboard", "Dashboard", "Dashboard", "home", ["View"], "/org/dashboard"),
   {
-    key: "master-data", name: "Master Data", sidebarLabel: "Master Data", section: "Overview",
+    key: "master-data", name: "Master Data", sidebarLabel: "Master Data", section: "Overview", route: "/org/masters",
     submodules: [
       { key: "organisation", name: "Organisation", screens: [
         { key: "workspace-settings", name: "Colours & Branding, Security & Notifications", actions: ["View", "Edit"] },
@@ -153,6 +156,7 @@ export const RBAC_MODULES = [
   },
 {
   key: "employee",
+  route: "/org/employees",
   name: "Employees",
   sidebarLabel: "Employees",
   section: "People",
@@ -177,6 +181,7 @@ export const RBAC_MODULES = [
 }, 
  {
     key: "attendance",
+    route: "/org/attendance",
     name: "Attendance & Shifts",
     sidebarLabel: "Attendance & Shifts",
     section: "Time & Leave",
@@ -197,6 +202,7 @@ export const RBAC_MODULES = [
   },
   {
     key: "leave",
+    route: "/org/leave",
     name: "Leave & Comp-off",
     sidebarLabel: "Leave & Comp-off",
     section: "Time & Leave",
@@ -213,9 +219,10 @@ export const RBAC_MODULES = [
       },
     ],
   },
-  sidebarScreen("tours", "Tours & Travel", "all-tours", "Tours & Travel", "Time & Leave", "tours", ["Create", "View", "Edit", "Approve", "Reject", "Dispatch", "Settle", "Close", "Export"]),
+  sidebarScreen("tours", "Tours & Travel", "all-tours", "Tours & Travel", "Time & Leave", "tours", ["Create", "View", "Edit", "Approve", "Reject", "Dispatch", "Settle", "Close", "Export"], "/org/tours"),
 {
   key: "payroll",
+  route: "/org/finance",
   name: "Payroll, Payslips & Loans",
   sidebarLabel: "Payroll, Payslips & Loans",
   section: "Payroll & Finance",
@@ -232,9 +239,9 @@ export const RBAC_MODULES = [
     },
   ],
 },
-  sidebarScreen("payroll", "Claims & Insurance", "reimbursements", "Claims & Insurance", "Payroll & Finance", "claims", ["Create", "View", "Edit", "Approve", "Reject", "Export"]),
-  sidebarScreen("workplace", "Projects & Assignments", "projects", "Projects & Assignments", "Projects & Tasks", "projects", ["Create", "View", "Edit", "Delete", "Export"]),
-  sidebarScreen("workplace", "Tasks", "tasks", "Tasks", "Projects & Tasks", "work", ["Create", "View", "Edit", "Delete", "Approve", "Reject", "Export"]),
+  sidebarScreen("payroll", "Claims & Insurance", "reimbursements", "Claims & Insurance", "Payroll & Finance", "claims", ["Create", "View", "Edit", "Approve", "Reject", "Export"], "/org/claims"),
+  sidebarScreen("workplace", "Projects & Assignments", "projects", "Projects & Assignments", "Projects & Tasks", "projects", ["Create", "View", "Edit", "Delete", "Export"], "/org/projects"),
+  sidebarScreen("workplace", "Tasks", "tasks", "Tasks", "Projects & Tasks", "work", ["Create", "View", "Edit", "Delete", "Approve", "Reject", "Export"], "/org/tasks"),
 ];
 
 /**
@@ -279,7 +286,9 @@ export const SCREEN_INDEX = (() => {
     for (const submodule of module.submodules) {
       for (const screen of submodule.screens) {
         const code = screenId(module.key, submodule.key, screen.key);
-        const entry = { ...screen, code, moduleKey: module.key, submoduleKey: submodule.key, actions: actionsForScreen(screen) };
+        // `route`: the page the sidebar opens for this screen (screen > submodule > module).
+        const route = screen.route ?? submodule.route ?? module.route ?? null;
+        const entry = { ...screen, code, route, moduleKey: module.key, submoduleKey: submodule.key, actions: actionsForScreen(screen) };
         byCode.set(code.toLowerCase(), entry);
         byKey.set(screen.key, byKey.has(screen.key) ? null : entry); // null = ambiguous key, use the full code
       }

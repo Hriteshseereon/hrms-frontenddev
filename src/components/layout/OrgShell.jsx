@@ -16,7 +16,7 @@ import {
 } from "@/features/auth/data/auth-session";
 import { cn } from "@/lib/utils";
 import { ForcePasswordChange } from "@/features/auth/components/ForcePasswordChange";
-import { useRouteModuleOk } from "@/features/auth/data/module-access";
+import { useRouteModuleOk, useRouteGrantedByScreens } from "@/features/auth/data/module-access";
 import { useSessionCutoff } from "@/features/auth/data/session-guard";
 import { applyTenantScope } from "@/features/organization/data/group-data";
 import { applyBranchScope, lastWorkspacePath } from "@/features/organization/data/tenancy";
@@ -52,7 +52,11 @@ function OrgShell({ children }) {
   const moduleOk = useRouteModuleOk(pathname);
   // A 403 from the API ("Module not enabled…" / "Permission denied") on this screen replaces it with a notice.
   const accessError = useSessionStore((s) => s.accessError);
-  const deniedReason = accessError?.path === pathname ? accessError.reason : null;
+  // On a page the user's roles grant screens on, one refused data call (e.g. an own-data-only tab) must not replace the
+  // whole page: the tabs follow the screen permissions and each shows its own notice. "Module not enabled" still does.
+  const pageGranted = useRouteGrantedByScreens(pathname);
+  const deniedReason =
+    accessError?.path === pathname && !(pageGranted && accessError.reason === "permission") ? accessError.reason : null;
   const allowed = !deniedReason && (pathname === "/org" || (moduleOk && canOpenPath(me.role, pathname)));
   // A route whose module is not in permitted_modules goes home straight away — no API call, no wait for a 403.
   useEffect(() => {
