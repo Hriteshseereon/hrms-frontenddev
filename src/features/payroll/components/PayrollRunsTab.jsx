@@ -782,7 +782,7 @@ function RunDetail({ runId, onBack, onChanged }) {
             </Button>
           )}
           <Stepper run={run} showDecisionMessages />
-          {["Processed", "Paid"].includes(s) && (
+          {["Processed", "Paid"].includes(s) && payrollAccess.can("Export") && (
             <Button
               size="sm"
               variant="outline"

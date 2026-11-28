@@ -7,6 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { Download } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { exportCsv } from "@/lib/export-utils";
+import { useScreenAccess } from "@/features/auth/data/module-access";
 import { attendanceApi } from "@/api/attendanceApi";
 import { detailText } from "@/api/payrollRunApi";
 import Branch_api from "@/api/branch";
@@ -113,7 +117,7 @@ function Blocked({ error, permissionName }) {
     error.status === 403 && /module not enabled/i.test(error.message)
       ? "Attendance is not enabled for this company."
       : error.status === 403
-        ? `No access. You need the ${permissionName} screen permission.`
+        ? `The server refused ${permissionName} (403${error.message ? `: ${error.message}` : ""}). The screen is granted to your role, but the attendance API did not allow this request — the backend permission check for this endpoint needs to accept the role's screen grant.`
         : error.message;
   return (
     <Card className="shadow-card">
@@ -141,6 +145,13 @@ export function AttendanceReportApiTab() {
     sort: f.sort,
   });
   const rows = data?.employees ?? [];
+  const canExport = useScreenAccess("attendance.daily.attendance-report").can("Export");
+  const exportReport = () =>
+    exportCsv(
+      `attendance-report-${data?.month ?? f.month}`,
+      ["Employee", "Code", "Dept", "Office", "Shift", "Working", "Present", "Absent", "Leave", "WO", "Holidays", "Half", "Late", "OT h", "Short h", "Attendance %"],
+      rows.map((r) => [r.name, r.employee_code, r.department, r.office, r.shift, r.working_days, r.present, r.absent, r.leave, r.weekly_offs, r.holidays, r.half_days, r.late_marks, r.overtime_hours, r.short_hours, r.attendance_pct]),
+    );
   return (
     <div className="space-y-5">
       <Filters value={f} onChange={setF} withBand scope={scope} />
@@ -148,8 +159,13 @@ export function AttendanceReportApiTab() {
         <Blocked error={error} permissionName="Attendance Report" />
       ) : (
         <Card className="shadow-card overflow-hidden">
-          <div className="text-muted-foreground border-b px-4 py-2 text-xs">
-            {loading ? "Loading…" : `${data?.total_employees ?? rows.length} employees · ${data?.month ?? f.month}`}
+          <div className="text-muted-foreground flex items-center justify-between gap-2 border-b px-4 py-2 text-xs">
+            <span>{loading ? "Loading…" : `${data?.total_employees ?? rows.length} employees · ${data?.month ?? f.month}`}</span>
+            {canExport && (
+              <Button size="sm" variant="outline" disabled={!rows.length} onClick={exportReport}>
+                <Download className="h-4 w-4" /> CSV
+              </Button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -219,6 +235,13 @@ export function WorkHoursApiTab() {
   const { data, loading, error } = useReport(attendanceApi.getPayrollWorkHours, baseParams(f, scope));
   const rows = data?.employees ?? [];
   const detail = rows.find((r) => r.employee_id === open);
+  const canExport = useScreenAccess("attendance.daily.work-hours-overtime").can("Export");
+  const exportHours = () =>
+    exportCsv(
+      `work-hours-${data?.month ?? f.month}`,
+      ["Employee", "Code", "Shift", "Days worked", "Worked h", "Overtime h", "Short h", "Late days", "Half days"],
+      rows.map((r) => [r.name, r.employee_code, r.shift, r.totals?.days_worked, r.totals?.worked_hours, r.totals?.overtime_hours, r.totals?.short_hours, r.totals?.late_days, r.totals?.half_days]),
+    );
   return (
     <div className="space-y-5">
       <Filters value={f} onChange={setF} scope={scope} />
@@ -226,8 +249,13 @@ export function WorkHoursApiTab() {
         <Blocked error={error} permissionName="Work Hours & Overtime" />
       ) : (
         <Card className="shadow-card overflow-hidden">
-          <div className="text-muted-foreground border-b px-4 py-2 text-xs">
-            {loading ? "Loading…" : `${data?.total_employees ?? rows.length} employees · ${data?.month ?? f.month}`}
+          <div className="text-muted-foreground flex items-center justify-between gap-2 border-b px-4 py-2 text-xs">
+            <span>{loading ? "Loading…" : `${data?.total_employees ?? rows.length} employees · ${data?.month ?? f.month}`}</span>
+            {canExport && (
+              <Button size="sm" variant="outline" disabled={!rows.length} onClick={exportHours}>
+                <Download className="h-4 w-4" /> CSV
+              </Button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">

@@ -273,7 +273,7 @@ const RBAC_SCREEN_PRESENTATION = new Map(
     module.submodules.flatMap((submodule) =>
       submodule.screens.map((screen) => [
         `${module.key}.${screen.key}`,
-        { label: screen.name, sidebarLabel: module.sidebarLabel, section: module.section },
+        { label: screen.name, sidebarLabel: module.sidebarLabel ?? module.name, section: module.section },
       ]),
     ),
   ),
@@ -283,7 +283,7 @@ const RBAC_SCREEN_PRESENTATION_BY_KEY = new Map(
     module.submodules.flatMap((submodule) =>
       submodule.screens.map((screen) => [
         screen.key,
-        { label: screen.name, sidebarLabel: module.sidebarLabel, section: module.section },
+        { label: screen.name, sidebarLabel: module.sidebarLabel ?? module.name, section: module.section },
       ]),
     ),
   ),
@@ -382,14 +382,9 @@ export const useScreenAccess = useScreenActions;
  */
 export function useVisibleTabs(tabs) {
   const session = useSessionStore();
+  // Ticked on the role permission screen (assigned_modules / permissions from login) = shown. Nothing else decides it.
   const list = (Array.isArray(tabs) ? tabs : []).filter(
-    (tab) =>
-      tab &&
-      (!tab.screen ||
-        (hasScreenAction(tab.screen, tab.action ?? "View", session) &&
-          // A screen granted only as self-service ("own data") is served in the employee portal; the organisation
-          // tab would only get a 403 from the server. A tab built for own data sets `selfService: true`.
-          (tab.selfService || !isSelfServiceGrant(tab.screen, session)))),
+    (tab) => tab && (!tab.screen || hasScreenAction(tab.screen, tab.action ?? "View", session)),
   );
   const values = list.map((tab) => tab.value);
   return {

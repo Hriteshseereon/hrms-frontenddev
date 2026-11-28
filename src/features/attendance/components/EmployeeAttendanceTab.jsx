@@ -18,6 +18,7 @@ import { parseApiError } from "@/api/meApi";
 import { useCompanyScope, CompanyScopeSelect } from "@/features/organization/components/CompanyScopeSelect";
 import { todayLocalIso } from "@/features/attendance/data/attendance-live";
 import { PunchCorrectionsCard } from "@/features/attendance/components/PunchCorrectionsCard";
+import MyAttendanceView from "@/features/attendance/views/MyAttendanceView";
 
 const STATUS = {
   P: { label: "Present", cell: "bg-emerald-100 text-emerald-700 border-emerald-300" },
@@ -67,10 +68,12 @@ function StatusPill({ status, title }) {
   );
 }
 
-function ErrorState({ kind }) {
+function ErrorState({ kind, detail }) {
+  // The screen is granted in Roles & Permissions (otherwise this tab is not shown); a 403 here is the server's own
+  // rule for the data call, so show its reason instead of guessing.
   const text =
     kind === "forbidden"
-      ? ["No access", "Employee attendance is available to admin logins only."]
+      ? ["The server refused the attendance register", `${detail || "Permission denied"} — the Attendance screen is granted to your role, but the attendance API did not allow this request. Ask your administrator to check the backend permission for the attendance register.`]
       : ["Attendance is not enabled", "The Attendance module is not enabled for this company."];
   return (
     <Card className="shadow-card">
@@ -249,6 +252,7 @@ export function EmployeeAttendanceTab({ canManage = false }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [blocked, setBlocked] = useState(null);
+  const [blockedDetail, setBlockedDetail] = useState("");
   const [detail, setDetail] = useState(null);
 
   // Company / branch dropdowns (only narrow what the admin already sees).
@@ -313,7 +317,10 @@ export function EmployeeAttendanceTab({ canManage = false }) {
       setList(null);
       setSummary(null);
       if (code === 403 && /module not enabled/i.test(general)) setBlocked("module");
-      else if (code === 403) setBlocked("forbidden");
+      else if (code === 403) {
+        setBlockedDetail(general);
+        setBlocked("forbidden");
+      }
       else if (code !== 401) toast.error(general || "Could not load attendance.");
     } finally {
       setLoading(false);
@@ -370,7 +377,19 @@ export function EmployeeAttendanceTab({ canManage = false }) {
         ];
 
   // After every hook: returning earlier changed the hook count on a 403 and crashed the whole page.
-  if (blocked) return <ErrorState kind={blocked} />;
+  // The role is granted the Attendance screen, but the server serves this role only its own records (typically a
+  // self-service grant): show the user's own attendance instead of a dead end.
+  if (blocked === "forbidden")
+    return (
+      <div className="space-y-4">
+        <p className="text-muted-foreground rounded-lg border px-4 py-3 text-sm">
+          Showing your own attendance. The organisation-wide register is not available for your role
+          {blockedDetail ? ` (${blockedDetail})` : ""}.
+        </p>
+        <MyAttendanceView />
+      </div>
+    );
+  if (blocked) return <ErrorState kind={blocked} detail={blockedDetail} />;
 
   return (
     <div className="space-y-6">

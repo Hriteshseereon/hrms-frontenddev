@@ -51,6 +51,7 @@ export function LeaveApplicationsTab() {
   const canApproveLeave = leaveAccess.can("Approve");
   const canRejectLeave = leaveAccess.can("Reject");
   const canExportLeave = leaveAccess.can("Export");
+  const canPrintLeave = leaveAccess.can("Print");
   const [rows, setRows] = useState([]);
   const [loadState, setLoadState] = useState("loading"); // loading | ready | failed
   const [decision, setDecision] = useState(null);
@@ -202,7 +203,7 @@ export function LeaveApplicationsTab() {
           >
             <Download className="h-4 w-4" /> CSV
           </Button>}
-          {canExportLeave && <Button size="sm" variant="outline" onClick={downloadPdf}>
+          {canPrintLeave && <Button size="sm" variant="outline" onClick={downloadPdf}>
             <FileText className="h-4 w-4" /> PDF
           </Button>}
           <div className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 rounded-lg border px-3 py-2 text-xs">
